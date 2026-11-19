@@ -32,3 +32,12 @@ it('offers no way to create an account', async () => {
   expect(screen.queryByText(/sign up/i)).not.toBeInTheDocument();
   expect(screen.queryByRole('tab')).not.toBeInTheDocument();
 });
+
+it('links to the public page about the service, its privacy policy and its terms', async () => {
+  render(<SignInScreen />);
+  await screen.findByRole('button', { name: /^sign in$/i });
+  expect(screen.getByRole('link', { name: /about.*privacy.*terms/i })).toHaveAttribute(
+    'href',
+    '/about',
+  );
+});

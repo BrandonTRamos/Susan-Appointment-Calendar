@@ -63,6 +63,14 @@ const components = {
       </div>
     );
   },
+  // The public pages (src/routes/PublicPage.tsx). A plain link: they sit outside the app's router.
+  Footer() {
+    return (
+      <p className="auth-footer">
+        <a href="/about">About Susan's Calendar, privacy and terms</a>
+      </p>
+    );
+  },
 };
 
 export default function SignInScreen() {

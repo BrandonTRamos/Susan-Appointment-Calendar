@@ -8,10 +8,12 @@ installable web app on AWS Amplify Gen 2.
 - **The work, ticket by ticket:** [`.scratch/susans-calendar/issues/`](.scratch/susans-calendar/issues/)
 - **The words the project uses:** [`CONTEXT.md`](CONTEXT.md)
 - **Chosen layouts:** [`docs/design/`](docs/design/README.md)
+- **Registering to send texts:** [`docs/twilio-registration-pack.md`](docs/twilio-registration-pack.md)
 - **Notes for contributors and AI sessions:** [`AGENTS.md`](AGENTS.md) (`CLAUDE.md` is an identical copy)
 
-So far the app is a shell: sign-in, the tabs and a placeholder behind each one. Appointments,
-Reminders and everything else arrive with the later tickets.
+So far the app is a shell: sign-in, the tabs and a placeholder behind each one, plus the
+[public pages](#public-pages). Appointments, Reminders and everything else arrive with the later
+tickets.
 
 ## Run it locally
 
@@ -71,12 +73,14 @@ exists: _not deployed yet_.
 
 Set these on the Amplify app under **Hosting → Environment variables**, for all branches.
 
-| Name              | Value              | What it does                                                                                                                            |
-| ----------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `SUSAN_TIME_ZONE` | `America/New_York` | Susan's time zone. Every date and time in the calendar means her local time. US Eastern if unset; a wrong name fails the deploy.        |
-| `COST_TAG`        | `susans-calendar`  | The `project` tag on every backend resource and on the Hosting app, so the app's cost shows on its own in billing. This is the default. |
+| Name              | Value              | What it does                                                                                                                                                  |
+| ----------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUSAN_TIME_ZONE` | `America/New_York` | Susan's time zone. Every date and time in the calendar means her local time. US Eastern if unset; a wrong name fails the deploy.                              |
+| `COST_TAG`        | `susans-calendar`  | The `project` tag on every backend resource and on the Hosting app, so the app's cost shows on its own in billing. This is the default.                       |
+| `CONTACT_EMAIL`   | your email address | The contact address on the [public pages](#public-pages). They say none has been set if it is missing; a value that is not an email address fails the deploy. |
+| `OWNER_NAME`      | your full name     | Who the public pages say runs the calendar. It must match the name on the text-message registration. They say "a private individual" if it is missing.        |
 
-Nothing else needs setting yet. Later tickets add to this table.
+A change to any of these takes effect at the next deploy. Later tickets add to this table.
 
 ### Rewrite rule
 
@@ -88,7 +92,25 @@ Each tab has its own URL, so the Hosting app needs one rule that sends those URL
 </^[^.]+$|\.(?!(css|gif|ico|jpg|js|png|txt|svg|woff|woff2|ttf|map|json|webp|webmanifest)$)([^.]+$)/>
 ```
 
-Without it, reloading a tab or opening a link to one, such as `/month`, shows "not found".
+Without it, reloading a tab or opening a link to one, such as `/month`, shows "not found". The
+public pages need it too.
+
+## Public pages
+
+Three pages open for anyone, with no sign-in. The sign-in screen links to the first.
+
+| Address    | What it shows                                                                                                                            |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `/about`   | What Susan's Calendar is, what it texts and to whom, how consent is given, the contact address, and the privacy policy and terms in full |
+| `/privacy` | The privacy policy on its own                                                                                                            |
+| `/terms`   | The terms on their own                                                                                                                   |
+
+They exist because the text-message registration is reviewed against them
+([`docs/twilio-registration-pack.md`](docs/twilio-registration-pack.md)), so their addresses must
+not change, and their words must keep to what the pack says they contain. The contact address and
+the owner's name come from `CONTACT_EMAIL` and `OWNER_NAME` above, so neither is written in the
+repository. The words read to Susan to ask for her consent are in `src/lib/consent.ts` and in the
+pack; a test fails if the two differ.
 
 ## Accounts
 

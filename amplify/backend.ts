@@ -1,4 +1,5 @@
 import { defineBackend } from '@aws-amplify/backend';
+import { resolveContactEmail, resolveOwnerName } from '../src/lib/publicPage';
 import { resolveTimeZone } from '../src/lib/timeZone';
 import { auth } from './auth/resource';
 import { configureProjectTags } from './cost-tags';
@@ -25,5 +26,13 @@ if (isProduction) cfnUserPool.deletionProtection = 'ACTIVE';
 cfnUserPoolClient.refreshTokenValidity = 3650;
 cfnUserPoolClient.tokenValidityUnits = { refreshToken: 'days' };
 
-// Susan's time zone, for the app (src/config.ts). A value that isn't a time zone fails the deploy.
-backend.addOutput({ custom: { timeZone: resolveTimeZone(process.env.SUSAN_TIME_ZONE) } });
+// For the app (src/config.ts): Susan's time zone, and the contact address and owner's name shown on
+// the public pages. A value that isn't a time zone or an email address fails the deploy. A value
+// that isn't set is left out.
+backend.addOutput({
+  custom: {
+    timeZone: resolveTimeZone(process.env.SUSAN_TIME_ZONE),
+    contactEmail: resolveContactEmail(process.env.CONTACT_EMAIL) ?? undefined,
+    ownerName: resolveOwnerName(process.env.OWNER_NAME) ?? undefined,
+  },
+});
