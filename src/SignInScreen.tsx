@@ -2,6 +2,7 @@
 // stay off the normal launch path.
 import { Authenticator, ThemeProvider, defaultDarkModeOverride } from '@aws-amplify/ui-react';
 import '@aws-amplify/ui-react/styles.css';
+import { PUBLIC_PATHS } from './lib/publicPage';
 
 const tealLight = {
   10: { value: '#d5efeb' },
@@ -67,7 +68,7 @@ const components = {
   Footer() {
     return (
       <p className="auth-footer">
-        <a href="/about">About Susan's Calendar, privacy and terms</a>
+        <a href={PUBLIC_PATHS.about}>About Susan's Calendar, privacy and terms</a>
       </p>
     );
   },

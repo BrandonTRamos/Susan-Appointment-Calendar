@@ -28,6 +28,10 @@ _Avoid_: Notification, alert, nudge
 A text message to Susan saying that an Appointment she has already been reminded of has moved or been cancelled. It is not a Reminder and is never sent for an Appointment she has not yet been reminded of.
 _Avoid_: Update, cancellation text, correction
 
+**Confirmation text**:
+The one text message sent to Susan straight after she agrees to be texted, saying that she agreed and how to stop the texts. It is the first text she gets and the only one that carries opt-out wording. It is not a Reminder.
+_Avoid_: Welcome message, opt-in message, first Reminder
+
 **Reply**:
 A text message Susan sends back to the number her Reminders come from. A Reply is passed on to every Admin for a person to read; the calendar never acts on what it says.
 _Avoid_: Response, confirmation, inbound message
@@ -39,6 +43,10 @@ _Avoid_: Notification, failure notice, warning
 **Activity update**:
 Word to the other Admins that someone has added, changed or cancelled an Appointment, naming who did it. Unlike an Alert, it reports normal use and not a problem.
 _Avoid_: Notification, change notice, audit alert
+
+**Public pages**:
+The pages anyone can open without signing in: what the calendar is, its privacy policy and its terms. They exist so that the registration to send text messages can be reviewed.
+_Avoid_: Landing page, marketing site, legal pages
 
 **Driver**:
 The person taking Susan to an appointment, recorded on that appointment by name. A Driver is usually not an Admin and is never contacted by the calendar.

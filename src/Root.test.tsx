@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Root } from './Root';
 
@@ -29,6 +29,9 @@ function renderRoot(path: string, props: Partial<Parameters<typeof Root>[0]> = {
   );
 }
 
+/** The session check starts a moment after the first render (src/SignedIn.tsx); wait past it. */
+const settled = () => act(async () => {});
+
 beforeEach(() => {
   // Nobody is signed in unless a test says otherwise.
   auth.session.mockReset().mockResolvedValue({});
@@ -40,8 +43,9 @@ describe('without signing in', () => {
     ['/about', "About Susan's Calendar"],
     ['/privacy', 'Privacy Policy'],
     ['/terms', 'Terms and Conditions'],
-  ])('%s opens for anyone, and no session is looked for', (path, heading) => {
+  ])('%s opens for anyone, and no session is looked for', async (path, heading) => {
     renderRoot(path);
+    await settled();
     expect(screen.getByRole('heading', { level: 1, name: heading })).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: 'owner@example.com' })[0]).toBeInTheDocument();
     expect(auth.session).not.toHaveBeenCalled();
@@ -72,8 +76,9 @@ describe('signed in', () => {
 });
 
 describe('with no backend', () => {
-  it('runs the calendar on sample data with nobody signed in', () => {
+  it('runs the calendar on sample data with nobody signed in', async () => {
     renderRoot('/', { backend: false });
+    await settled();
     expect(screen.getByRole('heading', { level: 1, name: 'Upcoming' })).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent(/Sample data/);
     expect(auth.session).not.toHaveBeenCalled();

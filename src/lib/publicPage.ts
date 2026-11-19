@@ -12,7 +12,8 @@ export const PUBLIC_PATHS: Record<PublicPageName, string> = {
 
 /** The public page at an address, or null when the address needs a sign-in. */
 export function publicPageAt(pathname: string): PublicPageName | null {
-  const path = pathname.replace(/\/$/, '');
+  // A reviewer may retype an address, so capitals and a closing slash make no difference.
+  const path = pathname.replace(/\/$/, '').toLowerCase();
   const page = (Object.keys(PUBLIC_PATHS) as PublicPageName[]).find(
     (name) => PUBLIC_PATHS[name] === path,
   );

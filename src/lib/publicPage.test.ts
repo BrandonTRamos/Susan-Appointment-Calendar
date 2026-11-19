@@ -8,9 +8,11 @@ describe('the public pages and their addresses', () => {
     expect(publicPageAt('/terms')).toBe('terms');
   });
 
-  it('open with or without a closing slash', () => {
+  it('open with or without a closing slash, however the address is capitalised', () => {
     expect(publicPageAt('/about/')).toBe('about');
     expect(publicPageAt('/terms/')).toBe('terms');
+    expect(publicPageAt('/About')).toBe('about');
+    expect(publicPageAt('/PRIVACY/')).toBe('privacy');
   });
 
   it('are nothing else: every other address needs a sign-in', () => {

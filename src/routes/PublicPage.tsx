@@ -12,7 +12,8 @@ export interface PublicPageProps {
   sampleData?: boolean;
 }
 
-type Details = Pick<PublicPageProps, 'contactEmail' | 'ownerName'>;
+/** What the owner sets at deploy: where to write, and who runs the calendar. */
+type OwnerDetails = Pick<PublicPageProps, 'contactEmail' | 'ownerName'>;
 
 /** When the privacy policy and terms last changed. Change it whenever their words change. */
 const LAST_UPDATED = '19 November 2026';
@@ -31,7 +32,8 @@ function runBy(ownerName: string | null) {
   return ownerName ? `run by ${ownerName}, a private individual,` : 'run by a private individual';
 }
 
-function Email({ contactEmail }: Pick<Details, 'contactEmail'>) {
+/** Who to ask: the contact address as a link, or the owner in words when none is set. */
+function Contact({ contactEmail }: Pick<OwnerDetails, 'contactEmail'>) {
   if (!contactEmail) return <>the person who runs the calendar</>;
   return <a href={`mailto:${contactEmail}`}>{contactEmail}</a>;
 }
@@ -45,7 +47,7 @@ function Clause({ lead, children }: { lead: string; children: ReactNode }) {
   );
 }
 
-function PrivacyPolicy({ contactEmail, ownerName }: Details) {
+function PrivacyPolicy({ contactEmail, ownerName }: OwnerDetails) {
   return (
     <>
       <p className="muted">Last updated {LAST_UPDATED}.</p>
@@ -58,12 +60,13 @@ function PrivacyPolicy({ contactEmail, ownerName }: Details) {
         consent: the date she agreed and how. The appointments entered in the calendar: what each
         one is, when and where it is, who it is with, who is driving, and notes. The name and email
         address of each person with an account. The text messages sent, whether each one was
-        delivered, and any replies.
+        delivered, and any replies. The name and phone number of the person she is told to call for
+        help.
       </Clause>
       <Clause lead="How it is used.">
-        Only to keep the calendar, to send Susan the reminders she agreed to, and to tell the family
-        members who manage the calendar when a message did not arrive or she replied. Nothing is
-        used for advertising or marketing, and no messages are sent to anyone else.
+        Only to keep the calendar, to send Susan the reminders she agreed to, and to tell the people
+        who manage her calendar when a message did not arrive or she replied. Nothing is used for
+        advertising or marketing, and no messages are sent to anyone else.
       </Clause>
       <Clause lead="Sharing.">
         Mobile numbers and consent to receive text messages are never sold, rented or shared with
@@ -79,11 +82,11 @@ function PrivacyPolicy({ contactEmail, ownerName }: Details) {
       <Clause lead="Keeping and removing.">
         Information is kept for as long as the calendar is in use. Susan can stop the messages at
         any time by replying STOP. To see, correct or have deleted anything held about you, ask{' '}
-        <Email contactEmail={contactEmail} />.
+        <Contact contactEmail={contactEmail} />.
       </Clause>
       <Clause lead="Security.">
         The calendar is not open to the public. Only people whose accounts were created by hand, for
-        Susan and the family members who help her, can sign in.
+        Susan and the people who manage her calendar, can sign in.
       </Clause>
       <Clause lead="Changes.">
         If this policy changes, the new version is published on this page with a new date.
@@ -92,7 +95,7 @@ function PrivacyPolicy({ contactEmail, ownerName }: Details) {
   );
 }
 
-function Terms({ contactEmail, ownerName }: Details) {
+function Terms({ contactEmail, ownerName }: OwnerDetails) {
   return (
     <>
       <p className="muted">Last updated {LAST_UPDATED}.</p>
@@ -102,8 +105,9 @@ function Terms({ contactEmail, ownerName }: Details) {
       </p>
       <Clause lead="The messages.">
         Susan's Calendar sends text message reminders of her own appointments to one person, Susan,
-        who agreed to receive them: a reminder before each appointment, a notice when an appointment
-        she was already reminded of is moved or cancelled, and an automatic answer if she replies.
+        and only after she has agreed to receive them: one message confirming that she agreed, a
+        reminder before each appointment, a notice when an appointment she was already reminded of
+        is moved or cancelled, an automatic answer if she replies, and now and then a test message.
         No advertising is ever sent, and nobody else receives messages.
       </Clause>
       <Clause lead="Agreeing.">
@@ -120,11 +124,11 @@ function Terms({ contactEmail, ownerName }: Details) {
         turn them back on.
       </Clause>
       <Clause lead="Reply HELP to any message for help,">
-        or ask <Email contactEmail={contactEmail} />.
+        or ask <Contact contactEmail={contactEmail} />.
       </Clause>
       <Clause lead="Other replies.">
-        Any other reply is passed on to the family members who manage the calendar, for a person to
-        read. The calendar never acts on what a reply says.
+        Any other reply gets an automatic answer saying who to call, and is passed on to the people
+        who manage her calendar. The calendar never acts on what a reply says.
       </Clause>
       <Clause lead="Delivery.">
         Carriers are not liable for delayed or undelivered messages. A message can be late or fail
@@ -141,25 +145,28 @@ function Terms({ contactEmail, ownerName }: Details) {
   );
 }
 
-function About({ contactEmail, ownerName }: Details) {
+function About({ contactEmail, ownerName }: OwnerDetails) {
   const script = consentScript(window.location.host);
   return (
     <>
       <h1>{TITLES.about}</h1>
       <p>
         Susan's Calendar is a private appointment calendar for one person, Susan. She and a few
-        members of her family keep her appointments in it, and it sends her text message reminders
-        so that she knows where she needs to be and who is taking her.
+        people who help her keep her appointments in it, and it sends her text message reminders so
+        that she knows where she needs to be and who is taking her.
       </p>
       <p>
         It is {runBy(ownerName)} for one family. It is not a business, it sells nothing and it sends
-        no advertising. Nobody can sign up: every account is created by hand for Susan or a member
-        of her family.
+        no advertising. Nobody can sign up: every account is created by hand for Susan or someone
+        who helps her.
       </p>
 
       <section>
         <h2>Text messages</h2>
-        <p>Text messages go to one person only: Susan, who agreed to receive them. They are:</p>
+        <p>
+          Text messages go to one person only, Susan, and only after she has agreed to receive them.
+          They are:
+        </p>
         <ul>
           <li>
             a reminder before each of her appointments, saying what it is, when and where it is, and
@@ -201,7 +208,7 @@ function About({ contactEmail, ownerName }: Details) {
         {contactEmail ? (
           <p>
             Questions about Susan's Calendar or its text messages:{' '}
-            <Email contactEmail={contactEmail} />
+            <Contact contactEmail={contactEmail} />
           </p>
         ) : (
           <p>A contact address has not been set for this site yet.</p>
@@ -229,8 +236,7 @@ function About({ contactEmail, ownerName }: Details) {
  */
 export function PublicPage({ page, contactEmail, ownerName, sampleData }: PublicPageProps) {
   useEffect(() => {
-    document.title =
-      page === 'about' ? "About · Susan's Calendar" : `${TITLES[page]} · Susan's Calendar`;
+    document.title = `${page === 'about' ? 'About' : TITLES[page]} · Susan's Calendar`;
   }, [page]);
 
   return (
@@ -247,17 +253,16 @@ export function PublicPage({ page, contactEmail, ownerName, sampleData }: Public
         </a>
       </header>
       <main className="page">
-        {page === 'about' && <About contactEmail={contactEmail} ownerName={ownerName} />}
-        {page === 'privacy' && (
+        {page === 'about' ? (
+          <About contactEmail={contactEmail} ownerName={ownerName} />
+        ) : (
           <>
-            <h1>{TITLES.privacy}</h1>
-            <PrivacyPolicy contactEmail={contactEmail} ownerName={ownerName} />
-          </>
-        )}
-        {page === 'terms' && (
-          <>
-            <h1>{TITLES.terms}</h1>
-            <Terms contactEmail={contactEmail} ownerName={ownerName} />
+            <h1>{TITLES[page]}</h1>
+            {page === 'privacy' ? (
+              <PrivacyPolicy contactEmail={contactEmail} ownerName={ownerName} />
+            ) : (
+              <Terms contactEmail={contactEmail} ownerName={ownerName} />
+            )}
           </>
         )}
       </main>

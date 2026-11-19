@@ -51,7 +51,7 @@ Prices on 19 November 2026.
 | A text that fails                          | $0.001                     | As it happens              |
 
 - A segment is 160 plain characters. A Reminder with a place, a Driver and a Note for Susan is usually two segments, about 2.6 cents.
-- **Each month: about $4 to $5.** That is $3.15 fixed, plus roughly $1 to $2 for 40 to 70 Reminders.
+- **Each month: about $3.50 to $4.50.** That is $3.15 fixed, plus roughly 25 cents to $1.10 for 10 to 40 texts, the range the terms and the consent script give (2 to 10 a week). The spec and ADR 0001 say "$4 to $5"; a busier calendar reaches that.
 - Upgrading the account asks you to load a starting balance. It is not an extra fee: the charges above are drawn from it.
 - A rejected campaign can be corrected and resubmitted without paying the vetting fee again, as long as you edit the rejected campaign. Deleting it and creating a new one is charged again.
 
@@ -88,7 +88,7 @@ In the Console, start the A2P 10DLC registration and choose **Sole Proprietor**.
 
 ## Step 3: The one-time code
 
-A text arrives on your mobile from The Campaign Registry, the body that keeps the register: "Please confirm your registration for US A2P Messaging by replying YES. Msg & data rates may apply." Reply **YES** within 24 hours. The brand is usually approved within minutes after that.
+A text arrives on your mobile from a number you will not recognise: "Please confirm your registration for US A2P Messaging by replying YES. Msg & data rates may apply." Reply **YES** within 24 hours. The brand is usually approved within minutes after that.
 
 ## Step 4: The campaign
 
@@ -99,7 +99,7 @@ Twilio's guide to these fields: [A2P 10DLC Campaign Approval Best Practices](htt
 ### Campaign description
 
 ```text
-Susan's Calendar is a private appointment calendar run by [Your full name] for one elderly member of the family. Software sends her text message reminders ahead of each of her own appointments, at times set in the calendar: what the appointment is, when and where it is, and who is driving her. It also sends her a notice when an appointment she was already reminded of is moved or cancelled. Messages go to one recipient only, who has agreed verbally. No marketing or promotional content is sent.
+Susan's Calendar is a private appointment calendar run by [Your full name] for one elderly member of the family. Software sends her text message reminders ahead of each of her own appointments, at times set in the calendar: what the appointment is, when and where it is, and who is driving her. It also sends her a notice when an appointment she was already reminded of is moved or cancelled, one message confirming her consent, and an automatic answer if she replies. Messages go to one recipient only, and only after she has agreed verbally. No marketing or promotional content is sent.
 ```
 
 ### Sample messages
@@ -107,7 +107,7 @@ Susan's Calendar is a private appointment calendar run by [Your full name] for o
 Enter all five. Twilio requires at least two, and at least one must carry opt-out wording; the third does.
 
 ```text
-Susan's Calendar: Eye doctor with [doctor's name], tomorrow (Thursday, March 11) at 10:30 AM, at [clinic name and address]. [Driver's name] will pick you up at 9:45 AM. Bring your glasses.
+Susan's Calendar: Eye doctor with [doctor's name], tomorrow at 10:30 AM, at [clinic name and address]. [Driver's name] will pick you up at 9:45 AM. Bring your glasses.
 ```
 
 ```text
@@ -119,14 +119,14 @@ Susan's Calendar: You agreed to get text reminders about your appointments. Msg 
 ```
 
 ```text
-Susan's Calendar: Nobody reads replies sent to this number. If you need help, call [contact's name] at [555-555-5555].
+Susan's Calendar: Replies to this number are not answered here. If you need help, call [contact's name] at [555-555-5555].
 ```
 
 ```text
 Susan's Calendar: Change: Eye doctor with [doctor's name] on Thursday, March 11 at 10:30 AM is cancelled.
 ```
 
-The first, second and fifth are a Reminder and two Change notices in the order of details the spec gives ("Wording"). Their exact words are settled by tickets 07 and 14. If those tickets are finished before you submit and their wording differs, paste real examples from the app's preview in place of these.
+The first, second and fifth are a Reminder and two Change notices in the order of details the spec gives ("Wording"); the fourth is the automatic answer to a Reply. Their exact words are settled by tickets 07, 14 and 17. If those tickets are finished before you submit and their wording differs, paste real examples from the app's preview in place of these.
 
 ### Message contents
 
@@ -165,7 +165,10 @@ Buy one US local number in the Console, with SMS, in or near Susan's area code s
 
 Read the script to Susan yourself, in person, and let her answer for herself. Twilio's rules do not accept consent given by someone else on her behalf.
 
-Do this on the day the confirmation text can be sent: after Twilio has approved the campaign and the number can send (ticket 18). Twilio expects the confirmation to follow consent at once. If more than a few days pass between her yes and that text, read the script again and record the new date.
+Twilio expects the confirmation text to follow her consent at once, and that text cannot be sent until the campaign is approved and the number can send, which is ticket 18. Ticket 05 lists reading the script, so there are two ways to keep to the rule:
+
+- Read the script for the first time on the day of ticket 18, just before sending the confirmation text. This is the simpler one.
+- Read it during ticket 05, to know her answer before the fees are paid, and read it again on the day of ticket 18. Record the later date.
 
 ### The consent script
 
@@ -193,18 +196,17 @@ If she says no, or is unsure, send nothing and do not record a yes.
 
 ### The record of her consent
 
-Fill this in and commit it. Twilio can ask for the date and the method.
+Twilio can ask for the date and the method, so keep this record. **Do not commit it: this repository is public.** Copy the lines below into a note of your own, somewhere you will still have in a few years, and fill them in there. Tick the box on ticket 05 once it is done.
 
 - Date she agreed: \_\_\_\_\_\_\_\_\_\_\_\_
 - Time: \_\_\_\_\_\_\_\_\_\_\_\_
-- Read to her by: \_\_\_\_\_\_\_\_\_\_\_\_
-- How: in person, with the script above read in full
+- How: in person, with the script above read to her in full by the owner
 - Her answer: \_\_\_\_\_\_\_\_\_\_\_\_
 - Confirmation text sent on: \_\_\_\_\_\_\_\_\_\_\_\_
 
 ### The confirmation text
 
-Send this once, straight after she agrees, from the registered Twilio number and not from your own phone. It must be the first text she gets from that number.
+Send this once, straight after she agrees, from the registered Twilio number and not from your own phone. It must be the first text she gets from that number, before the test text in ticket 18: Twilio requires the opt-out wording in the first message. Until the app can send it, use the Console's tool for sending a single SMS (under Messaging, "Try it out"), with the campaign's Messaging Service as the sender.
 
 ```text
 Susan's Calendar: You agreed to get text reminders about your appointments. Msg frequency varies. Msg & data rates may apply. Reply HELP for help. Reply STOP to unsubscribe.
@@ -253,7 +255,7 @@ The Messaging Policy requires that "every message that you send via the Twilio M
 - **Brand:** no EIN and a US or Canadian address. One campaign, one number, about 1,000 texts a day to T-Mobile phones, one text a second. No website field.
 - **Campaign description:** 40 to 4,096 characters, saying who sends, who receives and why.
 - **Sample messages:** at least two, up to five, each 40 to 1,024 characters, naming the sender.
-- **Consent description:** 40 to 1,000 characters in the newer Console (the older one allows 2,048), saying where the person is asked, how she agrees and what happens next. For verbal consent the full script is required, and it should also be at a public address.
+- **Consent description:** 40 to 1,000 characters in the newer Console (the older one allows 2,048), saying where the person is asked, how she agrees and what happens next. For verbal consent the full script is required, and error 30909 lists a verbal opt-in with no "publicly accessible supporting evidence" as a cause of rejection, which is why the script is on `/about`.
 - **Consent script:** must cover what is sent, how often, "Msg & data rates may apply", HELP, STOP, where the terms and privacy policy are, a clear yes-or-no question, and that a confirmation follows. The script above has each. It is under 1,000 characters when `[app address]` is 40 characters or fewer.
 - **Confirmation text:** required for every recurring campaign, immediately after consent, with the programme name, frequency, rates, HELP and STOP. Twilio does not send it; the owner or the app must.
 - **Privacy policy:** a page titled "Privacy Policy" that says what is collected and how it is used, names who runs the service, and states that mobile numbers and consent are not shared with third parties for marketing. Sharing with the companies that deliver the messages is allowed.

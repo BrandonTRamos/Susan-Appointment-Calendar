@@ -122,6 +122,8 @@ describe('the terms', () => {
     renderPage('terms');
     const terms = screen.getByRole('main');
     expect(terms).toHaveTextContent(/reminders of her own appointments/i);
+    expect(terms).toHaveTextContent(/only after she has agreed/);
+    expect(terms).toHaveTextContent(/confirming that she agreed/);
     expect(terms).toHaveTextContent(/moved or cancelled/);
     expect(terms).toHaveTextContent(/Message frequency varies/);
     expect(terms).toHaveTextContent(/between 2 and 10 messages a week/);

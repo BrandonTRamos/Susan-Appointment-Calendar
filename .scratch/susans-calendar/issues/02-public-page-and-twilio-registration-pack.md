@@ -30,4 +30,6 @@ Twilio will not review the registration until this page is live, and the review 
 - The contact address is the `CONTACT_EMAIL` environment value. A second value, `OWNER_NAME`, was added: Twilio requires the pages to name who runs the service, and the owner's name is not written in the repository.
 - The page also shows the consent script and the confirmation text. Twilio rejects a verbal opt-in unless the full script is at a public address.
 - The pack is `docs/twilio-registration-pack.md`. Documentation finding: opt-out wording is required in the first text only, so the wording of Reminders is unchanged and the spec's "Further Notes" now records it as confirmed.
-- **For the owner:** the documentation check found that Twilio may refuse this use altogether (error 30532, September 2026). The pack opens with it, ticket 05 has a new first step, and the spec's "Further Notes" lists it as open.
+- The record of consent is a form in the pack that the owner fills in and keeps privately. This repository is public, so the filled-in record is not committed.
+- Ticket 18's checklist now sends the confirmation text before the test text, because Twilio requires opt-out wording in the first message.
+- **For the owner:** the documentation check found that Twilio may refuse this use altogether (error 30532, September 2026). The pack opens with it, ticket 05 points to it, and the spec's "Further Notes" lists it as open.

@@ -378,12 +378,6 @@ body.has-update .public {
   padding: 8px 16px 24px;
   text-align: center;
 }
-.auth-footer a {
-  display: inline-flex;
-  align-items: center;
-  min-height: 52px;
-  font-weight: 600;
-}
 
 /* ---------- public pages: about, privacy policy, terms (src/routes/PublicPage.tsx) ---------- */
 .public {
@@ -446,6 +440,7 @@ body.has-update .public {
   padding-top: 14px;
   border-top: 1px solid var(--border);
 }
+.auth-footer a,
 .public-foot a {
   display: inline-flex;
   align-items: center;
