@@ -19,6 +19,8 @@
   --radius: 18px;
   /* The phone tab bar's height, without the home-bar inset. */
   --tabbar: 72px;
+  /* Room taken at the top by "A new version is available"; none unless it is showing. */
+  --update-banner: 0px;
   color-scheme: light;
 }
 
@@ -193,8 +195,8 @@ p {
 .sidebar,
 .detail {
   position: sticky;
-  top: 0;
-  height: 100dvh;
+  top: var(--update-banner);
+  height: calc(100dvh - var(--update-banner));
   overflow-y: auto;
   background: var(--surface);
 }
@@ -323,13 +325,14 @@ p {
   justify-content: center;
   align-items: center;
   gap: 14px;
-  padding: calc(env(safe-area-inset-top) + 10px) 16px 10px;
+  height: var(--update-banner);
+  padding: env(safe-area-inset-top) 16px 0;
   background: var(--accent);
   color: var(--accent-text);
   font-weight: 650;
 }
 .update-banner button {
-  min-height: 44px;
+  min-height: 52px;
   border: 2px solid currentColor;
   background: none;
   color: inherit;
@@ -338,8 +341,11 @@ p {
   font-weight: 750;
   cursor: pointer;
 }
+body.has-update {
+  --update-banner: calc(env(safe-area-inset-top) + 72px);
+}
 body.has-update .app {
-  padding-top: 64px;
+  padding-top: var(--update-banner);
 }
 
 /* ---------- session checks (src/SignedIn.tsx) ---------- */

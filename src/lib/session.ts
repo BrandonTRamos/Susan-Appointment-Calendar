@@ -1,8 +1,9 @@
 // Session decisions for the sign-in boundary (src/SignedIn.tsx). Never display account identifiers.
 
 /** The signed-in person. */
-export interface SessionUser {
-  userId: string;
+export interface SignedInPerson {
+  /** The account's permanent ID in the identity system. Never shown. */
+  id: string;
   /** From the account's `name` attribute, which the owner fills in when creating the account. */
   displayName: string | null;
 }
@@ -39,9 +40,9 @@ export function invalidSession(error: unknown): boolean {
 }
 
 /** The `name` claim only: never substitute email, phone, Cognito username or subject. */
-function profileName(claims: Record<string, unknown>, userId: string): string | null {
+function displayName(claims: Record<string, unknown>, id: string): string | null {
   const identifiers = [
-    userId,
+    id,
     claims.sub,
     claims.email,
     claims.phone_number,
@@ -49,29 +50,27 @@ function profileName(claims: Record<string, unknown>, userId: string): string | 
   ]
     .filter((v): v is string => typeof v === 'string')
     .map((v) => v.toLowerCase());
-  for (const raw of [claims.name]) {
-    if (typeof raw !== 'string' || /\p{Cc}/u.test(raw)) continue;
-    const name = raw.trim().replace(/\s+/gu, ' ');
-    if (!name || name.length > 80 || !/\p{L}/u.test(name) || /[<>@]|:\/\//u.test(name)) continue;
-    if (identifiers.includes(name.toLowerCase())) continue;
-    if (/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu.test(name)) continue;
-    if (/^[\w-]+\.[\w-]+\.[\w-]+$/u.test(name)) continue;
-    return name;
-  }
-  return null;
+  const raw = claims.name;
+  if (typeof raw !== 'string' || /\p{Cc}/u.test(raw)) return null;
+  const name = raw.trim().replace(/\s+/gu, ' ');
+  if (!name || name.length > 80 || !/\p{L}/u.test(name) || /[<>@]|:\/\//u.test(name)) return null;
+  if (identifiers.includes(name.toLowerCase())) return null;
+  if (/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu.test(name)) return null;
+  if (/^[\w-]+\.[\w-]+\.[\w-]+$/u.test(name)) return null;
+  return name;
 }
 
-/** Identity and profile name come from the same authenticated snapshot. Inconsistent tokens fail closed. */
-export function sessionUser(snapshot: Snapshot): SessionUser | null {
+/** Identity and display name come from the same authenticated snapshot. Inconsistent tokens fail closed. */
+export function signedInPerson(snapshot: Snapshot): SignedInPerson | null {
   if (!snapshot.tokens?.accessToken) return null;
   const accessSub = snapshot.tokens.accessToken.payload?.sub;
   const claims = snapshot.tokens.idToken?.payload ?? {};
-  const userId = snapshot.userSub ?? accessSub;
-  if (typeof userId !== 'string' || !userId) return null;
+  const id = snapshot.userSub ?? accessSub;
+  if (typeof id !== 'string' || !id) return null;
   if (
-    (accessSub !== undefined && accessSub !== userId) ||
-    (claims.sub !== undefined && claims.sub !== userId)
+    (accessSub !== undefined && accessSub !== id) ||
+    (claims.sub !== undefined && claims.sub !== id)
   )
     return null;
-  return { userId, displayName: profileName(claims.sub === userId ? claims : {}, userId) };
+  return { id, displayName: displayName(claims.sub === id ? claims : {}, id) };
 }

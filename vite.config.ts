@@ -48,7 +48,7 @@ export default defineConfig({
     }),
   ],
   build: {
-    // Amplify's sign-in UI is large; the service worker caches it after the first load.
+    // Amplify's sign-in UI is large. It loads only when signed out.
     chunkSizeWarningLimit: 800,
   },
   test: {

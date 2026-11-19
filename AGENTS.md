@@ -31,13 +31,13 @@ Node 22 (`.nvmrc`). `npm run check` is the gate: lint, format check, type-check,
 
 ## Conventions
 
-- **Layout.** `src/` is the app: `routes/` (one file per screen), `components/`, `lib/` (pure logic, also imported by `amplify/`), `test/`. `amplify/` is the Gen 2 backend. Styles are hand-built in `src/styles.css`: no component, form, date or state library.
-- **Tests sit beside the code** as `*.test.ts(x)`. Screen tests start with `// @vitest-environment jsdom` and render `<App>`, checking what a person sees. Tests run in `Pacific/Auckland` (`vite.config.ts`) to prove nothing reads the machine's time zone.
+- **Layout.** `src/` is the app: `routes/` (one file per screen), `components/`, `lib/` (shared logic and hooks; its pure modules are also imported by `amplify/`), `test/`. `amplify/` is the Gen 2 backend. Styles are hand-built in `src/styles.css`: no component, form, date or state library.
+- **Tests sit beside the code** as `*.test.ts(x)`. Screen tests start with `// @vitest-environment jsdom` and check what a person sees; `src/App.test.tsx` renders the whole `<App>`. Tests run in `Pacific/Auckland` (`vite.config.ts`) to prove nothing reads the machine's time zone.
 - **Susan's time zone** comes only from `resolveTimeZone` in `src/lib/timeZone.ts`: the `SUSAN_TIME_ZONE` environment value at deploy, US Eastern by default, passed to the app through `amplify_outputs.json`. Read every date and time through it.
 - **Two layouts, one switch.** `useDesktopWidth` (`src/lib/useDesktopWidth.ts`) picks the phone layout (bottom tab bar) or the desktop layout (sidebar, current tab, detail panel). `src/styles.css` holds no width queries. Screen tests choose a width with `atWidth` in `src/App.test.tsx`.
-- **Each tab has a URL** (`src/App.tsx`), listed once in `TABS` in `src/components/Navigation.tsx`.
+- **Each tab has a URL**: a route in `src/App.tsx` and a link in `TABS` in `src/components/Navigation.tsx`. A new tab needs both.
 - **Settings sections are separate files** under `src/routes/settings/`, one per section, so tickets that fill different sections never touch the same file.
-- **Accounts.** The owner creates every account in the Cognito console. The display name is the `name` attribute; an Admin's account is in the `Admins` group, and Susan's is the one account outside it. The group grants no rights. The sign-in rules live in `amplify/auth/resource.ts` and `amplify/backend.ts`.
+- **Accounts.** The owner creates every account by hand (README, "Accounts"). The display name is the `name` attribute; an Admin's account is in the `Admins` group, and Susan's is the one account outside it. The group grants no rights. The sign-in rules live in `amplify/auth/resource.ts` and `amplify/backend.ts`.
 - **Appearance** follows the device, light or dark, through CSS variables in `src/styles.css`. Base type is 18px and controls are at least 52px tall; keep new screens at that scale.
 - **Hosting.** `amplify.yml` runs the tests before every deploy; `customHttp.yml` sets the security headers. The content security policy allows only same-origin scripts, so keep scripts out of `index.html`. Every backend resource carries the `project` cost tag (`amplify/cost-tags.ts`).
 

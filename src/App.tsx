@@ -29,7 +29,7 @@ export interface AppProps {
   onSignOut?: () => Promise<unknown>;
 }
 
-function Layout({ displayName, sampleData = false, onSignOut }: AppProps) {
+function Layout({ displayName, sampleData, onSignOut }: AppProps) {
   const desktop = useDesktopWidth();
   // A new screen opens at the top; Back (a POP) returns to where you were.
   const { pathname } = useLocation();
@@ -75,17 +75,7 @@ export function App(props: AppProps) {
           <Route path="month" element={<Month />} />
           <Route path="past" element={<Past />} />
           <Route path="replies" element={<Replies />} />
-          <Route
-            path="settings"
-            element={
-              <Settings
-                displayName={props.displayName}
-                timeZone={props.timeZone}
-                sampleData={props.sampleData ?? false}
-                onSignOut={props.onSignOut}
-              />
-            }
-          />
+          <Route path="settings" element={<Settings {...props} />} />
           <Route path="appointments/new" element={<NewAppointment />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

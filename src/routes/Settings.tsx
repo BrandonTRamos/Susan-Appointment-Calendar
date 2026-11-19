@@ -1,3 +1,4 @@
+import type { AppProps } from '../App';
 import { Page } from '../components/Page';
 import { SignOut } from '../components/SignOut';
 import { timeZoneName } from '../lib/timeZone';
@@ -6,17 +7,7 @@ import { AppNotifications } from './settings/AppNotifications';
 import { CalendarSubscription } from './settings/CalendarSubscription';
 import { SusansPhoneAndContact } from './settings/SusansPhoneAndContact';
 
-export function Settings({
-  displayName,
-  timeZone,
-  sampleData,
-  onSignOut,
-}: {
-  displayName: string | null;
-  timeZone: string;
-  sampleData: boolean;
-  onSignOut?: () => Promise<unknown>;
-}) {
+export function Settings({ displayName, timeZone, sampleData, onSignOut }: AppProps) {
   return (
     <Page title="Settings">
       <SusansPhoneAndContact />

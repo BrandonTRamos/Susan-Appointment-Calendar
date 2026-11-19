@@ -11,10 +11,10 @@ import {
   type ReactNode,
 } from 'react';
 import { useResumeCount } from './lib/resume';
-import { invalidSession, sessionUser, type SessionUser } from './lib/session';
+import { invalidSession, signedInPerson, type SignedInPerson } from './lib/session';
 
 const SignInScreen = lazy(() => import('./SignInScreen'));
-type State = { status: 'checking' | 'retry' | 'out' | 'in'; user: SessionUser | null };
+type State = { status: 'checking' | 'retry' | 'out' | 'in'; person: SignedInPerson | null };
 
 /**
  * Shows the app only to a signed-in person, and the sign-in screen to anyone else. A temporary
@@ -23,9 +23,9 @@ type State = { status: 'checking' | 'retry' | 'out' | 'in'; user: SessionUser | 
 export function SignedIn({
   children,
 }: {
-  children: ReactNode | ((user: SessionUser) => ReactNode);
+  children: ReactNode | ((person: SignedInPerson) => ReactNode);
 }) {
-  const [state, setState] = useState<State>({ status: 'checking', user: null });
+  const [state, setState] = useState<State>({ status: 'checking', person: null });
   const revision = useRef(0);
   const active = useRef(false);
   const invalidate = useCallback(() => {
@@ -43,17 +43,17 @@ export function SignedIn({
     try {
       const snapshot = await fetchAuthSession();
       if (!current()) return;
-      const user = sessionUser(snapshot);
-      if (user) setState({ status: 'in', user });
+      const person = signedInPerson(snapshot);
+      if (person) setState({ status: 'in', person });
       else {
         signedOut.current = true;
-        setState({ status: 'out', user: null });
+        setState({ status: 'out', person: null });
       }
     } catch (error) {
       if (!current()) return;
       if (invalidSession(error)) {
         signedOut.current = true;
-        setState({ status: 'out', user: null });
+        setState({ status: 'out', person: null });
       } else setState((previous) => ({ ...previous, status: 'retry' }));
     }
   }, []);
@@ -64,10 +64,10 @@ export function SignedIn({
       if (payload.event === 'signedOut') {
         invalidate();
         signedOut.current = true;
-        setState({ status: 'out', user: null });
+        setState({ status: 'out', person: null });
       } else if (payload.event === 'signedIn') {
         signedOut.current = false;
-        setState({ status: 'checking', user: null });
+        setState({ status: 'checking', person: null });
         void check();
       } else if (payload.event === 'tokenRefresh') {
         void check();
@@ -75,7 +75,7 @@ export function SignedIn({
         invalidate();
         if (invalidSession(payload.data?.error)) {
           signedOut.current = true;
-          setState({ status: 'out', user: null });
+          setState({ status: 'out', person: null });
         } else setState((previous) => ({ ...previous, status: 'retry' }));
       }
     });
@@ -99,9 +99,9 @@ export function SignedIn({
 
   return (
     <>
-      {state.user && (
-        <Activity key={state.user.userId} mode={state.status === 'in' ? 'visible' : 'hidden'}>
-          {typeof children === 'function' ? children(state.user) : children}
+      {state.person && (
+        <Activity key={state.person.id} mode={state.status === 'in' ? 'visible' : 'hidden'}>
+          {typeof children === 'function' ? children(state.person) : children}
         </Activity>
       )}
       {state.status === 'checking' && (

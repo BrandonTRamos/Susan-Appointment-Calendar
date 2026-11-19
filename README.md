@@ -106,16 +106,19 @@ aws cognito-idp admin-add-user-to-group --user-pool-id <pool-id> --username <ema
 ```
 
 Cognito emails the person a temporary password, and the app asks them to choose their own the first
-time they sign in. In the console the same two steps are **Create user**, filling in the **name**
-attribute, then **Add user to group → Admins**.
+time they sign in. The Cognito console can do the same two steps: create the user with a `name`
+attribute, then add it to the `Admins` group.
 
 - **Display name.** The `name` attribute is what the app shows for the person and, later, beside each
-  change they make. Every account must have one.
+  change they make. Every account must have one: if it is left out when the account is created, the
+  person is asked for it the first time they sign in.
 - **Admins.** Susan's account is the one account that is not in the `Admins` group. The group only
   decides who receives Alerts, passed-on Replies and Activity updates. It gives no extra rights:
   everyone signed in can do everything.
 - **Staying signed in.** Sign-in is an email and a password, with no code to enter. A person stays
-  signed in on a device until they sign out or the owner disables their account.
+  signed in on a device until they sign out or the owner disables their account. One exception:
+  Safari can forget a website's sign-in after seven days without a visit, unless the app has been added
+  to the home screen. Add it to the home screen on Susan's iPhone.
 
 ## Add it to a phone's home screen
 

@@ -22,7 +22,7 @@ vi.mock('aws-amplify/utils', () => ({
 }));
 vi.mock('./SignInScreen', () => ({ default: () => <div>Sign-in screen</div> }));
 
-const valid = (id = 'owner-a', claims: Record<string, unknown> = { name: 'Alice' }) => ({
+const valid = (id = 'person-a', claims: Record<string, unknown> = { name: 'Alice' }) => ({
   userSub: id,
   tokens: { accessToken: { payload: { sub: id } }, idToken: { payload: { sub: id, ...claims } } },
 });
@@ -162,7 +162,7 @@ describe('SignedIn recovery', () => {
     );
     expect(await screen.findByText('Sign-in screen')).toBeInTheDocument();
     view.unmount();
-    auth.session.mockResolvedValueOnce(valid('owner-a', { sub: 'owner-b', name: 'Bob' }));
+    auth.session.mockResolvedValueOnce(valid('person-a', { sub: 'person-b', name: 'Bob' }));
     render(
       <SignedIn>
         <div>Private app</div>
@@ -175,25 +175,25 @@ describe('SignedIn recovery', () => {
 
 describe('display name', () => {
   it.each([
-    [{ sub: undefined, name: 'Alice' }, 'Generic'],
+    [{ sub: undefined, name: 'Alice' }, 'No name'],
     [{ name: '  Alice  ' }, 'Alice'],
     [{ name: 'Alice Example' }, 'Alice Example'],
     [{ name: '明子' }, '明子'],
-    [{ email: 'private@example.test', 'cognito:username': 'private-id' }, 'Generic'],
-    [{ name: 'private@example.test' }, 'Generic'],
-    [{ name: 'owner-a' }, 'Generic'],
-    [{ name: '12345678-1234-1234-1234-123456789abc' }, 'Generic'],
-    [{ name: '+1 555 123 4567' }, 'Generic'],
-    [{ name: 'https://example.test' }, 'Generic'],
-    [{ name: 'A'.repeat(200) }, 'Generic'],
-    [{ name: 42 }, 'Generic'],
-    [{ name: 'Alice\u0000' }, 'Generic'],
+    [{ email: 'private@example.test', 'cognito:username': 'private-id' }, 'No name'],
+    [{ name: 'private@example.test' }, 'No name'],
+    [{ name: 'person-a' }, 'No name'],
+    [{ name: '12345678-1234-1234-1234-123456789abc' }, 'No name'],
+    [{ name: '+1 555 123 4567' }, 'No name'],
+    [{ name: 'https://example.test' }, 'No name'],
+    [{ name: 'A'.repeat(200) }, 'No name'],
+    [{ name: 42 }, 'No name'],
+    [{ name: 'Alice\u0000' }, 'No name'],
   ])("uses only the account's display name, never an identifier %#", async (claims, expected) => {
-    auth.session.mockResolvedValue(valid('owner-a', claims));
+    auth.session.mockResolvedValue(valid('person-a', claims));
     render(
       <SignedIn>
-        {(session: { userId: string; displayName: string | null }) => (
-          <div>{session.displayName ?? 'Generic'}</div>
+        {(person: { id: string; displayName: string | null }) => (
+          <div>{person.displayName ?? 'No name'}</div>
         )}
       </SignedIn>,
     );
@@ -201,17 +201,17 @@ describe('display name', () => {
     expect(screen.queryByText('private@example.test')).not.toBeInTheDocument();
   });
 
-  it('never applies a late old-user name after a newer sign-in', async () => {
+  it("never shows an earlier person's name after someone else signs in", async () => {
     const pending = next<ReturnType<typeof valid>>();
     auth.session.mockReturnValueOnce(pending.promise);
     render(
       <SignedIn>
-        {(session: { userId: string; displayName: string | null }) => (
-          <div>{session.displayName ?? 'Generic'}</div>
+        {(person: { id: string; displayName: string | null }) => (
+          <div>{person.displayName ?? 'No name'}</div>
         )}
       </SignedIn>,
     );
-    auth.session.mockResolvedValue(valid('owner-b', { name: 'Bob' }));
+    auth.session.mockResolvedValue(valid('person-b', { name: 'Bob' }));
     await emit('signedIn');
     expect(await screen.findByText('Bob')).toBeInTheDocument();
     await act(async () => pending.resolve(valid()));

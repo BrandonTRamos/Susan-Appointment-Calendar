@@ -1,4 +1,5 @@
 import { Link, NavLink } from 'react-router-dom';
+import type { AppProps } from '../App';
 import { MonthIcon, PastIcon, PlusIcon, RepliesIcon, SettingsIcon, UpcomingIcon } from './Icons';
 import { SignOut } from './SignOut';
 
@@ -34,13 +35,7 @@ export function TabBar() {
 }
 
 /** The desktop layout's left column: app name, New Appointment, the tabs, and who is signed in. */
-export function Sidebar({
-  displayName,
-  onSignOut,
-}: {
-  displayName: string | null;
-  onSignOut?: () => Promise<unknown>;
-}) {
+export function Sidebar({ displayName, onSignOut }: Pick<AppProps, 'displayName' | 'onSignOut'>) {
   return (
     <header className="sidebar">
       <div className="brand">

@@ -1,5 +1,5 @@
 // A counter that goes up whenever the app comes back to the foreground or back online. iOS suspends
-// home-screen apps, so data loaded before the suspension (or before midnight) can be stale on return.
+// home-screen apps, so what was checked before the suspension can be stale on return.
 
 import { useSyncExternalStore } from 'react';
 
@@ -33,6 +33,3 @@ function subscribe(listener: () => void) {
 export function useResumeCount(): number {
   return useSyncExternalStore(subscribe, () => count);
 }
-
-/** The count right now, for code outside React (e.g. the store's cache). */
-export const resumeCount = () => count;

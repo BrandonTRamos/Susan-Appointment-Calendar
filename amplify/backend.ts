@@ -16,7 +16,7 @@ const isProduction = process.env.AWS_BRANCH === 'main';
 
 const { cfnUserPool, cfnUserPoolClient } = backend.auth.resources.cfnResources;
 
-// No self sign-up: the owner creates every account in the Cognito console.
+// No self sign-up: the owner creates every account by hand (README, "Accounts").
 cfnUserPool.adminCreateUserConfig = { allowAdminCreateUserOnly: true };
 if (isProduction) cfnUserPool.deletionProtection = 'ACTIVE';
 
