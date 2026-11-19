@@ -1,0 +1,8 @@
+dist/
+dev-dist/
+coverage/
+.amplify/
+amplify_outputs*
+package-lock.json
+
+.scratch/

@@ -8,24 +8,24 @@ A lone agent working one ticket by hand follows the same claim, gate and pull-re
 
 The owner changes behaviour by editing this table.
 
-| Setting | Value |
-|---|---|
-| Workers running at once | 3 |
-| Who merges into `main` | The owner, one pull request per ticket |
-| Pushing branches to GitHub | Allowed |
+| Setting                    | Value                                  |
+| -------------------------- | -------------------------------------- |
+| Workers running at once    | 3                                      |
+| Who merges into `main`     | The owner, one pull request per ticket |
+| Pushing branches to GitHub | Allowed                                |
 
 ## Ticket states
 
 Git is the record of who holds what. A ticket's state is read, never remembered:
 
-| State | How to recognise it |
-|---|---|
-| **Blocked** | A ticket in its "Blocked by" line is not yet done. |
-| **Ready** | `Status: ready-for-agent`, every blocker done, and no branch named `ticket/<NN>-<slug>` on GitHub. |
-| **Claimed** | The branch `ticket/<NN>-<slug>` exists on GitHub. |
-| **In review** | That branch has an open pull request. |
-| **Done** | The ticket file on `main` reads `Status: done`. |
-| **Owner's** | `Status: ready-for-human`. Only the owner does these. |
+| State         | How to recognise it                                                                                |
+| ------------- | -------------------------------------------------------------------------------------------------- |
+| **Blocked**   | A ticket in its "Blocked by" line is not yet done.                                                 |
+| **Ready**     | `Status: ready-for-agent`, every blocker done, and no branch named `ticket/<NN>-<slug>` on GitHub. |
+| **Claimed**   | The branch `ticket/<NN>-<slug>` exists on GitHub.                                                  |
+| **In review** | That branch has an open pull request.                                                              |
+| **Done**      | The ticket file on `main` reads `Status: done`.                                                    |
+| **Owner's**   | `Status: ready-for-human`. Only the owner does these.                                              |
 
 A ticket becomes done when its pull request merges, because the worker's branch carries the change to `Status: done`. A blocker counts as done only on `main`: a finished branch that is still in review unblocks nothing.
 

@@ -11,7 +11,8 @@
 **Status:** ready-for-human
 
 - [ ] A new Amplify app exists in the same AWS account and region as the sibling apps, connected to this repository's `main` branch.
-- [ ] The environment values the README lists are set on it (Susan's time zone, the cost tag, the app's address).
+- [ ] The environment values the README lists are set on it (Susan's time zone and the cost tag).
+- [ ] The rewrite rule the README gives is set on it, so that reloading a tab or opening a link to one works.
 - [ ] The first deploy from `main` succeeds and the sign-in screen loads at the app's address.
 - [ ] An account exists for Susan and for each Admin, each with a display name, and each Admin's account is marked as an Admin's in the way the README describes.
 - [ ] One Admin has signed in successfully on a phone and on a laptop.

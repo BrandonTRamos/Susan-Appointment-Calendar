@@ -10,6 +10,7 @@ _Avoid_: Patient, care recipient, grandmother, user
 
 **Admin**:
 A person other than Susan who manages her calendar. An Admin can do everything Susan can do and nothing more.
+_Avoid_: Caregiver, family member, user, manager
 
 **Appointment**:
 Something Susan has to be at, at a set date and time, whether medical or not. Everything on the calendar is an Appointment; there are no other kinds of entry.
@@ -50,4 +51,3 @@ _Avoid_: Message, instructions, comment
 **Private notes**:
 Words on an Appointment that Admins and Susan can read in the calendar but that are never sent in a Reminder.
 _Avoid_: Admin notes, internal notes, comments
-_Avoid_: Caregiver, family member, user, manager
