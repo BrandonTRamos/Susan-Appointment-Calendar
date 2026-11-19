@@ -1,0 +1,127 @@
+# Susan's Calendar
+
+A small private web app that holds one calendar, Susan's, and texts her a Reminder before each
+Appointment. Susan and a handful of Admins sign in to add, change and cancel Appointments. It is an
+installable web app on AWS Amplify Gen 2.
+
+- **What it does and why:** [`.scratch/susans-calendar/spec.md`](.scratch/susans-calendar/spec.md)
+- **The work, ticket by ticket:** [`.scratch/susans-calendar/issues/`](.scratch/susans-calendar/issues/)
+- **The words the project uses:** [`CONTEXT.md`](CONTEXT.md)
+- **Chosen layouts:** [`docs/design/`](docs/design/README.md)
+- **Notes for contributors and AI sessions:** [`AGENTS.md`](AGENTS.md) (`CLAUDE.md` is an identical copy)
+
+So far the app is a shell: sign-in, the tabs and a placeholder behind each one. Appointments,
+Reminders and everything else arrive with the later tickets.
+
+## Run it locally
+
+Needs Node 22.
+
+```bash
+npm install
+npm run dev        # http://localhost:5173
+```
+
+With no `amplify_outputs.json` in the repo root the app runs on **sample data**: nobody signs in,
+nothing is saved, and a notice at the top says so. This is the quickest way to work on screens.
+
+## Run it against a sandbox backend
+
+A sandbox is your own copy of the backend in AWS. It needs AWS credentials for the account the
+sibling apps use.
+
+```bash
+npm run sandbox    # deploys the sandbox and writes amplify_outputs.json; leave it running
+npm run dev        # in a second terminal: now shows the sign-in screen
+```
+
+Nobody can sign up, so create an account to sign in with (see [Accounts](#accounts)), in the
+sandbox's user pool. Stop the sandbox with Ctrl+C; `npx ampx sandbox delete` removes it from AWS.
+`amplify_outputs.json` is never committed.
+
+## Commands
+
+| Command             | What it does                                                                     |
+| ------------------- | -------------------------------------------------------------------------------- |
+| `npm run dev`       | Vite dev server                                                                  |
+| `npm run build`     | Type-check and build the app into `dist/`                                        |
+| `npm run check`     | Lint, format check, type-check, tests, build and synth: run it before finishing  |
+| `npm run lint`      | ESLint                                                                           |
+| `npm run format`    | Prettier, writing changes (`format:check` only reports)                          |
+| `npm run typecheck` | TypeScript for the app and `amplify/`                                            |
+| `npm test`          | Vitest (`test:watch` reruns on change)                                           |
+| `npm run synth`     | Build the backend with no AWS access, then check its sign-in rules and cost tags |
+| `npm run sandbox`   | Deploy a personal cloud sandbox (`npx ampx sandbox`)                             |
+| `npm run icons`     | Redraw the app icons (Python with Pillow)                                        |
+
+GitHub runs lint, format check, type-check, tests, build and synth on every pull request
+(`.github/workflows/ci.yml`).
+
+## Hosting
+
+The app deploys the same way as the sibling apps: one Amplify Hosting app, connected to this
+repository's `main` branch, in the same AWS account and region. Every push to `main` runs the tests,
+deploys the backend, then builds and publishes the app (`amplify.yml`). A failing test stops the
+deploy before anything changes. `customHttp.yml` sets the security headers.
+
+Connecting the repository is ticket 03 and needs the owner. The app's address goes here once it
+exists: _not deployed yet_.
+
+### Environment values
+
+Set these on the Amplify app under **Hosting → Environment variables**, for all branches.
+
+| Name              | Value              | What it does                                                                                                                            |
+| ----------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUSAN_TIME_ZONE` | `America/New_York` | Susan's time zone. Every date and time in the calendar means her local time. US Eastern if unset; a wrong name fails the deploy.        |
+| `COST_TAG`        | `susans-calendar`  | The `project` tag on every backend resource and on the Hosting app, so the app's cost shows on its own in billing. This is the default. |
+
+Nothing else needs setting yet. Later tickets add to this table.
+
+### Rewrite rule
+
+Each tab has its own URL, so the Hosting app needs one rule that sends those URLs to the app. Under
+**Hosting → Rewrites and redirects** add a rule of type **200 (Rewrite)** with target address
+`/index.html` and this source address:
+
+```
+</^[^.]+$|\.(?!(css|gif|ico|jpg|js|png|txt|svg|woff|woff2|ttf|map|json|webp|webmanifest)$)([^.]+$)/>
+```
+
+Without it, reloading a tab or opening a link to one, such as `/month`, shows "not found".
+
+## Accounts
+
+Nobody can create their own account. The owner creates each one, with the AWS CLI or in the Cognito
+console. The user pool's ID is in the Cognito console's list of user pools, and in
+`amplify_outputs.json` for a sandbox.
+
+```bash
+# An account, with the name the calendar should call the person (a first name is enough).
+aws cognito-idp admin-create-user --user-pool-id <pool-id> --username <email> \
+  --user-attributes Name=email,Value=<email> Name=email_verified,Value=true Name=name,Value=<name>
+
+# For an Admin only: mark the account as an Admin's.
+aws cognito-idp admin-add-user-to-group --user-pool-id <pool-id> --username <email> --group-name Admins
+```
+
+Cognito emails the person a temporary password, and the app asks them to choose their own the first
+time they sign in. The Cognito console can do the same two steps: create the user with a `name`
+attribute, then add it to the `Admins` group.
+
+- **Display name.** The `name` attribute is what the app shows for the person and, later, beside each
+  change they make. Every account must have one: if it is left out when the account is created, the
+  person is asked for it the first time they sign in.
+- **Admins.** Susan's account is the one account that is not in the `Admins` group. The group only
+  decides who receives Alerts, passed-on Replies and Activity updates. It gives no extra rights:
+  everyone signed in can do everything.
+- **Staying signed in.** Sign-in is an email and a password, with no code to enter. A person stays
+  signed in on a device until they sign out or the owner disables their account. One exception:
+  Safari can forget a website's sign-in after seven days without a visit, unless the app has been added
+  to the home screen. Add it to the home screen on Susan's iPhone.
+
+## Add it to a phone's home screen
+
+Open the app's address in Safari on an iPhone (or Chrome on Android), then **Share → Add to Home
+Screen**. It then opens like an app. When a new version has been deployed, a bar at the top offers
+**Refresh**.

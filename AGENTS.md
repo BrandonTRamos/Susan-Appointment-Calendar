@@ -17,6 +17,30 @@ Before finishing a change, check each of these and update the ones it affects:
 
 If you find a document that is already out of date, fix it or tell the owner; do not work around it.
 
+## The project
+
+Susan's Calendar: a private web app that holds Susan's Appointments and texts her Reminders. The spec is `.scratch/susans-calendar/spec.md`; the work is the numbered tickets beside it. It follows the owner's sibling app Wellbeing (the `Wellbeing-App` repository): copy its conventions, and where Wellbeing and Personal Command Center differ, follow Wellbeing.
+
+## Commands
+
+Node 22 (`.nvmrc`). `npm run check` is the gate: lint, format check, type-check, tests, build, and the backend synth check, the same steps as `.github/workflows/ci.yml`. Run it before finishing any change. The single steps are in `package.json`.
+
+- `npm run dev` with no `amplify_outputs.json` runs the app on sample data with nobody signed in. `npm run sandbox` (needs AWS credentials) writes that file; then `npm run dev` shows the sign-in screen.
+- `npm run synth` builds the backend with no AWS access and then checks the sign-in rules and cost tags in the result (`scripts/synth.mjs`). Add a check there when a ticket adds a rule the backend must keep.
+- `npm run icons` needs Python with Pillow; `uv run --with pillow python scripts/make-icons.py` supplies it.
+
+## Conventions
+
+- **Layout.** `src/` is the app: `routes/` (one file per screen), `components/`, `lib/` (shared logic and hooks; its pure modules are also imported by `amplify/`), `test/`. `amplify/` is the Gen 2 backend. Styles are hand-built in `src/styles.css`: no component, form, date or state library.
+- **Tests sit beside the code** as `*.test.ts(x)`. Screen tests start with `// @vitest-environment jsdom` and check what a person sees; `src/App.test.tsx` renders the whole `<App>`. Tests run in `Pacific/Auckland` (`vite.config.ts`) to prove nothing reads the machine's time zone.
+- **Susan's time zone** comes only from `resolveTimeZone` in `src/lib/timeZone.ts`: the `SUSAN_TIME_ZONE` environment value at deploy, US Eastern by default, passed to the app through `amplify_outputs.json`. Read every date and time through it.
+- **Two layouts, one switch.** `useDesktopWidth` (`src/lib/useDesktopWidth.ts`) picks the phone layout (bottom tab bar) or the desktop layout (sidebar, current tab, detail panel). `src/styles.css` holds no width queries. Screen tests choose a width with `atWidth` in `src/App.test.tsx`.
+- **Each tab has a URL**: a route in `src/App.tsx` and a link in `TABS` in `src/components/Navigation.tsx`. A new tab needs both.
+- **Settings sections are separate files** under `src/routes/settings/`, one per section, so tickets that fill different sections never touch the same file.
+- **Accounts.** The owner creates every account by hand (README, "Accounts"). The display name is the `name` attribute; an Admin's account is in the `Admins` group, and Susan's is the one account outside it. The group grants no rights. The sign-in rules live in `amplify/auth/resource.ts` and `amplify/backend.ts`.
+- **Appearance** follows the device, light or dark, through CSS variables in `src/styles.css`. Base type is 18px and controls are at least 52px tall; keep new screens at that scale.
+- **Hosting.** `amplify.yml` runs the tests before every deploy; `customHttp.yml` sets the security headers. The content security policy allows only same-origin scripts, so keep scripts out of `index.html`. Every backend resource carries the `project` cost tag (`amplify/cost-tags.ts`).
+
 ## Agent skills
 
 ### Issue tracker
