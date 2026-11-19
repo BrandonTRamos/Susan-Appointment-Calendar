@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 
-This spec uses the vocabulary in `CONTEXT.md` (Susan, Admin, Appointment, Series, Reminder, Change notice, Reply, Alert, Activity update, Driver, Note for Susan, Private notes) and respects ADR 0001 (text messages are sent through Twilio, not AWS). The repo is empty apart from agent docs, so everything below is new.
+This spec uses the vocabulary in `CONTEXT.md` (Susan, Admin, Appointment, Series, Reminder, Change notice, Confirmation text, Reply, Alert, Activity update, Public pages, Driver, Note for Susan, Private notes) and respects ADR 0001 (text messages are sent through Twilio, not AWS). The repo is empty apart from agent docs, so everything below is new.
 
 ## Problem Statement
 
@@ -255,7 +255,8 @@ Admins are kept in the loop. They get an Alert, by email and app notification, w
 ### Settings and public page
 
 - Settings hold Susan's mobile number and the contact name and phone number for the automatic answer. Twilio credentials are held as a deployment secret, never in data or code.
-- A public page, reachable without signing in, carries a short description of the service, a contact address, a privacy policy stating that phone numbers and consent are never shared with third parties, and terms covering message frequency, "message and data rates may apply", and STOP and HELP. Twilio's registration cannot be submitted until this page is live.
+- A public page at `/about`, reachable without signing in, carries a short description of the service, a contact address, the words read to Susan to ask for her consent, a privacy policy stating that phone numbers and consent are never shared with third parties, and terms covering message frequency, "message and data rates may apply", and STOP and HELP. The policy and the terms also have a page each, at `/privacy` and `/terms`, because Twilio's registration asks for a direct address for each. Twilio's registration cannot be submitted until these pages are live.
+- The contact address and the owner's name shown on the public pages are set at deploy, from the environment, and are not written in the repository.
 
 ### Screens
 
@@ -303,7 +304,9 @@ Admins are kept in the loop. They get an Alert, by email and app notification, w
 
 - **Order of work matters.** Twilio's registration takes up to about a week and cannot be submitted until the public page is live at the app's address. The deployable shell and the public page should therefore come first, so that registration runs while the rest is built. Until it is approved, the text sender can only be exercised against a stand-in.
 - **Only the owner can do these:** open and fund the Twilio account and submit the Sole Proprietor brand and campaign registration (the wording, sample messages and consent script should be drafted for him); read the consent script to Susan and record the date; connect the repository to a new Amplify app; create the accounts; save the dedicated number in Susan's iPhone contacts under a name she will recognize.
-- **To confirm against current documentation during the build:** the values and timing of Twilio's delivery reports and how an opt-out is reported; whether Twilio's registration requires opt-out wording in every message or only in the consent confirmation (it should not be in every Reminder if avoidable, since it invites a forgetful person to reply STOP); and the Alert email question noted above.
+- **To confirm against current documentation during the build:** the values and timing of Twilio's delivery reports and how an opt-out is reported; and the Alert email question noted above.
+- **Confirmed in ticket 02 (19 November 2026):** Twilio requires opt-out wording only in the first text to a recipient, which is the confirmation of her consent, and in one sample message of the registration. Reminders and Change notices do not carry it, so their wording above stands. The Confirmation text is sent once, by hand, from Twilio's Console when the app goes live (ticket 18); the app does not send or record it. The sources are in `docs/twilio-registration-pack.md`.
+- **Open since ticket 02, for the owner:** Twilio's error 30532, added in September 2026, says a registration for texting only family members is not eligible, while older Twilio pages say a hobbyist may register as a Sole Proprietor. ADR 0001 rests on the older pages. The registration pack opens with the question to put to Twilio Support before any fee is paid. A second, smaller risk is that Twilio wants every text to name the registered person and not "Susan's Calendar" (error 30914).
 - **The 30-minute "not confirmed delivered" period is a starting guess.** If carriers often omit confirmations it will raise false Alerts and should be lengthened.
 - **Expected running cost:** about $20 once and $4 to $5 a month to Twilio, plus a small AWS bill in line with the sibling apps.
 - Consent, Susan's phone number and Appointment details are personal information about one private person. Nothing in logs, error messages or Alerts should include more of it than the reader needs.

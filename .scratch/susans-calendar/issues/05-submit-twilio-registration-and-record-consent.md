@@ -2,7 +2,7 @@
 
 **What to do:** Register with Twilio as the sender of Susan's texts and get her agreement on record. It needs the owner's identity, payment details and a conversation with Susan, so an agent cannot do it. Twilio's review takes up to about a week; start this as soon as its blockers are done.
 
-Follow the registration pack that ticket 02 produced. It has the text for every field and the script to read to Susan.
+Follow the registration pack that ticket 02 produced, `docs/twilio-registration-pack.md`. It has the text for every field and the script to read to Susan. Read its first section before paying anything: Twilio's documentation now says a registration for texting only family members may not be eligible, and the pack has the question to put to Twilio Support. The pack keeps the filled-in record of consent out of this repository, which is public, and explains when to read the script so that the confirmation text can follow it at once.
 
 **Spec:** `.scratch/susans-calendar/spec.md`, "Further Notes"; `docs/adr/0001-twilio-for-text-messages.md`.
 
