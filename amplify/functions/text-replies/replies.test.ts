@@ -89,7 +89,9 @@ describe('the reply address', () => {
     const { handler, store, core, messenger, sender } = await replyAddress();
     const answer = await handler(request());
     expect(answer.statusCode).toBe(200);
-    expect(store.replies()).toMatchObject([{ words: WORDS, numberRevision: 1, receivedAt: NOW }]);
+    expect(store.replies()).toMatchObject([
+      { words: WORDS, numberId: (await store.settings()).numberId, receivedAt: NOW },
+    ]);
     await core.runDue();
     expect(
       messenger

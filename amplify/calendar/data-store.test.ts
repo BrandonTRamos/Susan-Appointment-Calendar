@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   createCalendarCore,
   createFixedClock,
@@ -42,7 +42,11 @@ function dataApi() {
   let failure: string | null = null;
   const answer = <T>(data: T) =>
     failure ? { data: null, errors: [{ message: failure }] } : { data };
-  const model = (rows: Map<string, Row>) => ({
+  /**
+   * `removesNulls`: an update removes a field given as null, as the data API's own does; the
+   * settings' destination ID relies on it. The other models' tests keep nulls as written.
+   */
+  const model = (rows: Map<string, Row>, removesNulls = false) => ({
     async get({ id }: { id: string }) {
       return answer(rows.get(id) ?? null);
     },
@@ -74,9 +78,12 @@ function dataApi() {
       rows.set(input.id, row);
       return answer(row);
     },
+    // As the data API's own update does: only the fields given are written.
     async update(input: Row) {
       if (failure) return answer(null);
-      const row = { ...rows.get(input.id), ...input, updatedAt: '2026-11-19T21:00:01.000Z' };
+      const row: Row = { ...rows.get(input.id)!, ...input, updatedAt: '2026-11-19T21:00:01.000Z' };
+      if (removesNulls)
+        for (const [field, value] of Object.entries(input)) if (value === null) delete row[field];
       rows.set(input.id, row);
       return answer(row);
     },
@@ -152,7 +159,7 @@ function dataApi() {
           return { ...answer(rows), nextToken: null };
         },
       },
-      CalendarSettings: model(tables.CalendarSettings),
+      CalendarSettings: model(tables.CalendarSettings, true),
       Reply: model(tables.Reply),
       CalendarAlert: model(tables.CalendarAlert),
       RepliesSeen: {
@@ -180,6 +187,27 @@ function dataApi() {
         if (!row || row.personId !== personId.eq) throw refusedCondition;
         agentKeys.delete(hash);
         return { data: { deleteAgentKey: { hash } } };
+      }
+      // Susan's number given its destination ID: only while the kept number is the one confirmed
+      // and has none, as DynamoDB checks `eq` and `attributeExists` when it writes.
+      if (query.includes('updateCalendarSettings(input: $input, condition: $condition)')) {
+        const input = variables.input as Row;
+        const { and } = variables.condition as {
+          and: Record<string, { eq?: unknown; attributeExists?: boolean }>[];
+        };
+        const row = tables.CalendarSettings.get(input.id);
+        const holds =
+          row &&
+          and.every((each) =>
+            Object.entries(each).every(([field, test]) =>
+              'attributeExists' in test
+                ? (field in row && row[field] !== undefined) === test.attributeExists
+                : row[field] === test.eq,
+            ),
+          );
+        if (!holds) throw conditionFailed();
+        tables.CalendarSettings.set(input.id, { ...row, ...input });
+        return { data: { updateCalendarSettings: { id: input.id } } };
       }
       // A person's mark of the Replies seen: moved on only while the kept one is earlier.
       if (query.includes('updateRepliesSeen(input: $input, condition: $condition)')) {
@@ -224,6 +252,11 @@ function dataApi() {
     agentKeys: () => [...agentKeys.values()],
     texts: () => [...tables.Text.values()],
     replies: () => [...tables.Reply.values()],
+    settingsRows: () => [...tables.CalendarSettings.values()],
+    /** Puts a row of settings in as one kept before a field existed. */
+    keepSettingsRow(row: Row) {
+      tables.CalendarSettings.set(row.id, row);
+    },
     calendarAlerts: () => [...tables.CalendarAlert.values()],
     /** The index stops hearing of changes until it is told to catch up. */
     freezeIndex() {
@@ -734,7 +767,7 @@ describe('the calendar kept in the data API', () => {
     expect(api.replies()[0]).toMatchObject({
       id: 'reply:abc',
       words: 'On my way',
-      numberRevision: 1,
+      numberId: (await store.settings()).numberId,
       answer: 'sent',
       passOn: 'sending',
       passOnTries: 1,
@@ -831,13 +864,98 @@ describe('the calendar kept in the data API', () => {
       susansNumber: null,
       contactName: null,
       contactPhone: null,
-      numberRevision: 0,
+      numberId: null,
       lastChanged: null,
     });
     await core.changeSettings(linda, { susansNumber: '555 555 0123' });
     const changed = await core.changeSettings(linda, { contactName: 'Linda' });
     expect(await store.settings()).toEqual(changed);
-    expect(changed.numberRevision).toBe(1);
+    expect(changed.numberId).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("writes her number and its destination ID together, and a contact's save neither", async () => {
+    const { api, core } = calendar();
+    const models = api.client.models.CalendarSettings;
+    const create = vi.spyOn(models, 'create');
+    const update = vi.spyOn(models, 'update');
+    await core.changeSettings(linda, { susansNumber: '555 555 0123', contactName: 'Linda' });
+    // The first save makes the row, with the number and its ID in the one write.
+    expect(create).toHaveBeenCalledTimes(1);
+    const made = create.mock.calls[0][0] as Record<string, unknown>;
+    expect(made).toMatchObject({
+      id: 'settings',
+      susansNumber: '+15555550123',
+      contactName: 'Linda',
+    });
+    expect(made.numberId).toMatch(/^[0-9a-f-]{36}$/);
+    // A save of the contact writes the contact alone.
+    await core.changeSettings(linda, { contactName: 'Mark', contactPhone: '5555550187' });
+    const contact = update.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(Object.keys(contact).sort()).toEqual(
+      ['contactName', 'contactPhone', 'id', 'lastChanged'].sort(),
+    );
+    // A new number writes the number and a new ID together, and nothing else of Settings.
+    await core.changeSettings(linda, { susansNumber: '5555550142' });
+    const number = update.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(Object.keys(number).sort()).toEqual(
+      ['id', 'lastChanged', 'numberId', 'susansNumber'].sort(),
+    );
+    expect(number.numberId).not.toBe(made.numberId);
+    // Clearing it removes both.
+    await core.changeSettings(linda, { susansNumber: null });
+    expect(api.settingsRows()[0]).not.toHaveProperty('susansNumber');
+    expect(api.settingsRows()[0]).not.toHaveProperty('numberId');
+    expect(api.settingsRows()[0]).toMatchObject({ contactName: 'Mark' });
+  });
+
+  it("never puts back a replaced number by a contact's save begun before it was replaced", async () => {
+    const { api, store, core } = calendar();
+    await core.changeSettings(linda, { susansNumber: '555 555 0123', contactName: 'Linda' });
+    // The contact's save read Settings before the number changed; its write lands after.
+    const stale = await store.settings();
+    await core.changeSettings(linda, { susansNumber: '5555550142' });
+    const replaced = await store.settings();
+    await store.keepSettings({ contactName: 'Ann', lastChanged: stale.lastChanged });
+    expect(api.settingsRows()[0]).toMatchObject({
+      susansNumber: '+15555550142',
+      numberId: replaced.numberId,
+      contactName: 'Ann',
+    });
+  });
+
+  it('reads Settings kept before ticket 17 as unbound, and binds the same number on condition', async () => {
+    const { api, store, core } = calendar();
+    // As production holds them: her number, saved before Replies, with no destination ID.
+    api.keepSettingsRow({ id: 'settings', susansNumber: '+15555550123', contactName: 'Linda' });
+    expect(await store.settings()).toMatchObject({ susansNumber: '+15555550123', numberId: null });
+    // A Reply is kept and passed on, but bound to nothing.
+    const reply = (await core.receiveReply({ key: 'r1', words: 'Hi', from: '+15555550123' }))!;
+    expect(reply).toMatchObject({ numberId: null, answer: 'unbound' });
+    expect(api.replies()[0]).not.toHaveProperty('susansNumber');
+    // Confirming another number binds nothing.
+    await core.changeSettings(linda, { confirmSusansNumber: '5555550142' });
+    expect(api.settingsRows()[0]).not.toHaveProperty('numberId');
+    // Confirming the number as it is gives it an ID, by a write conditioned on it.
+    const graphql = vi.spyOn(api.client, 'graphql');
+    const bound = await core.changeSettings(linda, { confirmSusansNumber: '(555) 555-0123' });
+    expect(bound.numberId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(api.settingsRows()[0]).toMatchObject({
+      susansNumber: '+15555550123',
+      numberId: bound.numberId,
+    });
+    expect(graphql.mock.calls[0][0].variables).toMatchObject({
+      input: { id: 'settings', numberId: bound.numberId },
+      condition: {
+        and: [{ susansNumber: { eq: '+15555550123' } }, { numberId: { attributeExists: false } }],
+      },
+    });
+    // Once bound, confirming again changes nothing.
+    await core.changeSettings(linda, { confirmSusansNumber: '5555550123' });
+    expect(api.settingsRows()[0].numberId).toBe(bound.numberId);
+    // A bind whose number was replaced meanwhile is refused as it is written.
+    expect(await store.bindSusansNumber('+15555550199', 'another-id', bound.lastChanged!)).toBe(
+      false,
+    );
   });
 
   it('fails the command when the data API reports an error', async () => {

@@ -70,6 +70,12 @@ function ReplyItem({
         {isNew && <span className="badge new">New</span>}
       </p>
       <p className="quoted reply-words">{reply.words || '(It had no words.)'}</p>
+      {reply.answer === 'unbound' && (
+        <p className="muted">
+          No automatic answer: Susan's number in Settings had not been confirmed when it came. Save
+          Settings once to confirm it.
+        </p>
+      )}
       {reply.answer === 'numberChanged' && (
         <p className="muted">
           No automatic answer: Susan's mobile number was changed in Settings after it came.

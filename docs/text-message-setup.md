@@ -91,7 +91,7 @@ Before starting, on that branch:
 
 1. `npm run sandbox` (README, "Run it against a sandbox backend") with AWS credentials, and `npx ampx sandbox secret set TEXTBELT_KEY` with the key. The sandbox has its own reply address; every text it sends names it.
 2. Create an Admin account in the sandbox's user pool (README, "Accounts"), then `npm run dev` and sign in. Turn on app notifications on a device; for Alert emails, set `ALERT_EMAIL_FROM` and verify the addresses (README, "Alert emails"), or check app notifications only.
-3. In **Settings → Susan's phone and contact**, enter the owner's own mobile number in Susan's place, and a contact name and number.
+3. In **Settings → Susan's phone and contact**, enter the owner's own mobile number in Susan's place, and a contact name and number, and save. On a fresh sandbox this gives the number its destination ID; on Settings saved before ticket 17 the section asks for one more save to confirm the number, and until then Replies are passed on with no automatic answer.
 
 Then:
 

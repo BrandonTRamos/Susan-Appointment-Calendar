@@ -226,8 +226,9 @@ export function toSettings(row: Kept<SettingsRow, CalendarSettings>): CalendarSe
     susansNumber: row.susansNumber ?? null,
     contactName: row.contactName ?? null,
     contactPhone: row.contactPhone ?? null,
-    // Settings kept before ticket 17 have none: their number is the first revision there was.
-    numberRevision: row.numberRevision ?? 0,
+    // Settings kept before ticket 17 have none: their number is bound to no destination until
+    // it is confirmed.
+    numberId: row.numberId ?? null,
     lastChanged: row.lastChanged ? toStamp(row.lastChanged) : null,
   };
 }
@@ -262,7 +263,7 @@ export function toReply(row: Kept<ReplyRow, Reply> & Partial<ReplyRow>): Reply {
     id: row.id,
     words: row.words,
     receivedAt: row.receivedAt,
-    numberRevision: row.numberRevision,
+    numberId: row.numberId ?? null,
     answer: row.answer ?? 'due',
     answerTextId: row.answerTextId ?? null,
     passOn:

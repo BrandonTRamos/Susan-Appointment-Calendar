@@ -146,12 +146,14 @@ export interface CalendarSettings {
   contactName: string | null;
   contactPhone: string | null;
   /**
-   * How many times Susan's mobile number has been set, changed or cleared: it moves on with each
-   * change of the number, and with nothing else. A Reply keeps the revision it came in under, so an
-   * automatic answer never goes to a number that has replaced the one the Reply came from, without
-   * a second copy of any number being kept.
+   * Which destination her number is: a fresh random ID made each time the number is set or
+   * changed, kept in the same write as the number, and null while no number is set. Never derived
+   * from the number, so two saves at once, or a number entered again, are never the same
+   * destination. A Reply keeps the one it came in under, and its automatic answer goes only while
+   * Settings still hold it. Null too on Settings kept before ticket 17, until the number is
+   * confirmed (SettingsChanges.confirmSusansNumber).
    */
-  numberRevision: number;
+  numberId: string | null;
   /** Null until someone changes them. */
   lastChanged: Stamp | null;
 }
@@ -160,7 +162,7 @@ export const NO_SETTINGS: CalendarSettings = {
   susansNumber: null,
   contactName: null,
   contactPhone: null,
-  numberRevision: 0,
+  numberId: null,
   lastChanged: null,
 };
 

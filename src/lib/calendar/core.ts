@@ -142,7 +142,14 @@ export type RefusalField = Detail | 'reminders' | 'repeat' | 'ends' | SettingNam
 
 /** The settings a person can change. */
 export type SettingName = 'susansNumber' | 'contactName' | 'contactPhone';
-export type SettingsChanges = Partial<Record<SettingName, string | null>>;
+export type SettingsChanges = Partial<Record<SettingName, string | null>> & {
+  /**
+   * Her number as the person saving saw it, to confirm it as her destination when Settings kept
+   * before ticket 17 hold it with no destination ID. It changes no number: when the kept number is
+   * another, or already has an ID, it does nothing.
+   */
+  confirmSusansNumber?: string | null;
+};
 
 /**
  * A command the core would not carry out. Nothing was changed. The message is written for the
@@ -1428,20 +1435,38 @@ export function createCalendarCore({
           invalid(`Keep the name to ${CONTACT_NAME_LIMIT} characters or fewer.`, 'contactName');
         next.contactName = name || null;
       }
-      const same =
-        next.susansNumber === current.susansNumber &&
-        next.contactName === current.contactName &&
-        next.contactPhone === current.contactPhone;
-      if (same) return current;
-      const changed: CalendarSettings = {
-        ...next,
-        // Moves on with her number alone: a new contact leaves Replies still to be answered.
-        numberRevision:
-          current.numberRevision + (next.susansNumber === current.susansNumber ? 0 : 1),
-        lastChanged: stamp(by, clock.now().toISOString()),
-      };
-      await store.keepSettings(changed);
-      return changed;
+      // Only what changed is written, so a save never puts back what another save changed since
+      // it read. A new number gets a new destination ID in the same write: never one another
+      // save could also have made, and never one it had before.
+      const write: Partial<CalendarSettings> = {};
+      if (next.susansNumber !== current.susansNumber) {
+        write.susansNumber = next.susansNumber;
+        write.numberId = next.susansNumber ? crypto.randomUUID() : null;
+      }
+      if (next.contactName !== current.contactName) write.contactName = next.contactName;
+      if (next.contactPhone !== current.contactPhone) write.contactPhone = next.contactPhone;
+      // Settings kept before ticket 17 have her number with no destination ID: saving it as it is
+      // gives it one, only if it is still that number with none when written.
+      const confirmed =
+        typeof given.confirmSusansNumber === 'string'
+          ? usPhoneNumber(given.confirmSusansNumber.trim())
+          : null;
+      const bind =
+        write.susansNumber === undefined &&
+        current.susansNumber !== null &&
+        current.numberId === null &&
+        confirmed === current.susansNumber;
+      if (Object.keys(write).length === 0 && !bind) return current;
+      const lastChanged = stamp(by, clock.now().toISOString());
+      let kept: CalendarSettings = { ...current, ...write, lastChanged };
+      if (Object.keys(write).length) await store.keepSettings({ ...write, lastChanged });
+      if (bind) {
+        const numberId = crypto.randomUUID();
+        if (await store.bindSusansNumber(current.susansNumber!, numberId, lastChanged))
+          kept = { ...kept, numberId };
+        else kept = await store.settings();
+      }
+      return kept;
     },
 
     async sendTestText() {
@@ -1498,7 +1523,7 @@ export function createCalendarCore({
         if (text.kind === 'automaticAnswer') {
           const current = await store.settings();
           const reply = replies.find((each) => each.id === text.replyId);
-          to = reply?.numberRevision === current.numberRevision ? current.susansNumber : null;
+          to = reply?.numberId && reply.numberId === current.numberId ? current.susansNumber : null;
           if (!to) {
             const next = alertMarked({
               ...text,
@@ -1620,7 +1645,7 @@ export function createCalendarCore({
           continue;
         }
         const current = await store.settings();
-        if (reply.numberRevision !== current.numberRevision || !current.susansNumber) {
+        if (!reply.numberId || reply.numberId !== current.numberId || !current.susansNumber) {
           await mark(reply, { answer: 'numberChanged', answerTextId: null });
           continue;
         }
@@ -1728,7 +1753,7 @@ export function createCalendarCore({
 
     async receiveReply({ key, words, from }) {
       const kept = typeof key === 'string' && /^[\w:-]{1,128}$/.test(key) ? key : null;
-      const { susansNumber, numberRevision } = await store.settings();
+      const { susansNumber, numberId } = await store.settings();
       const number = typeof from === 'string' ? usPhoneNumber(from) : null;
       // Only Susan's number, as Settings have it now: from any other, or while none is set, nothing
       // is kept, passed on or answered. Which it was is never said.
@@ -1737,8 +1762,9 @@ export function createCalendarCore({
         id: `reply:${kept ?? crypto.randomUUID()}`,
         words: replyWords(words),
         receivedAt: clock.now().toISOString(),
-        numberRevision,
-        answer: 'due',
+        // Null when her number has no destination ID: kept and passed on, answered by no text.
+        numberId,
+        answer: numberId ? 'due' : 'unbound',
         answerTextId: null,
         passOn: NEW_ALERT,
       };

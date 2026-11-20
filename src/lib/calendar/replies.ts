@@ -8,13 +8,14 @@ import { troubleOf, type Alert } from './alerts';
 import { basicCharacters } from './reminders';
 import { formatPhone, type CalendarSettings, type MessageProgress, type Text } from './texts';
 
-export const REPLY_ANSWERS = ['due', 'sent', 'recent', 'numberChanged'] as const;
+export const REPLY_ANSWERS = ['due', 'sent', 'recent', 'numberChanged', 'unbound'] as const;
 /**
  * What became of the automatic answer to a Reply. Due: the next scheduled run decides. Sent: the
  * automatic answer was sent for it (its text's record, `answerTextId`, says how that went). Recent:
  * none, because one was sent less than AUTOMATIC_ANSWER_GAP before. NumberChanged: none, because
  * Susan's mobile number in Settings changed after it came, so the number it came from is no longer
- * the one texts go to.
+ * the one texts go to. Unbound: none, because her number in Settings had no destination ID when it
+ * came (Settings saved before ticket 17, not yet confirmed), so nothing ties it to a number.
  */
 export type ReplyAnswer = (typeof REPLY_ANSWERS)[number];
 
@@ -27,11 +28,11 @@ export interface Reply {
   /** When the calendar received it, as an ISO timestamp. */
   receivedAt: string;
   /**
-   * Which of Susan's numbers it came from, as the revision of her number in Settings when it came
-   * (CalendarSettings.numberRevision), never the number itself. The automatic answer goes only
-   * while her number is still that one.
+   * Which destination it came from: the ID of Susan's number in Settings when it came
+   * (CalendarSettings.numberId), never the number itself; null when her number had none. The
+   * automatic answer goes only while Settings still hold that ID.
    */
-  numberRevision: number;
+  numberId: string | null;
   answer: ReplyAnswer;
   /** The record of the automatic answer sent for it, once one was. */
   answerTextId: string | null;
@@ -130,6 +131,8 @@ export function replyPassedOn(
     recent: 'She was not sent the automatic answer again: she had it less than an hour before.',
     numberChanged:
       "She was not sent the automatic answer: Susan's mobile number was changed in Settings after it came.",
+    unbound:
+      'She was not sent the automatic answer: her number in Settings has not been confirmed since Replies began. Saving Settings once confirms it.',
   };
   const subject = "Susan's Calendar: Susan texted back";
   const lead = `Susan texted back to the calendar's number, ${when}:`;

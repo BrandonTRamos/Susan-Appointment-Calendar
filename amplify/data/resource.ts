@@ -239,8 +239,9 @@ const schema = a
         susansNumber: a.string(),
         contactName: a.string(),
         contactPhone: a.string(),
-        // Moves on with each change of Susan's number (CalendarSettings in texts.ts).
-        numberRevision: a.integer(),
+        // The destination ID of Susan's number, made afresh with each change of it and written in
+        // the same write (CalendarSettings in texts.ts). Missing on Settings kept before ticket 17.
+        numberId: a.string(),
         lastChanged: a.ref('Stamp'),
       })
       .authorization((allow) => [allow.authenticated().to(['read'])]),
@@ -251,8 +252,9 @@ const schema = a
       .model({
         words: a.string().required(),
         receivedAt: a.datetime().required(),
-        // The revision of Susan's number it came in under (CalendarSettings), never a number.
-        numberRevision: a.integer().required(),
+        // The destination ID of Susan's number it came in under (CalendarSettings), never a
+        // number; missing when her number had none.
+        numberId: a.string(),
         answer: a.enum(REPLY_ANSWERS),
         answerTextId: a.string(),
         passOn: a.enum(ALERT_STATES),

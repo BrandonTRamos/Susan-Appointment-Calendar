@@ -4,7 +4,7 @@
 // The ports are the store, the clock, the text sender and the Admin messenger.
 
 import type { AgentKey } from './agentKeys';
-import type { ActivityRecord, Appointment } from './appointment';
+import type { ActivityRecord, Appointment, Stamp } from './appointment';
 import type { CalendarAlert } from './alerts';
 import type { Reply } from './replies';
 import type { Series } from './series';
@@ -47,7 +47,17 @@ export interface Store {
   replaceText(text: Text): Promise<void>;
   /** Where texts go, and who Susan is told to call; NO_SETTINGS until someone sets them. */
   settings(): Promise<CalendarSettings>;
-  keepSettings(settings: CalendarSettings): Promise<void>;
+  /**
+   * Writes only the settings given, leaving the rest as they are when written, so that a save of
+   * the contact never puts back a number another save replaced. `susansNumber` and `numberId` are
+   * always given together, and written in the one write.
+   */
+  keepSettings(changes: Partial<CalendarSettings>): Promise<void>;
+  /**
+   * Gives her number its destination ID, only if, as it is written, the kept number is `number` and
+   * has none yet (Settings kept before ticket 17). In one step. Answers whether it did.
+   */
+  bindSusansNumber(number: string, numberId: string, lastChanged: Stamp): Promise<boolean>;
   recordActivity(record: ActivityRecord): Promise<void>;
   /** Every Appointment in the calendar, active and cancelled, in any order. */
   everyAppointment(): Promise<Appointment[]>;

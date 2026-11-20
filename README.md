@@ -262,7 +262,15 @@ one: no word in it changes, cancels or confirms anything. A person reads it.
   at once; the Replies tab says which Replies had none. It goes only while Susan's number is still
   the one the Reply came from: once the number changes, a Reply not yet answered, or an answer
   waiting to be tried again, sends nothing to the new number, though the Reply is still passed on.
-  A change to the contact alone changes nothing. An answer that fails raises an Alert.
+  A change to the contact alone changes nothing. Each time her number is saved it gets a new
+  destination ID, kept with it, so two saves at once, or a number entered again, never let an
+  answer go to a number the Reply did not come from; and a save writes only what changed, so a
+  page left open never puts an old number back. An answer that fails raises an Alert.
+- **A number saved before Replies.** Settings saved before ticket 17 (such as the owner's own
+  number from ticket 13) have no destination ID. Replies still arrive and are passed on, but none
+  gets an automatic answer, and Settings says so. Open **Settings → Susan's phone and contact** and
+  press **Save** once, with the number as it is: that confirms it, and only Replies after that are
+  answered. It binds nothing if her number was changed elsewhere meanwhile.
 - **The Replies tab** lists her Replies newest first, with when each came, what she wrote, and what
   became of the automatic answer. The tab shows how many each person has not yet seen; opening it
   counts them seen, on every device that person uses. What each person has seen only ever moves

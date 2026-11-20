@@ -41,7 +41,7 @@ A text message Susan sends back to the number her Reminders come from. A Reply i
 _Avoid_: Response, confirmation, inbound message
 
 **Automatic answer**:
-The text Susan is sent when she sends a Reply, saying texts to that number are not answered and who to call, from Settings. It goes at most once an hour. It is not a Reminder.
+The text Susan is sent when she sends a Reply, saying texts to that number are not answered and who to call, from Settings. It goes at most once an hour, and only to the number the Reply came from, while Settings still hold it. It is not a Reminder.
 _Avoid_: Auto-reply, acknowledgement, response
 
 **Alert**:

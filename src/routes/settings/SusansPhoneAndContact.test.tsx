@@ -3,7 +3,7 @@ import { act, cleanup, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createSampleCalendar, SAMPLE_NUMBER } from '../../data/sampleCalendar';
-import { atWidth, EASTERN, renderApp } from '../../test/renderApp';
+import { atWidth, EASTERN, mark, renderApp } from '../../test/renderApp';
 
 const realMatchMedia = window.matchMedia;
 beforeEach(() => atWidth('phone'));
@@ -46,6 +46,44 @@ describe("the Susan's phone and contact section of Settings", () => {
       susansNumber: SAMPLE_NUMBER,
       contactName: 'Linda',
       contactPhone: '+15555550187',
+    });
+  });
+
+  it("never puts back Susan's number when a page left open saves only the contact", async () => {
+    const user = userEvent.setup();
+    const calendar = createSampleCalendar(EASTERN, { empty: true });
+    renderApp('/settings', { calendar });
+    const name = await section().findByRole('textbox', { name: 'Who Susan should call' });
+    // Someone else changes her number on another page after this one read it.
+    const changed = await act(() =>
+      calendar.core.changeSettings(mark, { susansNumber: '5555550142' }),
+    );
+    await user.type(name, 'Linda');
+    await user.click(section().getByRole('button', { name: 'Save' }));
+    expect(await section().findByRole('status')).toHaveTextContent('Saved.');
+    expect(await calendar.store.settings()).toMatchObject({
+      susansNumber: '+15555550142',
+      numberId: changed.numberId,
+      contactName: 'Linda',
+    });
+  });
+
+  it('confirms a number saved before Replies when Settings are saved as they are', async () => {
+    const user = userEvent.setup();
+    const calendar = createSampleCalendar(EASTERN, { empty: true });
+    await calendar.settings();
+    // As Settings kept before ticket 17 read: her number, with no destination ID.
+    await calendar.store.keepSettings({ numberId: null });
+    renderApp('/settings', { calendar });
+    expect(await section().findByRole('note')).toHaveTextContent(
+      "Save once to confirm Susan's number for automatic answers.",
+    );
+    await user.click(section().getByRole('button', { name: 'Save' }));
+    expect(await section().findByRole('status')).toHaveTextContent('Saved.');
+    expect(section().queryByRole('note')).not.toBeInTheDocument();
+    expect(await calendar.store.settings()).toMatchObject({
+      susansNumber: SAMPLE_NUMBER,
+      numberId: expect.stringMatching(/^[0-9a-f-]{36}$/),
     });
   });
 

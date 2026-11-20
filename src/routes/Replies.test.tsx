@@ -112,6 +112,20 @@ describe.each(['phone', 'desktop'] as const)('the Replies tab, at %s width', (wi
     ).toBeInTheDocument();
   });
 
+  it("says when a Reply was not answered because Susan's number had not been confirmed", async () => {
+    const { calendar } = await sampleCalendar();
+    await calendar.store.keepSettings({ numberId: null });
+    await calendar.core.receiveReply({ key: null, words: 'Hello', from: SAMPLE_NUMBER });
+    await calendar.core.runDue();
+    renderApp('/replies', { calendar });
+    expect(
+      await screen.findByText(
+        /No automatic answer: Susan's number in Settings had not been confirmed/,
+      ),
+    ).toBeInTheDocument();
+    expect(calendar.sender.taken()).toEqual([]);
+  });
+
   it('shows invented Replies on sample data, counted until the tab is opened', async () => {
     const calendar = createSampleCalendar(EASTERN);
     renderApp('/', { calendar, sampleData: true });

@@ -106,14 +106,14 @@ export function createSampleCalendar(
     if (empty) return;
     for (const [days, by, details] of SAMPLES)
       await core.addAppointment(by, { ...details, date: addDays(day, days) });
-    const { numberRevision, susansNumber: number } = await store.settings();
+    const { numberId, susansNumber: number } = await store.settings();
     if (!number) return;
     for (const [minutesAgo, words] of SAMPLE_REPLIES)
       await store.claimReply({
         id: `reply:sample-${minutesAgo}`,
         words,
         receivedAt: new Date(clock.now().getTime() - minutesAgo * 60_000).toISOString(),
-        numberRevision,
+        numberId,
         answer: 'due',
         answerTextId: null,
         passOn: NEW_ALERT,

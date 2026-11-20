@@ -82,6 +82,21 @@ const CHANGE_REPLY = /* GraphQL */ `
   }
 `;
 
+/**
+ * Gives Susan's number its destination ID, only if the kept number is still the one confirmed and
+ * has none: the data API adds `condition` to its own check that the row exists.
+ */
+const BIND_SUSANS_NUMBER = /* GraphQL */ `
+  mutation BindSusansNumber(
+    $input: UpdateCalendarSettingsInput!
+    $condition: ModelCalendarSettingsConditionInput!
+  ) {
+    updateCalendarSettings(input: $input, condition: $condition) {
+      id
+    }
+  }
+`;
+
 /** Moves a person's mark of the Replies they have seen on, only if it is still earlier. */
 const ADVANCE_REPLIES_SEEN = /* GraphQL */ `
   mutation AdvanceRepliesSeen(
@@ -283,10 +298,22 @@ export function dataStore(client: DataClient): Store {
       const row = check(await CalendarSettings.get({ id: SETTINGS_ID }));
       return row ? toSettings(row) : NO_SETTINGS;
     },
-    async keepSettings(settings) {
-      const had = check(await CalendarSettings.get({ id: SETTINGS_ID }));
-      const row = { id: SETTINGS_ID, ...settings };
-      check(await (had ? CalendarSettings.update(row) : CalendarSettings.create(row)));
+    // Only the fields given, never a whole row read earlier: the data API's update writes just
+    // these, in one write, so another save's number and its ID stay as that save left them. The
+    // first save creates the row, which fails if another save made it first; then it updates.
+    async keepSettings(changes) {
+      const row = { id: SETTINGS_ID, ...changes };
+      const fresh = Object.fromEntries(Object.entries(row).filter(([, value]) => value !== null));
+      if (created(await CalendarSettings.create(fresh as typeof row))) return;
+      check(await CalendarSettings.update(row));
+    },
+    async bindSusansNumber(number, numberId, lastChanged) {
+      return writeIf(BIND_SUSANS_NUMBER, {
+        input: { id: SETTINGS_ID, numberId, lastChanged },
+        condition: {
+          and: [{ susansNumber: { eq: number } }, { numberId: { attributeExists: false } }],
+        },
+      });
     },
     async recordActivity(record) {
       check(await ActivityRecord.create(record));

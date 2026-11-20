@@ -4072,7 +4072,7 @@ describe('the settings for texts', () => {
       susansNumber: SUSANS_NUMBER,
       contactName: 'Linda',
       contactPhone: '+15555550187',
-      numberRevision: 1,
+      numberId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       lastChanged: {
         personId: 'person-mark',
         personName: 'Mark',
@@ -4083,16 +4083,24 @@ describe('the settings for texts', () => {
     expect(await store.settings()).toEqual(changed);
   });
 
-  it("move the number's revision on with each change of her number, and with nothing else", async () => {
-    const { core } = calendar();
-    const revision = async (changes: Parameters<typeof core.changeSettings>[1]) =>
-      (await core.changeSettings(linda, changes)).numberRevision;
-    expect(await revision({ susansNumber: SUSANS_NUMBER })).toBe(1);
-    expect(await revision({ contactName: 'Linda', contactPhone: '5555550187' })).toBe(1);
-    expect(await revision({ susansNumber: '(555) 555-0123' })).toBe(1);
-    expect(await revision({ susansNumber: '5555550142' })).toBe(2);
-    expect(await revision({ susansNumber: null })).toBe(3);
-    expect(await revision({ susansNumber: SUSANS_NUMBER })).toBe(4);
+  it('give her number a new destination ID with each change of it, and with nothing else', async () => {
+    const { core, store } = calendar();
+    const idAfter = async (changes: Parameters<typeof core.changeSettings>[1]) =>
+      (await core.changeSettings(linda, changes)).numberId;
+    const first = await idAfter({ susansNumber: SUSANS_NUMBER });
+    expect(first).toMatch(/^[0-9a-f-]{36}$/);
+    expect(await idAfter({ contactName: 'Linda', contactPhone: '5555550187' })).toBe(first);
+    expect(await idAfter({ susansNumber: '(555) 555-0123' })).toBe(first);
+    const second = await idAfter({ susansNumber: '5555550142' });
+    expect(second).not.toBe(first);
+    expect(await idAfter({ susansNumber: null })).toBeNull();
+    // The same number again is a new destination, not the one it had before.
+    const again = await idAfter({ susansNumber: SUSANS_NUMBER });
+    expect(again).not.toBe(first);
+    expect(again).not.toBe(second);
+    expect((await store.settings()).numberId).toBe(again);
+    // It is never made from the number.
+    expect(JSON.stringify([first, second, again])).not.toMatch(/555/);
   });
 
   it('change only what is given, and clear what is sent empty', async () => {
@@ -5457,7 +5465,7 @@ describe('Replies', () => {
       id: 'reply:abc123',
       words: "I can't go, I'm not well",
       receivedAt: '2026-11-19T20:02:00.000Z',
-      numberRevision: 1,
+      numberId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       answer: 'due',
       answerTextId: null,
     });
@@ -6772,5 +6780,278 @@ describe('a Change notice that comes up overnight', () => {
     await cal.core.changeAppointment(mark, added.id, { time: '15:00' });
     await runAt(cal, '2026-11-20T03:05:00.000Z');
     expect(sentAt(cal)).toBe('2026-11-20T03:05:00.000Z');
+  });
+});
+
+describe('the number an automatic answer goes to', () => {
+  /** Invented numbers: the one a Reply comes from, and one saved over it. */
+  const FIRST = '+15555550111';
+  const SECOND = '+15555550122';
+  const fromNumber = (from: string, words = 'Hello') => ({ key: null, words, from });
+
+  /**
+   * A calendar whose writes of Settings can be held back, as when two saves overlap: each reads
+   * Settings, and its write waits until released, oldest first.
+   */
+  function overlapping() {
+    const cal = calendar();
+    const held: (() => void)[] = [];
+    let holding = false;
+    const store: MemoryStore = {
+      ...cal.store,
+      keepSettings: async (...args: Parameters<MemoryStore['keepSettings']>) => {
+        if (holding) await new Promise<void>((resolve) => held.push(resolve));
+        return cal.store.keepSettings(...args);
+      },
+    };
+    const core = createCalendarCore({
+      store,
+      clock: cal.clock,
+      messenger: cal.messenger,
+      textSender: cal.sender,
+      timeZone: EASTERN,
+    });
+    const waitFor = async (writes: number) => {
+      for (let n = 0; held.length < writes && n < 100; n += 1)
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(held).toHaveLength(writes);
+    };
+    return {
+      ...cal,
+      store,
+      core,
+      hold: () => (holding = true),
+      /** Lets the oldest held write go, and waits until it has. */
+      release: async (save: Promise<unknown>) => {
+        held.shift()!();
+        await save;
+      },
+      waitFor,
+    };
+  }
+
+  it('goes to no number saved over the one a Reply came from, by a save from the same Settings', async () => {
+    const cal = overlapping();
+    await cal.core.changeSettings(linda, { susansNumber: SUSANS_NUMBER, contactName: 'Linda' });
+    cal.hold();
+    // Two people change her number at once, each from the Settings as they read them.
+    const toFirst = cal.core.changeSettings(linda, { susansNumber: FIRST });
+    const toSecond = cal.core.changeSettings(mark, { susansNumber: SECOND });
+    await cal.waitFor(2);
+    await cal.release(toFirst);
+    // A Reply comes from the number saved first, and is kept against it.
+    expect(await cal.core.receiveReply(fromNumber(FIRST))).not.toBeNull();
+    // The other save goes in before the scheduled run takes the Reply up.
+    await cal.release(toSecond);
+    cal.clock.set('2026-11-19T20:01:00.000Z');
+    await cal.core.runDue();
+    expect(cal.sender.taken()).toEqual([]);
+    // It is still passed on.
+    expect(cal.messenger.emails().some(({ email }) => email.body.includes('"Hello"'))).toBe(true);
+  });
+
+  it('goes to no number saved over it while the answer waits to be tried again', async () => {
+    const cal = overlapping();
+    await cal.core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    cal.hold();
+    const toFirst = cal.core.changeSettings(linda, { susansNumber: FIRST });
+    const toSecond = cal.core.changeSettings(mark, { susansNumber: SECOND });
+    await cal.waitFor(2);
+    await cal.release(toFirst);
+    await cal.core.receiveReply(fromNumber(FIRST));
+    // Its first try cannot tell whether it went, so it waits to be tried again.
+    cal.sender.breakNext();
+    cal.clock.set('2026-11-19T20:01:00.000Z');
+    await cal.core.runDue();
+    expect(cal.store.texts().find((text) => text.kind === 'automaticAnswer')?.status).toBe(
+      'waiting',
+    );
+    await cal.release(toSecond);
+    cal.clock.set('2026-11-19T20:05:00.000Z');
+    await cal.core.runDue();
+    expect(cal.sender.taken()).toEqual([]);
+    expect(cal.store.texts().find((text) => text.kind === 'automaticAnswer')).toMatchObject({
+      status: 'failed',
+      reason: 'numberChanged',
+    });
+  });
+
+  it('goes to no number saved over it after a run claimed the answer and stopped', async () => {
+    const cal = overlapping();
+    await cal.core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    cal.hold();
+    const toFirst = cal.core.changeSettings(linda, { susansNumber: FIRST });
+    const toSecond = cal.core.changeSettings(mark, { susansNumber: SECOND });
+    await cal.waitFor(2);
+    await cal.release(toFirst);
+    const reply = (await cal.core.receiveReply(fromNumber(FIRST)))!;
+    // A run claimed its answer and stopped before trying it.
+    await cal.store.claimText({
+      id: 'automaticAnswer:1',
+      kind: 'automaticAnswer',
+      appointmentId: null,
+      reminderId: null,
+      replyId: reply.id,
+      words: "Susan's Calendar: Texts to this number are not answered.",
+      dueAt: '2026-11-19T20:00:00.000Z',
+      status: 'waiting',
+      reason: null,
+      attempts: 1,
+      triedAt: '2026-11-19T20:00:00.000Z',
+      sentAt: null,
+      reference: null,
+      creditLeft: null,
+      alert: null,
+      told: null,
+    });
+    await cal.release(toSecond);
+    cal.clock.set('2026-11-19T20:05:00.000Z');
+    await cal.core.runDue();
+    expect(cal.sender.taken()).toEqual([]);
+  });
+
+  it('goes to the number the Reply was checked against, even if a save lands while it is sent', async () => {
+    const cal = overlapping();
+    await cal.core.changeSettings(linda, { susansNumber: FIRST });
+    await cal.core.receiveReply(fromNumber(FIRST));
+    cal.hold();
+    const toSecond = cal.core.changeSettings(mark, { susansNumber: SECOND });
+    await cal.waitFor(1);
+    // The save lands just as the run claims the answer, after it checked her number.
+    const claim = cal.store.claimText;
+    cal.store.claimText = async (text) => {
+      if (text.kind === 'automaticAnswer') await cal.release(toSecond);
+      return claim(text);
+    };
+    await cal.core.runDue();
+    expect(cal.sender.taken().map((text) => text.to)).toEqual([FIRST]);
+  });
+
+  it('is not put back by a save of the contact begun before her number changed', async () => {
+    const cal = overlapping();
+    await cal.core.changeSettings(linda, { susansNumber: FIRST, contactName: 'Linda' });
+    cal.hold();
+    // Both read Settings with her first number; the number's save goes in first.
+    const number = cal.core.changeSettings(linda, { susansNumber: SECOND });
+    const contact = cal.core.changeSettings(mark, { contactName: 'Mark' });
+    await cal.waitFor(2);
+    await cal.release(number);
+    await cal.release(contact);
+    expect(await cal.store.settings()).toMatchObject({
+      susansNumber: SECOND,
+      contactName: 'Mark',
+    });
+    // A Reply from the first number is not taken, and one from the second is answered there.
+    expect(await cal.core.receiveReply(fromNumber(FIRST))).toBeNull();
+    await cal.core.receiveReply(fromNumber(SECOND));
+    await cal.core.runDue();
+    expect(cal.sender.taken().map((text) => text.to)).toEqual([SECOND]);
+  });
+
+  it('keeps her number and its answers when the contact is saved first', async () => {
+    const cal = overlapping();
+    await cal.core.changeSettings(linda, { susansNumber: FIRST, contactName: 'Linda' });
+    cal.hold();
+    const contact = cal.core.changeSettings(mark, { contactName: 'Mark' });
+    const number = cal.core.changeSettings(linda, { susansNumber: SECOND });
+    await cal.waitFor(2);
+    await cal.release(contact);
+    await cal.release(number);
+    expect(await cal.store.settings()).toMatchObject({
+      susansNumber: SECOND,
+      contactName: 'Mark',
+    });
+  });
+
+  it('still answers on her number while only the contact changes', async () => {
+    const cal = calendar();
+    await cal.core.changeSettings(linda, { susansNumber: FIRST, contactName: 'Linda' });
+    await cal.core.receiveReply(fromNumber(FIRST));
+    await cal.core.changeSettings(mark, { contactName: 'Mark', contactPhone: '5555550166' });
+    await cal.core.runDue();
+    expect(cal.sender.taken()).toEqual([
+      {
+        to: FIRST,
+        words:
+          "Susan's Calendar: Texts to this number are not answered. If you need anything, please call Mark at (555) 555-0166.",
+      },
+    ]);
+  });
+
+  it('is none for Settings kept before Replies, while Replies are still kept and passed on', async () => {
+    const cal = calendar();
+    // As production holds them: her number saved before ticket 17, with no destination ID.
+    await cal.store.keepSettings({ susansNumber: FIRST, contactName: 'Linda' });
+    const added = await cal.core.addAppointment(linda, checkUp);
+    const reply = (await cal.core.receiveReply(fromNumber(FIRST)))!;
+    expect(reply).toMatchObject({ numberId: null, answer: 'unbound' });
+    await cal.core.runDue();
+    expect(cal.sender.taken()).toEqual([]);
+    const [{ email }] = cal.messenger.emails();
+    expect(email.body).toContain('"Hello"');
+    expect(email.body).toContain(
+      'She was not sent the automatic answer: her number in Settings has not been confirmed since Replies began.',
+    );
+    // A contact's save works as ever, and leaves it unbound.
+    const saved = await cal.core.changeSettings(mark, { contactName: 'Mark' });
+    expect(saved).toMatchObject({ susansNumber: FIRST, contactName: 'Mark', numberId: null });
+    // Her Reminders still go, to her number.
+    cal.clock.set(added.reminders[0].dueAt);
+    await cal.core.runDue();
+    expect(cal.sender.taken().map((text) => text.to)).toEqual([FIRST]);
+  });
+
+  it('is bound by saving the same number, and only Replies after that are answered', async () => {
+    const cal = calendar();
+    await cal.store.keepSettings({ susansNumber: FIRST, contactName: 'Linda' });
+    await cal.core.receiveReply(fromNumber(FIRST, 'Before'));
+    const bound = await cal.core.changeSettings(linda, { confirmSusansNumber: '(555) 555-0111' });
+    expect(bound).toMatchObject({ susansNumber: FIRST, numberId: expect.any(String) });
+    // Confirming again, or another number, changes nothing.
+    expect((await cal.core.changeSettings(linda, { confirmSusansNumber: FIRST })).numberId).toBe(
+      bound.numberId,
+    );
+    expect((await cal.store.settings()).numberId).toBe(bound.numberId);
+    cal.clock.set('2026-11-19T20:01:00.000Z');
+    await cal.core.receiveReply(fromNumber(FIRST, 'After'));
+    await cal.core.runDue();
+    // The Reply that came unbound stays unanswered; the one after is answered on her number.
+    expect(cal.sender.taken().map((text) => text.to)).toEqual([FIRST]);
+    expect(cal.store.replies().map((reply) => [reply.words, reply.answer])).toEqual([
+      ['Before', 'unbound'],
+      ['After', 'sent'],
+    ]);
+  });
+
+  it('is not bound, nor her number put back, by a confirmation from a page read before it changed', async () => {
+    const cal = calendar();
+    await cal.store.keepSettings({ susansNumber: FIRST });
+    // Another page changed her number since this one read it.
+    const changed = await cal.core.changeSettings(mark, { susansNumber: SECOND });
+    const after = await cal.core.changeSettings(linda, { confirmSusansNumber: FIRST });
+    expect(after).toMatchObject({ susansNumber: SECOND, numberId: changed.numberId });
+    // Nor by one that lands after the number changed, as the store writes it.
+    const legacy = calendar();
+    await legacy.store.keepSettings({ susansNumber: FIRST });
+    await legacy.store.keepSettings({ susansNumber: SECOND, numberId: 'id-of-second' });
+    expect(await legacy.store.bindSusansNumber(FIRST, 'late', changed.lastChanged!)).toBe(false);
+    expect(await legacy.store.settings()).toMatchObject({
+      susansNumber: SECOND,
+      numberId: 'id-of-second',
+    });
+  });
+
+  it('is a new destination when a number she had before is entered again', async () => {
+    const cal = calendar();
+    await cal.core.changeSettings(linda, { susansNumber: FIRST });
+    await cal.core.receiveReply(fromNumber(FIRST));
+    await cal.core.changeSettings(linda, { susansNumber: SECOND });
+    await cal.core.changeSettings(linda, { susansNumber: FIRST });
+    await cal.core.runDue();
+    expect(cal.sender.taken()).toEqual([]);
+    await cal.core.receiveReply(fromNumber(FIRST, 'Again'));
+    cal.clock.set('2026-11-19T20:01:00.000Z');
+    await cal.core.runDue();
+    expect(cal.sender.taken().map((text) => text.to)).toEqual([FIRST]);
   });
 });

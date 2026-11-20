@@ -125,9 +125,15 @@ export function createMemoryStore(): MemoryStore {
     async settings() {
       return structuredClone(settings);
     },
-    async keepSettings(next) {
-      settings = structuredClone(next);
+    async keepSettings(changes) {
+      settings = { ...settings, ...structuredClone(changes) };
       changed();
+    },
+    async bindSusansNumber(number, numberId, lastChanged) {
+      if (settings.susansNumber !== number || settings.numberId) return false;
+      settings = { ...settings, numberId, lastChanged: structuredClone(lastChanged) };
+      changed();
+      return true;
     },
     async recordActivity(record) {
       activity.push(structuredClone(record));

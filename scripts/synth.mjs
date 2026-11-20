@@ -946,6 +946,18 @@ function checks() {
         ),
     ],
     [
+      // bindSusansNumber in amplify/calendar/data-store.ts: a number saved before ticket 17 gets
+      // its destination ID only by an update conditioned on the number still being that one with
+      // none, made by the commands function; the reply address writes no Settings.
+      'her number is given a destination ID only by a write conditioned on it, from the commands function',
+      conditional(writeStep('Mutation', 'updateCalendarSettings')) &&
+        commandsCode.includes('updateCalendarSettings(input: $input, condition: $condition)') &&
+        /\{\s*numberId:\s*\{\s*attributeExists:\s*(?:!1|false)\s*\}/.test(commandsCode) &&
+        !TEXT_REPLIES_FIELDS.some(
+          (field) => /CalendarSettings/.test(field) && /Mutation/.test(field),
+        ),
+    ],
+    [
       // advanceRepliesSeen in amplify/calendar/data-store.ts: a first mark is a create that fails
       // when one is there, and a later one an update conditioned on the kept mark being earlier.
       "a person's mark of the Replies seen only ever moves on, by conditional writes",
