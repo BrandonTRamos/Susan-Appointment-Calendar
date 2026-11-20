@@ -46,9 +46,11 @@ export function createAmplifyCalendar(): CalendarClient {
   const watchers = new Set<Watcher>();
   /** Whether the whole calendar has been read at least once. Nothing is shown before that. */
   let read = false;
-  /** While the calendar is being read: what changed meanwhile, which is newer than what is read. */
-  let changedWhileReading: Set<string> | null = null;
-  let reading = 0;
+  /** For each read still under way: what changed meanwhile, which is newer than what it reads. */
+  const changedWhileReading = new Set<Set<string>>();
+  /** Reads are numbered as they start. The newest one taken so far is `taken`. */
+  let started = 0;
+  let taken = 0;
   let stopListening: (() => void) | null = null;
 
   function tell() {
@@ -62,19 +64,24 @@ export function createAmplifyCalendar(): CalendarClient {
   }
   function put(appointment: Appointment) {
     appointments.set(appointment.id, appointment);
-    changedWhileReading?.add(appointment.id);
+    for (const changed of changedWhileReading) changed.add(appointment.id);
     tell();
   }
   function drop(id: string) {
     appointments.delete(id);
-    changedWhileReading?.add(id);
+    for (const changed of changedWhileReading) changed.add(id);
     tell();
   }
 
-  /** Reads the whole calendar. Changes heard while it is being read win over what it reads. */
+  /**
+   * Reads the whole calendar. Changes heard while it is being read win over what it reads. Reads
+   * can overlap, as when the connection opens while the first is under way: each is taken as it
+   * arrives, unless a later one already has been.
+   */
   async function readAll() {
-    const mine = ++reading;
-    const changed = (changedWhileReading = new Set<string>());
+    const mine = ++started;
+    const changed = new Set<string>();
+    changedWhileReading.add(changed);
     try {
       const rows: AppointmentRow[] = [];
       let nextToken: string | null | undefined;
@@ -84,17 +91,18 @@ export function createAmplifyCalendar(): CalendarClient {
         rows.push(...page.data);
         nextToken = page.nextToken;
       } while (nextToken);
-      if (mine !== reading) return; // a later read has taken over
+      if (mine < taken) return;
+      taken = mine;
       for (const id of [...appointments.keys()]) if (!changed.has(id)) appointments.delete(id);
       for (const row of rows)
         if (!changed.has(row.id)) appointments.set(row.id, toAppointment(row));
-      changedWhileReading = null;
       read = true;
       tell();
     } catch (error) {
-      if (mine !== reading) return;
-      changedWhileReading = null;
-      fail(error);
+      // Only the latest read failing means the calendar may be out of date.
+      if (mine === started) fail(error);
+    } finally {
+      changedWhileReading.delete(changed);
     }
   }
 

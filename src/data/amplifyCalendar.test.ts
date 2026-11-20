@@ -128,6 +128,32 @@ describe('reading the calendar', () => {
     expect(latest.appointments[0]).toEqual(checkUp);
   });
 
+  it('shows the calendar as soon as it is first read, though it is read again as the connection opens', async () => {
+    const answers: ((page: unknown) => void)[] = [];
+    api.list.mockImplementation(() => new Promise((resolve) => answers.push(resolve)));
+    const { seen } = watch();
+    connection('Connected');
+    expect(answers).toHaveLength(2);
+    answers[0]({ data: [row(checkUp)], nextToken: null });
+    await settled();
+    expect(seen).toEqual([['Cardiology check-up']]);
+    answers[1]({ data: [row(checkUp), row(bloodDraw)], nextToken: null });
+    await settled();
+    expect(seen.at(-1)).toEqual(['Cardiology check-up', 'Blood draw']);
+  });
+
+  it('never goes back to an older reading that arrives late', async () => {
+    const answers: ((page: unknown) => void)[] = [];
+    api.list.mockImplementation(() => new Promise((resolve) => answers.push(resolve)));
+    const { seen } = watch();
+    connection('Connected');
+    answers[1]({ data: [row(checkUp), row(bloodDraw)], nextToken: null });
+    await settled();
+    answers[0]({ data: [row(checkUp)], nextToken: null });
+    await settled();
+    expect(seen).toEqual([['Cardiology check-up', 'Blood draw']]);
+  });
+
   it('says so when the calendar cannot be read', async () => {
     api.list.mockResolvedValue({ data: [], errors: [{ message: 'Unauthorized' }] });
     const { seen, onError } = watch();
