@@ -9,6 +9,7 @@ import {
   NO_ADMIN_MESSENGER,
   overlappingAppointments,
   pastAppointments,
+  reminderHoldsWebAddress,
   remindersStillToSend,
   reminderWords,
   upcomingAppointments,
@@ -16,11 +17,17 @@ import {
   type Appointment,
   type NewAppointment,
   type ReminderSetting,
+  type TextKind,
+  holdsWebAddress,
   NO_TEXT_SENDER,
   ALERT_ATTEMPTS,
+  type MemoryMessenger,
   reminderTextId,
   textTrouble,
   type Text,
+  STATUS_READS_AT_ONCE,
+  TEXT_KINDS,
+  TEST_TEXT_WORDS,
 } from './index';
 
 const EASTERN = 'America/New_York';
@@ -1402,12 +1409,12 @@ describe('Reminders still to be sent', () => {
       reminders: [{ shape: 'daysBefore', days: 2, time: '18:00' }, thursdayAtEight, twoHoursBefore],
     });
     const now = new Date('2026-11-19T20:00:00.000Z');
-    expect(remindersStillToSend(added, now).map((r) => r.dueAt)).toEqual([
+    expect(remindersStillToSend(added, now, EASTERN).map((r) => r.dueAt)).toEqual([
       '2026-11-20T01:00:00.000Z',
       '2026-11-20T17:00:00.000Z',
     ]);
     const cancelled = await core.cancelAppointment(linda, added.id);
-    expect(remindersStillToSend(cancelled, now)).toEqual([]);
+    expect(remindersStillToSend(cancelled, now, EASTERN)).toEqual([]);
   });
 
   it('leave out one held for review since its Appointment moved: it is not sent as it stands', async () => {
@@ -1419,9 +1426,35 @@ describe('Reminders still to be sent', () => {
     const moved = await core.changeAppointment(mark, added.id, { time: '15:00' });
     const now = new Date('2026-11-19T20:00:00.000Z');
     expect(moved.reminders.map((r) => r.needsReview)).toEqual([true, false]);
-    expect(remindersStillToSend(moved, now).map((r) => r.dueAt)).toEqual([
+    expect(remindersStillToSend(moved, now, EASTERN).map((r) => r.dueAt)).toEqual([
       '2026-11-20T18:00:00.000Z',
     ]);
+  });
+
+  it('leave out one whose words hold a web address, which is never sent', async () => {
+    const { core, clock, sender, store } = calendar();
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      noteForSusan: 'Check in at example.de',
+      reminders: [thursdayAtEight, twoHoursBefore],
+    });
+    const now = new Date('2026-11-19T20:00:00.000Z');
+    expect(added.reminders.map((r) => reminderHoldsWebAddress(added, r, EASTERN))).toEqual([
+      true,
+      true,
+    ]);
+    expect(remindersStillToSend(added, now, EASTERN)).toEqual([]);
+    // The same check the run makes: when they come due, neither is sent.
+    for (const reminder of added.reminders) {
+      clock.set(reminder.dueAt);
+      await core.runDue();
+    }
+    expect(sender.taken()).toEqual([]);
+    expect(store.texts().map((text) => text.reason)).toEqual(['webAddress', 'webAddress']);
+    // Taking the address out puts them back.
+    const fixed = await core.changeAppointment(linda, added.id, { noteForSusan: 'Check in first' });
+    expect(remindersStillToSend(fixed, now, EASTERN)).toHaveLength(2);
   });
 });
 
@@ -1745,7 +1778,9 @@ describe('sending texts on schedule', () => {
         attempts: 1,
         triedAt: '2026-11-19T23:00:30.000Z',
         sentAt: '2026-11-19T23:00:30.000Z',
-        reference: expect.any(String),
+        // The stand-in names no text: nobody can be asked what became of it.
+        reference: null,
+        creditLeft: null,
         alert: null,
       },
     ]);
@@ -1839,6 +1874,27 @@ describe('sending texts on schedule', () => {
     expect(sender.taken()).toEqual([]);
   });
 
+  it('counts a text refused when tried again as maybe sent: the first try may have gone', async () => {
+    const { core, clock, sender, store, added } = await ready();
+    sender.breakNext();
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    // Tried again, it is refused, as when the credit ran out in between.
+    sender.refuseNext();
+    clock.set('2026-11-19T23:02:00.000Z');
+    await core.runDue();
+    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'refused', attempts: 2 }]);
+    await refused(core.deleteAppointment(mark, added.id), 'texted');
+  });
+
+  it('can still delete an Appointment whose only text was refused on its only try', async () => {
+    const { core, clock, sender, added } = await ready();
+    sender.refuseNext();
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    await core.deleteAppointment(mark, added.id);
+  });
+
   it('takes up again a text a run claimed and then stopped on', async () => {
     const { core, clock, sender, store, added } = await ready();
     // What a run that stopped mid-send leaves: a claim, tried once, never answered.
@@ -1856,6 +1912,7 @@ describe('sending texts on schedule', () => {
       triedAt: reminder.dueAt,
       sentAt: null,
       reference: null,
+      creditLeft: null,
       alert: null,
     });
     clock.set('2026-11-19T23:05:00.000Z');
@@ -1913,6 +1970,7 @@ describe('sending texts on schedule', () => {
       clock,
       messenger: createMemoryMessenger(),
       textSender: {
+        delivery: sender.delivery,
         async send(text) {
           const result = await sender.send(text);
           clock.set('2026-11-20T19:05:00.000Z');
@@ -1965,6 +2023,7 @@ describe('sending texts on schedule', () => {
       clock,
       messenger: createMemoryMessenger(),
       textSender: {
+        delivery: sender.delivery,
         async send(text) {
           const result = await sender.send(text);
           clock.set('2026-11-20T19:01:00.000Z');
@@ -2756,6 +2815,7 @@ describe('Alerts', () => {
       triedAt: '2026-11-19T23:00:00.000Z',
       sentAt: '2026-11-19T23:00:00.000Z',
       reference: 'stand-in-9',
+      creditLeft: null,
       alert: null,
     };
     await store.claimText(failed);
@@ -2822,6 +2882,7 @@ describe('Alerts', () => {
       triedAt: reminder.dueAt,
       sentAt: null,
       reference: null,
+      creditLeft: null,
       alert: null,
     });
     clock.set('2026-11-19T23:10:00.000Z');
@@ -2993,6 +3054,7 @@ describe('the trouble with texts to Susan', () => {
     triedAt,
     sentAt: triedAt,
     reference: null,
+    creditLeft: null,
     alert: null,
     ...settled,
   });
@@ -3046,5 +3108,642 @@ describe('the trouble with texts to Susan', () => {
     const failed = text('2026-11-19T22:00:00.000Z', { status: 'failed', reason: 'refused' });
     expect(textTrouble([failed])?.trouble).toBe('failed');
     expect(textTrouble([failed, text('2026-11-19T22:05:00.000Z', {})])).toBeNull();
+  });
+});
+
+describe('delivery status', () => {
+  /**
+   * A calendar whose text sender, like Textbelt, names each text it takes and can be asked later
+   * what became of it, with Susan's number set and a Reminder due at 6:00 pm the day before.
+   */
+  async function tracked(options: { unconfirmedAfter?: number } = {}) {
+    const store = createMemoryStore();
+    const clock = createFixedClock('2026-11-19T20:00:00.000Z');
+    const sender = createStandInSender({ reportsDelivery: true });
+    const core = createCalendarCore({
+      store,
+      clock,
+      messenger: createMemoryMessenger(ADMINS),
+      textSender: sender,
+      timeZone: EASTERN,
+      ...options,
+    });
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    const added = await core.addAppointment(linda, everyDetail);
+    /** Runs what is due at a time on Thursday evening, Susan's time ('18:00' is 23:00Z). */
+    const runAt = async (time: string) => {
+      const [hours, minutes] = time.split(':').map(Number);
+      clock.set(new Date(Date.UTC(2026, 10, 19, hours + 5, minutes)).toISOString());
+      return core.runDue();
+    };
+    await runAt('18:00');
+    const [text] = store.texts();
+    return { store, clock, sender, core, added, runAt, text };
+  }
+
+  it('asks what became of a sent text on each run, and leaves it sent until it is settled', async () => {
+    const { store, sender, runAt, text } = await tracked();
+    expect(text).toMatchObject({ status: 'sent', reference: 'stand-in-1' });
+    for (const report of ['pending', 'pending'] as const) {
+      sender.report('stand-in-1', report);
+      await runAt('18:05');
+    }
+    expect(sender.asked()).toEqual(['stand-in-1', 'stand-in-1']);
+    expect(store.texts()).toMatchObject([{ status: 'sent', reason: null }]);
+  });
+
+  it('marks a text delivered once the sender says so, and stops asking', async () => {
+    const { store, sender, runAt } = await tracked();
+    sender.report('stand-in-1', 'delivered');
+    const done = await runAt('18:03');
+    expect(done).toMatchObject([{ status: 'delivered', reason: null }]);
+    expect(store.texts()).toMatchObject([{ status: 'delivered', reason: null }]);
+    await runAt('18:04');
+    await runAt('19:00');
+    expect(sender.asked()).toEqual(['stand-in-1']);
+    expect(store.texts()).toMatchObject([{ status: 'delivered' }]);
+  });
+
+  it('marks a text failed when the sender reports it was not delivered, and stops asking', async () => {
+    const { store, sender, runAt } = await tracked();
+    sender.report('stand-in-1', 'failed');
+    await runAt('18:02');
+    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'undelivered' }]);
+    await runAt('18:03');
+    expect(sender.asked()).toEqual(['stand-in-1']);
+  });
+
+  it('marks a text not confirmed delivered after 30 minutes with no confirmation', async () => {
+    const { store, runAt } = await tracked();
+    await runAt('18:29');
+    expect(store.texts()).toMatchObject([{ status: 'sent' }]);
+    await runAt('18:30');
+    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'unconfirmed' }]);
+  });
+
+  it('tells "not confirmed delivered" apart from a reported failure', async () => {
+    const reported = await tracked();
+    reported.sender.report('stand-in-1', 'failed');
+    await reported.runAt('18:31');
+    const unconfirmed = await tracked();
+    await unconfirmed.runAt('18:31');
+    expect(reported.store.texts()[0].reason).toBe('undelivered');
+    expect(unconfirmed.store.texts()[0].reason).toBe('unconfirmed');
+  });
+
+  it('still takes a confirmation that comes in the run that would have given up on it', async () => {
+    const { store, sender, runAt } = await tracked();
+    sender.report('stand-in-1', 'delivered');
+    await runAt('18:45');
+    expect(store.texts()).toMatchObject([{ status: 'delivered' }]);
+  });
+
+  it('stops asking once a text is marked not confirmed delivered', async () => {
+    const { sender, runAt } = await tracked();
+    await runAt('18:30');
+    await runAt('18:31');
+    await runAt('19:30');
+    expect(sender.asked()).toHaveLength(1);
+  });
+
+  it('waits as long as it is told to before a text counts as not confirmed', async () => {
+    const { store, runAt } = await tracked({ unconfirmedAfter: 60 * 60_000 });
+    await runAt('18:59');
+    expect(store.texts()).toMatchObject([{ status: 'sent' }]);
+    await runAt('19:00');
+    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'unconfirmed' }]);
+  });
+
+  it('leaves a text sent when the sender cannot be asked, and asks again next run', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { store, sender, runAt } = await tracked();
+    sender.breakReports();
+    await runAt('18:05');
+    expect(store.texts()).toMatchObject([{ status: 'sent' }]);
+    expect(logged.mock.calls.flat().join(' ')).toBe('Delivery status could not be read (unknown)');
+    sender.report('stand-in-1', 'delivered');
+    await runAt('18:06');
+    expect(store.texts()).toMatchObject([{ status: 'delivered' }]);
+    logged.mockRestore();
+  });
+
+  it('still marks a text not confirmed when the sender cannot be asked by then', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { store, sender, runAt } = await tracked();
+    sender.breakReports(5);
+    await runAt('18:30');
+    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'unconfirmed' }]);
+    vi.restoreAllMocks();
+  });
+
+  it('asks about the other texts while one answer is slow, and records each as it comes', async () => {
+    const store = createMemoryStore();
+    const clock = createFixedClock('2026-11-19T20:00:00.000Z');
+    const sender = createStandInSender({ reportsDelivery: true });
+    const core = createCalendarCore({
+      store,
+      clock,
+      messenger: createMemoryMessenger(ADMINS),
+      textSender: sender,
+      timeZone: EASTERN,
+    });
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    for (const what of ['Eye exam', 'Blood draw', 'Hair', 'Flu shot'])
+      await core.addAppointment(linda, { ...checkUp, what });
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    // The oldest text's answer is slow; the others are delivered.
+    sender.holdReports('stand-in-1');
+    for (const reference of ['stand-in-2', 'stand-in-3', 'stand-in-4'])
+      sender.report(reference, 'delivered');
+    clock.set('2026-11-19T23:01:00.000Z');
+    let finished = false;
+    const run = core.runDue().then((done) => {
+      finished = true;
+      return done;
+    });
+    await vi.waitFor(() =>
+      expect(store.texts().filter((text) => text.status === 'delivered')).toHaveLength(3),
+    );
+    expect(finished).toBe(false);
+    expect(store.texts().find((text) => text.reference === 'stand-in-1')?.status).toBe('sent');
+    sender.report('stand-in-1', 'delivered');
+    sender.releaseReports();
+    expect(await run).toHaveLength(4);
+    expect(store.texts().every((text) => text.status === 'delivered')).toBe(true);
+  });
+
+  it(`asks about no more than ${STATUS_READS_AT_ONCE} texts at once, the oldest first`, async () => {
+    const store = createMemoryStore();
+    const clock = createFixedClock('2026-11-19T20:00:00.000Z');
+    const sender = createStandInSender({ reportsDelivery: true });
+    const core = createCalendarCore({
+      store,
+      clock,
+      messenger: createMemoryMessenger(ADMINS),
+      textSender: sender,
+      timeZone: EASTERN,
+    });
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    for (let n = 0; n < 6; n += 1) {
+      clock.set(`2026-11-19T22:0${n}:00.000Z`);
+      await core.sendTestText(mark);
+    }
+    sender.holdReports();
+    clock.set('2026-11-19T22:10:00.000Z');
+    const run = core.runDue();
+    await vi.waitFor(() => expect(sender.asked()).toHaveLength(STATUS_READS_AT_ONCE));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sender.asked()).toEqual(['stand-in-1', 'stand-in-2', 'stand-in-3', 'stand-in-4']);
+    sender.releaseReports();
+    await run;
+    expect(sender.asked()).toHaveLength(6);
+  });
+
+  it('sends every due text, one at a time, before asking about any', async () => {
+    const { core, clock, sender, store } = await tracked();
+    let sending = 0;
+    let most = 0;
+    const watched = createCalendarCore({
+      store,
+      clock,
+      messenger: createMemoryMessenger(ADMINS),
+      timeZone: EASTERN,
+      textSender: {
+        async send(text) {
+          sending += 1;
+          most = Math.max(most, sending);
+          expect(sender.asked()).toEqual([]);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          sending -= 1;
+          return sender.send(text);
+        },
+        delivery: sender.delivery,
+      },
+    });
+    for (const what of ['Eye exam', 'Blood draw', 'Hair'])
+      await core.addAppointment(linda, { what, date: '2026-11-20', time: '09:00' });
+    clock.set('2026-11-20T13:00:00.000Z'); // 8:00 am: the three new ones' Reminders are overdue
+    await watched.runDue();
+    expect(sender.taken()).toHaveLength(4);
+    expect(most).toBe(1);
+    expect(sender.asked()).toContain('stand-in-1');
+  });
+
+  it('asks about a test text too, so Settings shows it delivered', async () => {
+    const { core, store, sender, runAt } = await tracked();
+    const test = await core.sendTestText(mark);
+    sender.report(test.reference!, 'delivered');
+    await runAt('18:01');
+    expect(store.texts().find((text) => text.kind === 'test')).toMatchObject({
+      status: 'delivered',
+    });
+  });
+
+  it('never asks about a text the sender gave no name to: it stays sent', async () => {
+    // The stand-in that only records texts names none of them: nothing can confirm them.
+    const { core, clock, store } = calendar();
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    await core.addAppointment(linda, checkUp);
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    clock.set('2026-11-20T01:00:00.000Z');
+    await core.runDue();
+    expect(store.texts()).toMatchObject([{ status: 'sent', reference: null, reason: null }]);
+  });
+
+  it('counts a delivered or unconfirmed text as one that reached Susan', async () => {
+    const delivered = await tracked();
+    delivered.sender.report('stand-in-1', 'delivered');
+    await delivered.runAt('18:01');
+    await refused(delivered.core.deleteAppointment(mark, delivered.added.id), 'texted');
+    const unconfirmed = await tracked();
+    await unconfirmed.runAt('18:30');
+    await refused(unconfirmed.core.deleteAppointment(mark, unconfirmed.added.id), 'texted');
+  });
+});
+
+describe('the credit left for texts', () => {
+  it('is recorded on each text from what the sender says, so a low balance can be told', async () => {
+    const { core, clock, sender, store } = calendar();
+    sender.haveCredit(41);
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    await core.addAppointment(linda, checkUp);
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    await core.sendTestText(mark);
+    expect(store.texts().map((text) => [text.kind, text.creditLeft])).toEqual([
+      ['reminder', 40],
+      ['test', 39],
+    ]);
+  });
+
+  it('is recorded from a refused send too, as when the credit has run out', async () => {
+    const { core, sender } = calendar();
+    sender.haveCredit(0);
+    sender.refuseNext();
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    expect(await core.sendTestText(mark)).toMatchObject({
+      status: 'failed',
+      reason: 'refused',
+      creditLeft: 0,
+    });
+  });
+
+  it('is null when the sender does not say', async () => {
+    const { core } = calendar();
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    expect((await core.sendTestText(mark)).creditLeft).toBeNull();
+  });
+});
+
+describe('web addresses', () => {
+  const ADDRESSES = [
+    'https://portal.example.com/visit',
+    'http://example.org',
+    'ftp://files.example.net',
+    'www.example.com',
+    'WWW.EXAMPLE.COM',
+    'example.com/checkin',
+    'example.xyz',
+    'example.de',
+    'portal.example.co.uk',
+    'clinic.example.health',
+    'EXAMPLE.COM',
+    'example.online/booking',
+    'example.xn--p1ai',
+    'front-desk@example.com',
+    'nurse@clinic.example.fr',
+  ];
+
+  it('are found however they are written, with any recognized ending', () => {
+    for (const address of ADDRESSES) {
+      expect(holdsWebAddress(`See ${address} first.`), address).toBe(true);
+      expect(holdsWebAddress(address), address).toBe(true);
+    }
+  });
+
+  it('are not ordinary punctuation, abbreviations, times or doses', () => {
+    for (const words of [
+      "Susan's Calendar: Cardiology check-up with Dr. Patel, tomorrow at 2:00 pm.",
+      'Smith & Co. Dental, 12 St. James St. Suite 4',
+      'Bring your list of medicines.Then wait.',
+      'Pickup at 1:15 p.m., e.g. by the door, i.e. the front.',
+      'Arrive at 10.am and take 2.5mg with food.',
+      'Ask for Mr.Li or Dr.Ng at the desk.',
+      'U.S. Route 1, Apt.4B, No. 5',
+      TEST_TEXT_WORDS,
+    ])
+      expect(holdsWebAddress(words), words).toBe(false);
+  });
+
+  it('are kept as they were written: saving an Appointment or a contact is never refused', async () => {
+    const { core, store } = calendar();
+    const carried = [
+      'what',
+      'withWhom',
+      'placeName',
+      'placeAddress',
+      'driverName',
+      'noteForSusan',
+      'privateNotes',
+    ] as const;
+    for (const detail of carried) {
+      const added = await core.addAppointment(linda, {
+        ...checkUp,
+        [detail]: 'See www.example.com',
+      });
+      expect(added[detail]).toBe('See www.example.com');
+    }
+    expect(store.appointments()).toHaveLength(carried.length);
+    const changed = await core.changeSettings(linda, { contactName: 'Linda, www.example.com' });
+    expect(changed.contactName).toBe('Linda, www.example.com');
+  });
+
+  it('keep a Reminder from being sent, and it says why, while the Appointment is kept', async () => {
+    const { core, clock, sender, store } = calendar();
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      noteForSusan: 'Check in at www.example.com.',
+    });
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    expect(sender.taken()).toEqual([]);
+    expect(store.texts()).toMatchObject([{ status: 'notSent', reason: 'webAddress', attempts: 0 }]);
+    // Never tried, so it did not reach her: the Appointment can be deleted, and a corrected note
+    // goes out with the next Reminder.
+    expect(store.appointments()[0].noteForSusan).toBe('Check in at www.example.com.');
+    await core.deleteAppointment(mark, added.id);
+  });
+
+  it('are never sent in a text of any kind: each passes the same check before it goes', async () => {
+    const { core, clock, sender, store } = calendar();
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    // One text of each kind, with a web address in its words, waiting to be sent, as the run that
+    // claimed it left it. Change notices (ticket 14) and the automatic answer (ticket 17) make
+    // their own words; this checks only that none holding an address is sent, whoever wrote it.
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      noteForSusan: 'Check in at example.de',
+    });
+    const [reminder] = added.reminders;
+    const fixtures: Record<TextKind, { id: string; reminderId: string | null; words: string }> = {
+      reminder: {
+        id: `reminder:${added.id}:${reminder.id}:${reminder.dueAt}`,
+        reminderId: reminder.id,
+        words: "Susan's Calendar: Cardiology check-up. Check in at example.de",
+      },
+      changeNotice: {
+        id: `changeNotice:${added.id}`,
+        reminderId: null,
+        words: "Susan's Calendar: Change: see https://example.com/new-time",
+      },
+      automaticAnswer: {
+        id: `automaticAnswer:${added.id}`,
+        reminderId: null,
+        words: "Susan's Calendar: Nobody reads replies here. Email front-desk@example.xyz",
+      },
+      test: {
+        id: 'test:2026-11-19T22:58:00.000Z',
+        reminderId: null,
+        words: "Susan's Calendar: This is a test text. www.example.com",
+      },
+    };
+    for (const kind of TEXT_KINDS) {
+      const { id, reminderId, words } = fixtures[kind];
+      await store.claimText({
+        id,
+        kind,
+        appointmentId: kind === 'test' ? null : added.id,
+        reminderId,
+        words,
+        dueAt: reminder.dueAt,
+        status: 'waiting',
+        reason: null,
+        attempts: 1,
+        triedAt: '2026-11-19T22:58:00.000Z',
+        sentAt: null,
+        reference: null,
+        creditLeft: null,
+        alert: null,
+      });
+    }
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    expect(sender.taken()).toEqual([]);
+    expect(store.texts().map((text) => [text.kind, text.status, text.reason])).toEqual(
+      expect.arrayContaining(TEXT_KINDS.map((kind) => [kind, 'failed', 'webAddress'])),
+    );
+    expect(store.texts()).toHaveLength(TEXT_KINDS.length);
+  });
+
+  it('are in none of the texts the calendar writes today', async () => {
+    const { core, clock, sender } = calendar();
+    await core.changeSettings(linda, {
+      susansNumber: SUSANS_NUMBER,
+      contactName: 'Linda',
+      contactPhone: '(555) 555-0187',
+    });
+    await core.addAppointment(linda, {
+      ...everyDetail,
+      reminders: [
+        { shape: 'before', amount: 2, unit: 'hours' },
+        { shape: 'daysBefore', days: 1, time: '18:00' },
+        { shape: 'at', date: '2026-11-20', time: '09:00' },
+      ],
+    });
+    await core.sendTestText(mark);
+    for (const at of [
+      '2026-11-19T23:00:00.000Z',
+      '2026-11-20T14:00:00.000Z',
+      '2026-11-20T17:00:00.000Z',
+    ]) {
+      clock.set(at);
+      await core.runDue();
+    }
+    expect(sender.taken()).toHaveLength(4);
+    for (const { words } of sender.taken()) expect(holdsWebAddress(words)).toBe(false);
+  });
+});
+
+describe('Alerts from what the text sender says', () => {
+  /** Every Alert delivery so far, by channel, as the person IDs it reached in order. */
+  const reached = (messenger: MemoryMessenger) => ({
+    email: messenger.emails().flatMap(({ to }) => to),
+    app: messenger
+      .appNotifications()
+      .filter(({ notification }) => notification.tag.startsWith('alert-'))
+      .flatMap(({ to }) => to),
+  });
+  const EVERY_ADMIN = { email: ADMINS, app: ADMINS };
+
+  /**
+   * A calendar whose sender names each text and is asked what became of it, with Susan's number
+   * set and `count` Appointments tomorrow, each with its Reminder sent at 6:00 pm the day before.
+   */
+  async function sent(count = 1, messenger = createMemoryMessenger(ADMINS)) {
+    const store = createMemoryStore();
+    const clock = createFixedClock('2026-11-19T20:00:00.000Z');
+    const sender = createStandInSender({ reportsDelivery: true });
+    const core = createCalendarCore({
+      store,
+      clock,
+      messenger,
+      textSender: sender,
+      timeZone: EASTERN,
+    });
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    for (let n = 0; n < count; n += 1)
+      await core.addAppointment(linda, { ...checkUp, time: `1${n}:00` });
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    const at = (minutes: number) =>
+      clock.set(new Date(Date.parse('2026-11-19T23:00:00.000Z') + minutes * 60_000).toISOString());
+    return { store, clock, sender, core, messenger, at };
+  }
+
+  it('raise one Alert, once, for a text the sender reports not delivered', async () => {
+    const { store, sender, core, messenger, at } = await sent();
+    sender.report('stand-in-1', 'failed');
+    at(5);
+    await core.runDue();
+    expect(store.texts()).toMatchObject([
+      { status: 'failed', reason: 'undelivered', alert: { state: 'raised' } },
+    ]);
+    expect(reached(messenger)).toEqual(EVERY_ADMIN);
+    expect(messenger.emails()[0].email.subject).toBe("Susan's Calendar alert: a Reminder failed");
+    // Settled: it is not asked about again, and raises nothing more.
+    at(10);
+    await core.runDue();
+    expect(sender.asked()).toEqual(['stand-in-1']);
+    expect(reached(messenger)).toEqual(EVERY_ADMIN);
+  });
+
+  it('raise one Alert, saying so, for a text never confirmed delivered in the time allowed', async () => {
+    const { store, sender, core, messenger, at } = await sent();
+    sender.report('stand-in-1', 'pending');
+    at(29);
+    await core.runDue();
+    expect(reached(messenger)).toEqual({ email: [], app: [] });
+    at(30);
+    await core.runDue();
+    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'unconfirmed' }]);
+    expect(reached(messenger)).toEqual(EVERY_ADMIN);
+    expect(messenger.emails()[0].email.subject).toBe(
+      "Susan's Calendar alert: a Reminder was not confirmed delivered",
+    );
+    at(40);
+    await core.runDue();
+    expect(reached(messenger)).toEqual(EVERY_ADMIN);
+  });
+
+  it('raise none for a text the sender reports delivered', async () => {
+    const { store, sender, core, messenger, at } = await sent();
+    sender.report('stand-in-1', 'delivered');
+    at(5);
+    await core.runDue();
+    expect(store.texts()).toMatchObject([{ status: 'delivered', alert: null }]);
+    expect(reached(messenger)).toEqual({ email: [], app: [] });
+  });
+
+  it('settle a text once when two runs hear the same report, and raise one Alert', async () => {
+    const { store, sender, core, messenger, clock, at } = await sent();
+    const other = createCalendarCore({
+      store,
+      clock,
+      messenger,
+      textSender: sender,
+      timeZone: EASTERN,
+    });
+    sender.report('stand-in-1', 'failed');
+    at(5);
+    await Promise.all([core.runDue(), other.runDue()]);
+    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'undelivered' }]);
+    expect(reached(messenger)).toEqual(EVERY_ADMIN);
+  });
+
+  it('are sent only once every answer is in, one delivery at a time, not by each answer', async () => {
+    // A messenger that counts how many sends are under way at once.
+    const inner = createMemoryMessenger(ADMINS);
+    let underWay = 0;
+    let most = 0;
+    const counted =
+      <T>(send: () => Promise<T>) =>
+      async () => {
+        underWay += 1;
+        most = Math.max(most, underWay);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        try {
+          return await send();
+        } finally {
+          underWay -= 1;
+        }
+      };
+    const messenger: MemoryMessenger = {
+      ...inner,
+      sendEmail: (...args) => counted(() => inner.sendEmail(...args))(),
+      sendAppNotification: (...args) => counted(() => inner.sendAppNotification(...args))(),
+    };
+    const { sender, core, at } = await sent(3, messenger);
+    for (const reference of ['stand-in-1', 'stand-in-2', 'stand-in-3'])
+      sender.report(reference, 'failed');
+    // One answer is slow: the Alerts wait for it, and do not go out as each answer comes.
+    sender.holdReports('stand-in-3');
+    at(5);
+    const run = core.runDue();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(reached(inner)).toEqual({ email: [], app: [] });
+    sender.releaseReports();
+    await run;
+    expect(reached(inner).email).toHaveLength(3 * ADMINS.length);
+    expect(reached(inner).app).toHaveLength(3 * ADMINS.length);
+    expect(most).toBe(1);
+  });
+});
+
+describe('Alerts for a text holding a web address', () => {
+  /** The Alerts among the app notifications sent: not the Activity updates. */
+  const alertNotifications = (messenger: MemoryMessenger) =>
+    messenger
+      .appNotifications()
+      .filter(({ notification }) => notification.tag.startsWith('alert-'));
+
+  it('say it was not sent because of a web address, apart from failures, without the address', async () => {
+    const { core, clock, store, messenger, sender } = calendar();
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      noteForSusan: 'Directions at www.example.com/clinic',
+    });
+    clock.set(added.reminders[0].dueAt);
+    await core.runDue();
+    expect(sender.taken()).toEqual([]);
+    const [text] = store.texts();
+    expect(text).toMatchObject({ status: 'notSent', reason: 'webAddress' });
+    expect(messenger.emails().flatMap(({ to }) => to)).toEqual(ADMINS);
+    const [{ email }] = messenger.emails();
+    expect(email.subject).toBe(
+      "Susan's Calendar alert: a Reminder was not sent, because it held a web address",
+    );
+    expect(email.body).toMatch(
+      /^A Reminder to Susan was not sent: its words held a web address, which no text to her may carry\. She was not reminded\./,
+    );
+    const said = JSON.stringify([messenger.emails(), alertNotifications(messenger)]);
+    expect(said).not.toMatch(/failed|in time|example\.com/i);
+    expect(textTrouble(store.texts())?.trouble).toBe('webAddress');
+  });
+
+  it('name an Appointment whose name holds a web address only by its time', async () => {
+    const { core, sender, store, messenger, clock } = calendar();
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    const added = await core.addAppointment(linda, { ...checkUp, what: 'Visit example.com' });
+    clock.set(added.reminders[0].dueAt);
+    sender.refuseNext();
+    await core.runDue();
+    expect(store.texts()[0].reason).toBe('webAddress');
+    const said = JSON.stringify([messenger.emails(), alertNotifications(messenger)]);
+    expect(said).toMatch(/an Appointment, Fri, Nov 20, 2026 at 2:00 pm/);
+    expect(said).not.toMatch(/example\.com/);
   });
 });

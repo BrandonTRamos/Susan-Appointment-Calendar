@@ -1,7 +1,8 @@
 // Synthesizes the Amplify backend with CDK locally, without AWS credentials. It catches CDK and
 // bundling errors before a deploy, then checks the sign-in rules, the rules about who may read and
 // write calendar data and subscription links, the feed's public address, the scheduled run that
-// sends texts and raises Alerts, and the cost tags in what was synthesized. Usage: npm run synth
+// sends texts and raises Alerts, the Textbelt key's secret, and the cost tags in what was
+// synthesized. Usage: npm run synth
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -298,6 +299,41 @@ function statementsFor(service) {
     );
 }
 
+/** Every function, by the logical ID its definition gives it, with its environment. */
+function functions() {
+  return stacks()
+    .flatMap((stack) => Object.entries(stack))
+    .filter(([, resource]) => resource.Type === 'AWS::Lambda::Function')
+    .map(([id, resource]) => ({ id, variables: resource.Properties.Environment?.Variables ?? {} }));
+}
+
+/** What Amplify puts in a secret's variable until the function starts and reads the secret. */
+const UNRESOLVED_SECRET = '<value will be resolved during runtime>';
+
+/**
+ * The functions given the Textbelt key (amplify/calendar/text-sender.ts), as the IDs of their
+ * definitions, sorted, each only as a secret read when it starts: its variable holds Amplify's
+ * placeholder, never a key, and the secret's own name is where Amplify looks for it.
+ */
+function textbeltKeyHolders() {
+  return functions()
+    .filter(({ variables }) => 'TEXTBELT_KEY' in variables)
+    .filter(({ variables }) => {
+      const secrets = JSON.parse(
+        typeof variables.AMPLIFY_SSM_ENV_CONFIG === 'string'
+          ? variables.AMPLIFY_SSM_ENV_CONFIG
+          : '{}',
+      );
+      return (
+        variables.TEXTBELT_KEY === UNRESOLVED_SECRET &&
+        /\/TEXTBELT_KEY$/.test(secrets.TEXTBELT_KEY?.path ?? '') &&
+        /\/TEXTBELT_KEY$/.test(secrets.TEXTBELT_KEY?.sharedPath ?? '')
+      );
+    })
+    .map(({ id }) => /^([a-z]+)lambda[0-9A-F]+$/.exec(id)?.[1] ?? id)
+    .sort();
+}
+
 /** The words of the step that writes a data API operation's row: the one that holds its condition. */
 function writeStep(kind, field) {
   for (const stack of stacks()) {
@@ -489,6 +525,18 @@ function checks() {
           !/ConsistentRead:\s*(?:!1|false)\b/.test(fn.code)
         );
       })(),
+    ],
+    ['anyone signed in can ask which text sender is in use', queries.get('textSender') === true],
+    [
+      // As a secret, never in the code or the data: only the commands function, for the test text,
+      // and the scheduled run are given it, and nothing else holds a TEXTBELT_KEY at all.
+      'only the commands function and the scheduled run get the Textbelt key, as a secret',
+      textbeltKeyHolders().join() === 'calendarcommands,sendtexts' &&
+        functions().filter(({ variables }) => 'TEXTBELT_KEY' in variables).length === 2,
+    ],
+    [
+      'the scheduled run is told how long a text may go unconfirmed, in minutes',
+      /^\d+$/.test(run.properties.Environment?.Variables?.TEXT_CONFIRMATION_MINUTES ?? ''),
     ],
     [
       'the commands function can find out who the Admins are, to tell them',

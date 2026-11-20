@@ -92,6 +92,28 @@ describe.each(['phone', 'desktop'] as const)('the banner about texts, at %s widt
     );
   });
 
+  it('says when the last text was not sent because its words held a web address', async () => {
+    const clock = createFixedClock(new Date().toISOString());
+    const calendar = createSampleCalendar(EASTERN, { empty: true, clock });
+    await calendar.settings();
+    const added = await calendar.core.addAppointment(linda, {
+      what: 'Eye exam',
+      date: daysFromToday(3),
+      time: '15:30',
+      noteForSusan: 'Directions at www.example.com',
+    });
+    clock.set(added.reminders[0].dueAt);
+    await calendar.core.runDue();
+    renderApp('/', { calendar });
+    expect(await banner()).toHaveTextContent(
+      'The last text to Susan, a Reminder, was not sent: its words held a web address.',
+    );
+    expect(screen.getByRole('link', { name: 'See the text' })).toHaveAttribute(
+      'href',
+      `/appointments/${added.id}`,
+    );
+  });
+
   it('does not show while texts to Susan are going', async () => {
     const { calendar } = await calendarWithDueReminder();
     renderApp('/', { calendar });

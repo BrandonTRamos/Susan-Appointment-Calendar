@@ -103,6 +103,7 @@ export function toText(row: Kept<TextRow, Text> & Partial<Pick<TextRow, AlertCol
     triedAt: row.triedAt,
     sentAt: row.sentAt ?? null,
     reference: row.reference ?? null,
+    creditLeft: row.creditLeft ?? null,
     // Null too for a text recorded before the calendar raised Alerts.
     alert: row.alert
       ? {

@@ -13,14 +13,16 @@ import { formatDate, formatMoment, formatTime } from '../localTime';
 import type { Appointment } from './appointment';
 import type { AdminEmail, AppNotification } from './ports';
 import { SEND_ATTEMPTS, type Text, type TextAlert, type TextKind } from './texts';
+import { holdsWebAddress } from './webAddress';
 
 /**
  * What went wrong with a text. failed: it was refused, or did not go through, or was reported not
  * delivered. unconfirmed: it was sent but never confirmed delivered. tooLate: it could not be sent
  * before the Appointment started. noNumber: it was not sent because Susan's mobile number was not
- * set when it came due, which is a gap in the setup, not a failure.
+ * set when it came due, which is a gap in the setup, not a failure. webAddress: it was never sent
+ * because its words held a web address, which no text may carry.
  */
-export type TextTrouble = 'failed' | 'unconfirmed' | 'tooLate' | 'noNumber';
+export type TextTrouble = 'failed' | 'unconfirmed' | 'tooLate' | 'noNumber' | 'webAddress';
 
 /** What went wrong with a text, or null when nothing did, or it is still being sent. */
 export function troubleOf(text: Text): TextTrouble | null {
@@ -28,6 +30,7 @@ export function troubleOf(text: Text): TextTrouble | null {
   if (text.status !== 'notSent') return null;
   if (text.reason === 'tooLate') return 'tooLate';
   if (text.reason === 'noNumber') return 'noNumber';
+  if (text.reason === 'webAddress') return 'webAddress';
   return null;
 }
 
@@ -101,6 +104,8 @@ function failedBecause(text: Text): string {
       return "Susan's mobile number was taken out of Settings before it went";
     case 'undelivered':
       return 'her phone company reported that it could not be delivered';
+    case 'webAddress':
+      return 'it was not tried again, because its words now hold a web address, which no text may carry';
     default:
       return `sending did not go through after ${SEND_ATTEMPTS} tries`;
   }
@@ -138,6 +143,13 @@ function said(trouble: TextTrouble, text: Text) {
         why: 'the Appointment had started before it could go',
         after: DID_NOT[text.kind],
       };
+    case 'webAddress':
+      // Never the address itself: the reader opens the Appointment to take it out.
+      return {
+        became: 'was not sent',
+        why: 'its words held a web address, which no text to her may carry',
+        after: `${DID_NOT[text.kind]} Take the address out of the Appointment's details; the Private notes can hold it.`,
+      };
     case 'noNumber':
       // Said as what happened then: the number may have been set since.
       return {
@@ -174,8 +186,9 @@ export function alertFor(text: Text, appointment: Appointment | null, timeZone: 
   const a = `${text.kind === 'automaticAnswer' ? 'an' : 'a'} ${name}`;
   const A = `${a.charAt(0).toUpperCase()}${a.slice(1)}`;
   const { became, why, after } = said(trouble, text);
+  // Never a web address, as no text carries one: an Appointment named by one is named by its time.
   const which = appointment
-    ? `${appointment.what}, ${formatDate(appointment.date, 'short')} at ${formatTime(appointment.time)}`
+    ? `${holdsWebAddress(appointment.what) ? 'an Appointment' : appointment.what}, ${formatDate(appointment.date, 'short')} at ${formatTime(appointment.time)}`
     : text.appointmentId
       ? 'one that is no longer in the calendar'
       : null;
@@ -183,7 +196,9 @@ export function alertFor(text: Text, appointment: Appointment | null, timeZone: 
   const subject =
     trouble === 'noNumber'
       ? `Susan's Calendar alert: ${a} was not sent, because Susan's mobile number was not set`
-      : `Susan's Calendar alert: ${a} ${became}`;
+      : trouble === 'webAddress'
+        ? `Susan's Calendar alert: ${a} was not sent, because it held a web address`
+        : `Susan's Calendar alert: ${a} ${became}`;
   const about =
     which !== null
       ? `Appointment: ${which}`
@@ -200,7 +215,9 @@ export function alertFor(text: Text, appointment: Appointment | null, timeZone: 
   const short =
     trouble === 'noNumber'
       ? `${A} was not sent: Susan's mobile number was not set.${which ? ` ${which}.` : ''}`
-      : `${A} ${became}${which ? `: ${which}.` : '.'} ${after}`;
+      : trouble === 'webAddress'
+        ? `${A} was not sent: its words held a web address.${which ? ` ${which}.` : ''}`
+        : `${A} ${became}${which ? `: ${which}.` : '.'} ${after}`;
   return {
     email: { subject, body, opens },
     notification: {

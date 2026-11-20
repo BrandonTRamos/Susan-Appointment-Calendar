@@ -127,6 +127,7 @@ const schema = a
         triedAt: a.datetime().required(),
         sentAt: a.datetime(),
         reference: a.string(),
+        creditLeft: a.integer(),
         // The Alert about it (TextAlert in src/lib/calendar/texts.ts), flat so that a write can be
         // conditioned on it: its state, how many times a run took it up and when it last did, and
         // each delivery known to have gone. Missing on a text recorded before ticket 15, which
@@ -166,6 +167,14 @@ const schema = a
     // Each answers with a CommandAnswer: the settings as they now are, or the test text's record.
     changeSettings: command().arguments({ settings: a.json().required() }),
     sendTestText: command(),
+    // Which text sender the backend uses, TextSenderName in amplify/calendar/text-sender.ts:
+    // 'textbelt', or 'stand-in' while no Textbelt key is stored. Settings says when texts are only
+    // being recorded. Answered at the time asked, since the key is a secret stored after a deploy.
+    textSender: a
+      .query()
+      .returns(a.string())
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(calendarCommands)),
 
     // App notifications (src/lib/appNotifications.ts). Each device someone turned them on for, kept
     // against their account: the ID is the SHA-256 of its push endpoint. The calendar-commands

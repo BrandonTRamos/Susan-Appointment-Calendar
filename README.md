@@ -19,10 +19,11 @@ change it, cancel it, and delete one entered by mistake, and is warned when one 
 what one person changes shows for the others as it happens. Each Appointment carries its Reminders,
 showing when each goes out and the exact words Susan will read. The Month tab shows a month at a
 glance, and Past lists the Appointments that have already happened. Anyone signed in can also get
-their own [calendar subscription](#calendar-subscription) link. Reminders go out on schedule and
-each Appointment shows every text about it with its status, but no text reaches a phone yet: until
-Textbelt is connected (ticket 13) a stand-in records each text instead (see
-[Texts to Susan](#texts-to-susan)). Replies arrive with a later ticket.
+their own [calendar subscription](#calendar-subscription) link. Reminders go out on schedule
+through Textbelt, and each Appointment shows every text about it with its status, which moves on to
+delivered or failed as Textbelt reports. Until the Textbelt key is stored, a stand-in records each
+text instead of sending it (see [Texts to Susan](#texts-to-susan)). Replies arrive with a later
+ticket.
 
 ## Run it locally
 
@@ -76,10 +77,11 @@ signed-in person can change anything, nobody signed in can read the devices app 
 or the key that signs them, the app-notifications function reaches nothing else, a device is only
 ever deleted on a condition checked as it is deleted, no rule tells Susan from an Admin, one
 scheduled run sends texts every minute and never overlaps itself, a text is claimed by creating its
-record, which fails when it is already there, and taken up again only by a conditional write, an
-Alert is raised only by a conditional write, only the scheduled run may send email and only through
-its own account and region, every table can be restored to a point in time, and everything carries
-the cost tag.
+record, which fails when it is already there, and taken up again only by a conditional write, the
+Textbelt key reaches only the commands function and the scheduled run, and only as a secret, an
+Alert is taken up and recorded only by conditional writes, only the scheduled run may send email,
+only from its configured address and only through its own account and region, every table can be
+restored to a point in time, and everything carries the cost tag.
 
 ## How the calendar is kept
 
@@ -106,12 +108,34 @@ sends each Reminder that has come due, once, and keeps a record of every text: i
 Appointment it is about, its words, when it was due, and whether it is waiting, sent, delivered,
 failed or not sent. The Appointment's screen shows each Reminder's status and every text about it.
 
-- **Nothing reaches a phone yet.** Until ticket 13 connects Textbelt, texts go to a stand-in that
-  records them and sends nothing, in the backend and on sample data alike; Settings says so.
+- **Texts go through Textbelt** once its key is stored (below). Until then, and on sample data, a
+  stand-in records each text and sends nothing, and Settings says so.
+- **Delivery status.** Textbelt does not report delivery by itself, so each run asks it what became
+  of every text that is sent but not yet settled. `DELIVERED` makes the text delivered, `FAILED`
+  makes it failed, and anything else leaves it sent. A text with no confirmation 30 minutes after it
+  was sent is marked failed as "not confirmed delivered", which the app tells apart from a failure
+  Textbelt reported. "Delivered" means her phone company accepted it for her phone; the app never
+  says she read it. A text the stand-in recorded is never asked about and stays sent. Texts are
+  sent one at a time; the run then asks about statuses a few at a time, the oldest first, so one
+  slow answer holds up no other.
+- **Refused sends.** A send Textbelt refuses (its answer says `success: false`, such as "Out of
+  quota"), whatever the HTTP status, is failed at once and not tried again. An answer that is not
+  Textbelt's, such as a gateway's error page, cannot say whether the text went, so it is tried
+  again. The credit left on the key, which Textbelt gives with every send, is kept on each
+  text's record.
+- **No web addresses.** Textbelt does not send a text holding a web address unless the key has been
+  given leave to. The calendar sends no text whose words hold one (a link, a "www." address, a
+  name such as `example.de`, or an email address), of any kind: it is recorded as not sent, and
+  says why. Nothing typed is refused or changed: a Reminder's preview, in the form and on the
+  Appointment, warns that it will not be sent, and its status says "Will not be sent" until the
+  address is taken out. Such a Reminder is not among those still to be sent on the Upcoming card
+  or in the phone Month count, and saving an Appointment whose only Reminders in time are such
+  asks first, as saving one with no Reminder does, saying why. The Private notes go in no text, so
+  they can hold one.
 - **Settings → Susan's phone and contact** holds Susan's mobile number, and the name and number the
   automatic answer to a Reply will give her. With no number set, nothing is sent, and each Reminder
   that comes due is recorded as not sent. **Send a test text** sends one by the same path and shows
-  its status.
+  its status as it changes.
 - A Reminder found late is still sent while its Appointment has not started, and recorded as not
   sent once it has. One whose time had already passed when it was set is never sent. None is sent
   for a cancelled Appointment.
@@ -120,8 +144,34 @@ failed or not sent. The Appointment's screen shows each Reminder's status and ev
   it up first, and only while its Reminder is still the same and its Appointment has not started.
 - An exact-time Reminder flagged for review because its Appointment moved is not sent until
   someone keeps it or changes it.
-- Logs never hold Susan's number or the words of a text: they say only how many texts ended up in
-  each status, and, when something fails, which operation and what kind of failure.
+- Logs never hold Susan's number, the words of a text or the key: they say only how many texts
+  ended up in each status, and, when something fails, which operation and what kind of failure.
+
+### The Textbelt key
+
+The key is the one secret the owner must supply. It is a deployment secret named `TEXTBELT_KEY`,
+never written in the repository or kept in the calendar's data. Buy it as in
+[`docs/text-message-setup.md`](docs/text-message-setup.md), step 1.
+
+- **On the Amplify app:** **Hosting → Secrets**, add `TEXTBELT_KEY` for all branches, then redeploy.
+- **In a sandbox:** `npx ampx sandbox secret set TEXTBELT_KEY`, and paste the key when asked.
+
+Removing the secret puts the stand-in back. Only the `calendar-commands` function (for the test
+text) and the `send-texts` function are given it, and `npm run synth` checks that.
+
+### Try real texts on your own phone first
+
+Nothing goes to Susan's phone before go-live (ticket 18). To see real texts before then:
+
+1. Store the key as above and redeploy. Settings no longer says texts are only recorded.
+2. In **Settings → Susan's phone and contact**, enter your own mobile number where Susan's will
+   later go, and save.
+3. Press **Send a test text**. It should arrive within a minute or so, and its status should move
+   from Sent to Delivered within a few minutes. Add an Appointment with a Reminder a few minutes
+   ahead to see a Reminder arrive, with its words, at its time.
+4. Before go-live, replace your number with Susan's (ticket 18).
+
+Every text spends credit, the test text included.
 
 ## Alerts
 
@@ -131,12 +181,16 @@ Susan's account is not an Admin's, so she never gets one.
 - **When.** A text of any kind (a Reminder, a Change notice, a test text) fails: refused, sending
   did not go through after its tries, or reported not delivered. Or it is marked not confirmed
   delivered (once ticket 13 asks Textbelt), or could not be sent before its Appointment started.
+  A text not sent because its words held a web address raises one saying so, without the address.
   A Reminder that was not sent only because Susan's mobile number was not set raises one too,
   worded as a gap in the setup rather than a failure. Until her number is entered (ticket 18),
   that means an Alert for every Reminder that comes due. A Reminder held for review sends nothing
   and raises none. Texts recorded before Alerts existed raise none.
-- **Who sends it.** The scheduled run, every minute. A failed test text is marked by the command
-  that sent it, and the next run sends its Alert, within a minute.
+- **Who sends it.** The scheduled run, every minute, after its sends and after it has asked Textbelt
+  about every text still only sent. A text that asking settles as not delivered, or not confirmed
+  delivered, is settled once, by a conditional write that also marks its Alert due; the Alerts then
+  go one delivery at a time, never one burst per answer. A failed test text is marked by the
+  command that sent it, and the next run sends its Alert, within a minute.
 - **Once, and to everyone.** One text raises one Alert. Each Admin gets it once by email and once
   on each device with app notifications on; each of those is recorded as soon as it goes and never
   sent again. One that failed is tried again by a later run, two minutes on, up to three tries in
@@ -195,16 +249,18 @@ The app is at <https://main.d3o9xocds2v1sa.amplifyapp.com>.
 
 Set these on the Amplify app under **Hosting → Environment variables**, for all branches.
 
-| Name               | Value                               | What it does                                                                                                                                                  |
-| ------------------ | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SUSAN_TIME_ZONE`  | `America/New_York`                  | Susan's time zone. Every date and time in the calendar means her local time. US Eastern if unset; a wrong name fails the deploy.                              |
-| `COST_TAG`         | `susans-calendar`                   | The `project` tag on every backend resource and on the Hosting app, so the app's cost shows on its own in billing. This is the default.                       |
-| `CONTACT_EMAIL`    | your email address                  | The contact address on the [public pages](#public-pages). They say none has been set if it is missing; a value that is not an email address fails the deploy. |
-| `OWNER_NAME`       | your full name                      | Who the public pages say runs the calendar. They say "a private individual" if it is missing.                                                                 |
-| `APP_URL`          | (leave unset)                       | The address app notifications give the push services as their sender. It is worked out from the Amplify app; set it only if the app moves to its own domain.  |
-| `ALERT_EMAIL_FROM` | an address you have verified in SES | The address [Alert emails](#alert-emails) come from. Without it, Alerts go by app notification only; a value that is not an email address fails the deploy.   |
+| Name                        | Value                               | What it does                                                                                                                                                                                          |
+| --------------------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUSAN_TIME_ZONE`           | `America/New_York`                  | Susan's time zone. Every date and time in the calendar means her local time. US Eastern if unset; a wrong name fails the deploy.                                                                      |
+| `COST_TAG`                  | `susans-calendar`                   | The `project` tag on every backend resource and on the Hosting app, so the app's cost shows on its own in billing. This is the default.                                                               |
+| `CONTACT_EMAIL`             | your email address                  | The contact address on the [public pages](#public-pages). They say none has been set if it is missing; a value that is not an email address fails the deploy.                                         |
+| `OWNER_NAME`                | your full name                      | Who the public pages say runs the calendar. They say "a private individual" if it is missing.                                                                                                         |
+| `APP_URL`                   | (leave unset)                       | The address app notifications give the push services as their sender. It is worked out from the Amplify app; set it only if the app moves to its own domain.                                          |
+| `TEXT_CONFIRMATION_MINUTES` | (leave unset)                       | How long after it was sent a text with no confirmation of delivery is marked failed as "not confirmed delivered". 30 if unset; anything but a whole number of minutes, up to 10080, fails the deploy. |
+| `ALERT_EMAIL_FROM`          | an address you have verified in SES | The address [Alert emails](#alert-emails) come from. Without it, Alerts go by app notification only; a value that is not an email address fails the deploy.                                           |
 
-A change to any of these takes effect at the next deploy. Later tickets add to this table.
+A change to any of these takes effect at the next deploy. Later tickets add to this table. The
+Textbelt key is not one of these: it is a secret (see [The Textbelt key](#the-textbelt-key)).
 
 ### Rewrite rule
 
@@ -258,7 +314,9 @@ and region. AWS's [SES v2 authorization reference](https://docs.aws.amazon.com/s
 read on 20 November 2026, lists `SendEmail` on the `identity` resource with that condition key. The
 grant covers every identity in the account and region, not only the sender's, because the sender
 may be verified as an address or as its domain, and in the sandbox the recipients are verified
-identities too. `npm run synth` checks it. SES charges for each email; what it costs depends on the plan the account is on (pay-as-you-go or a Mail Manager / Essentials plan), so see [AWS's SES pricing](https://aws.amazon.com/ses/pricing/) rather than a figure here. A handful of Alerts a month costs very little either way.
+identities too. `npm run synth` checks it. SES charges for each email, and the price depends on the plan the account uses: the à-la-carte
+pricing or the Essentials plan. See [AWS's SES pricing](https://aws.amazon.com/ses/pricing/) for
+the current figures rather than one written here.
 
 **Try it once, by hand.** In the SES console, **Send test email** from the sender to one Admin's
 address proves the two are verified. Then make a text fail on purpose. Once ticket 13 sends real

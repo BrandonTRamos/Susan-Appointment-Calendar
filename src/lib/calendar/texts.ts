@@ -11,8 +11,10 @@ export type TextKind = (typeof TEXT_KINDS)[number];
 export const TEXT_STATUSES = ['waiting', 'sent', 'delivered', 'failed', 'notSent'] as const;
 /**
  * Where a text has got to. Waiting: due, and being sent or to be tried again. Sent: the text sender
- * took it. Delivered: the carrier accepted it for her phone (ticket 13). Failed: it was refused, or
- * sending kept failing. Not sent: the calendar chose not to send it, for a reason it records.
+ * took it, and no word has come yet of what became of it. Delivered: the carrier accepted it for
+ * her phone; it does not mean she read it. Failed: it was refused, sending kept failing, the sender
+ * reported it was not delivered, or no confirmation came in time. Not sent: the calendar chose not
+ * to send it, for a reason it records.
  */
 export type TextStatus = (typeof TEXT_STATUSES)[number];
 
@@ -25,14 +27,16 @@ export const TEXT_REASONS = [
   'gaveUp',
   'undelivered',
   'unconfirmed',
+  'webAddress',
 ] as const;
 /**
  * Why a text failed or was not sent. noNumber: Susan's mobile number is not set. tooLate: the
  * Appointment had started. cancelled: the Appointment was cancelled while the text waited.
  * outdated: its Reminder was removed, or its time changed, while it waited to be tried again.
  * refused: the text sender would not take it. gaveUp: sending failed every time it was tried.
- * undelivered: after it was sent, the text sender reported that it could not be delivered.
- * unconfirmed: after it was sent, it was never confirmed delivered ("not confirmed delivered").
+ * undelivered: the text sender reported that it was not delivered. unconfirmed: no confirmation
+ * that it was delivered came within UNCONFIRMED_AFTER of its sending ("not confirmed delivered").
+ * webAddress: its words held a web address, which no text may (holdsWebAddress).
  */
 export type TextReason = (typeof TEXT_REASONS)[number];
 
@@ -58,8 +62,16 @@ export interface Text {
   triedAt: string;
   /** When the text sender took it. */
   sentAt: string | null;
-  /** The text sender's own name for it, for asking later what became of it. */
+  /**
+   * The text sender's own name for it, for asking later what became of it. Null when the sender
+   * gave none, as the stand-in does: then nobody can be asked, and it stays sent.
+   */
   reference: string | null;
+  /**
+   * The credit left for texts just after this one was sent or refused, as the text sender said
+   * (Textbelt's is prepaid). Null when it did not say. The newest is the balance.
+   */
+  creditLeft: number | null;
   /**
    * The Alert about it (alerts.ts), once it failed or could not be sent; null for a text that needs
    * none, and for one recorded before the calendar raised Alerts.
@@ -122,6 +134,37 @@ export const SEND_ATTEMPTS = 3;
  */
 export const RETRY_AFTER = 2 * 60_000;
 
+/**
+ * How long after it was sent a text that no word has confirmed delivered is marked failed as "not
+ * confirmed delivered", unless the deploy sets another (resolveConfirmationMinutes). A starting
+ * guess (spec, "Further Notes"): a carrier that never confirms would make every text fail.
+ */
+export const UNCONFIRMED_AFTER_MINUTES = 30;
+export const UNCONFIRMED_AFTER = UNCONFIRMED_AFTER_MINUTES * 60_000;
+
+/**
+ * How many texts the scheduled run asks the text sender about at once. Each question waits for its
+ * own answer, so one slow answer holds up only its own text, while the run still ends well within
+ * its minute. Sending is never done this way: texts go one at a time.
+ */
+export const STATUS_READS_AT_ONCE = 4;
+
+/**
+ * The period before a text counts as not confirmed delivered, in minutes, from the deploy's
+ * TEXT_CONFIRMATION_MINUTES: UNCONFIRMED_AFTER_MINUTES when it is not set. Anything but a whole
+ * number of minutes up to a week, which is as long as Textbelt keeps a status, fails the deploy.
+ */
+export function resolveConfirmationMinutes(configured: string | undefined | null): number {
+  const typed = configured?.trim();
+  if (!typed) return UNCONFIRMED_AFTER_MINUTES;
+  const minutes = /^\d+$/.test(typed) ? Number(typed) : NaN;
+  if (!(minutes >= 1 && minutes <= 7 * 24 * 60))
+    throw new Error(
+      'TEXT_CONFIRMATION_MINUTES must be a whole number of minutes, from 1 to 10080.',
+    );
+  return minutes;
+}
+
 /** The ID of the text a Reminder sends at the time it is now due. */
 export function reminderTextId(appointment: Pick<Appointment, 'id'>, reminder: Reminder): string {
   return `reminder:${appointment.id}:${reminder.id}:${reminder.dueAt}`;
@@ -180,13 +223,14 @@ export function reminderPlan(
 
 /**
  * Whether a text may have reached Susan: anything sent or being sent, and anything that failed
- * after it was tried, unless the text sender refused it outright. Only a text the calendar chose
- * not to send, or one refused, certainly did not. A text that waited to be tried again and was then
- * given up, for whatever reason, counts as failed: its earlier try may have gone.
+ * after it was tried, unless the text sender refused it outright on its only try. Only a text the
+ * calendar chose not to send, or one refused the first time, certainly did not. A text that waited
+ * to be tried again and was then given up or refused, for whatever reason, counts as failed: its
+ * earlier try may have gone.
  */
 export function mayHaveReachedSusan(text: Text): boolean {
   if (text.status === 'notSent') return false;
-  return !(text.status === 'failed' && text.reason === 'refused');
+  return !(text.status === 'failed' && text.reason === 'refused' && text.attempts <= 1);
 }
 
 /** The texts about an Appointment, newest due first. */

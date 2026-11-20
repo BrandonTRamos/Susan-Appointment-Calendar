@@ -8,6 +8,7 @@ import type {
   AppNotification,
   Clock,
   Deliveries,
+  DeliveryReport,
   SendResult,
   Store,
   TextSender,
@@ -170,8 +171,13 @@ export interface StandInText {
 
 /**
  * The text sender used wherever Textbelt's key is absent, sample data included: it records each
- * text instead of sending it, and logs nothing. A test can make the next sends fail, either for
- * certain (`refuseNext`) or so that nobody can tell whether they went (`breakNext`).
+ * text instead of sending it, and logs nothing. A text it records went to no phone, so it gives it
+ * no name and nobody asks what became of it: it stays sent.
+ *
+ * A test can make the next sends fail, either for certain (`refuseNext`) or so that nobody can tell
+ * whether they went (`breakNext`). Made with `reportsDelivery`, it stands in for a sender that can
+ * be asked what became of each text, as Textbelt can: it names them `stand-in-1`, `stand-in-2` and
+ * so on, and answers what `report` last told it, or 'pending'.
  */
 export interface StandInSender extends TextSender {
   /** Every text it took, oldest first. */
@@ -180,12 +186,38 @@ export interface StandInSender extends TextSender {
   breakNext(times?: number): void;
   /** The next `times` sends are refused. */
   refuseNext(times?: number): void;
+  /** From now on it is asked about the text it named `reference`, it answers `report`. */
+  report(reference: string, report: DeliveryReport): void;
+  /** The next `times` times it is asked about a text, it throws, as when it cannot be reached. */
+  breakReports(times?: number): void;
+  /** Every reference it was asked about, in order. */
+  asked(): string[];
+  /**
+   * From now on, asking about any of these references (or, with none given, any reference) waits,
+   * as a slow answer does, until `releaseReports`.
+   */
+  holdReports(...references: string[]): void;
+  /** Answers every question held back, and holds no more. */
+  releaseReports(): void;
+  /**
+   * Says, with each send, that this much credit is left, one less for each text it takes. Until
+   * this is called it says nothing about credit.
+   */
+  haveCredit(credit: number): void;
 }
 
-export function createStandInSender(): StandInSender {
+export function createStandInSender({
+  reportsDelivery = false,
+}: { reportsDelivery?: boolean } = {}): StandInSender {
   const taken: StandInText[] = [];
+  const reports = new Map<string, DeliveryReport>();
+  const asked: string[] = [];
   let broken = 0;
   let refused = 0;
+  let brokenReports = 0;
+  let credit: number | null = null;
+  let holding: Set<string> | 'all' | null = null;
+  const held: (() => void)[] = [];
   return {
     async send({ to, words }): Promise<SendResult> {
       if (broken > 0) {
@@ -194,10 +226,22 @@ export function createStandInSender(): StandInSender {
       }
       if (refused > 0) {
         refused -= 1;
-        return { sent: false };
+        return { sent: false, creditLeft: credit };
       }
       taken.push({ to, words });
-      return { sent: true, reference: `stand-in-${taken.length}` };
+      if (credit !== null) credit = Math.max(0, credit - 1);
+      const reference = reportsDelivery ? `stand-in-${taken.length}` : null;
+      return { sent: true, reference, creditLeft: credit };
+    },
+    async delivery(reference) {
+      asked.push(reference);
+      if (holding === 'all' || holding?.has(reference))
+        await new Promise<void>((resolve) => held.push(resolve));
+      if (brokenReports > 0) {
+        brokenReports -= 1;
+        throw new Error('The stand-in sender was told it cannot be reached.');
+      }
+      return reports.get(reference) ?? 'pending';
     },
     taken: () => structuredClone(taken),
     breakNext(times = 1) {
@@ -205,6 +249,23 @@ export function createStandInSender(): StandInSender {
     },
     refuseNext(times = 1) {
       refused += times;
+    },
+    report(reference, report) {
+      reports.set(reference, report);
+    },
+    breakReports(times = 1) {
+      brokenReports += times;
+    },
+    asked: () => [...asked],
+    holdReports(...references) {
+      holding = references.length ? new Set(references) : 'all';
+    },
+    releaseReports() {
+      holding = null;
+      for (const release of held.splice(0)) release();
+    },
+    haveCredit(next) {
+      credit = next;
     },
   };
 }

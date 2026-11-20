@@ -1,4 +1,9 @@
-import { createCalendarCore, systemClock, type CalendarCore } from '../../../src/lib/calendar';
+import {
+  createCalendarCore,
+  resolveConfirmationMinutes,
+  systemClock,
+  type CalendarCore,
+} from '../../../src/lib/calendar';
 import { resolveTimeZone } from '../../../src/lib/timeZone';
 import { sesEmailSender } from '../../calendar/alert-email';
 import { adminMessenger, userPoolAdmins, webPushSender } from '../../calendar/admin-messenger';
@@ -30,6 +35,8 @@ function getCore() {
           appUrl,
         }),
         timeZone: resolveTimeZone(process.env.SUSAN_TIME_ZONE),
+        unconfirmedAfter:
+          resolveConfirmationMinutes(process.env.TEXT_CONFIRMATION_MINUTES) * 60_000,
       }),
     )
     .catch((error: unknown) => {

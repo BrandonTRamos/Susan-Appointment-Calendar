@@ -4,7 +4,7 @@ import { adminMessenger, userPoolAdmins, webPushSender } from '../../calendar/ad
 import { dataApiDevices, type DeviceClient } from '../../calendar/app-notification-devices';
 import { connectDataApi, dataStore, type DataClient } from '../../calendar/data-store';
 import { rememberedNames, userPoolNames } from '../../calendar/people';
-import { textSenderFor } from '../../calendar/text-sender';
+import { textSenderFor, textSenderName } from '../../calendar/text-sender';
 import { calendarCommandHandler } from './commands';
 
 const userPoolId = process.env.USER_POOL_ID ?? '';
@@ -37,4 +37,5 @@ function getCore() {
 export const handler = calendarCommandHandler({
   core: getCore,
   nameOf: rememberedNames(userPoolNames(userPoolId)),
+  textSender: () => textSenderName(),
 });

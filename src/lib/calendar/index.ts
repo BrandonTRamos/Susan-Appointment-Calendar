@@ -21,6 +21,7 @@ export type {
 } from './core';
 export * from './reminders';
 export * from './texts';
+export { holdsWebAddress } from './webAddress';
 export {
   createFixedClock,
   createMemoryMessenger,
@@ -35,13 +36,20 @@ export type {
   StandInSender,
   StandInText,
 } from './memory';
-export { NO_ADMIN_MESSENGER, NO_DELIVERIES, NO_TEXT_SENDER, systemClock } from './ports';
+export {
+  DELIVERY_REPORTS,
+  NO_ADMIN_MESSENGER,
+  NO_DELIVERIES,
+  NO_TEXT_SENDER,
+  systemClock,
+} from './ports';
 export type {
   AdminEmail,
   AdminMessenger,
   AppNotification,
   Clock,
   Deliveries,
+  DeliveryReport,
   SendResult,
   Store,
   TextSender,

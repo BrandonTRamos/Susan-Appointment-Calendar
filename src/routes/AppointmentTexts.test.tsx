@@ -71,6 +71,89 @@ describe.each(['phone', 'desktop'] as const)(
       expect(list.getByText(text.words)).toBeTruthy();
     });
 
+    it('shows a Reminder that was delivered as delivered, and never says she read it', async () => {
+      const calendar = createSampleCalendar(EASTERN, { empty: true });
+      const added = await calendar.core.addAppointment(linda, {
+        what: 'Eye exam',
+        date: daysFromToday(4),
+        time: '15:30',
+      });
+      const text = await sentReminder(calendar, added);
+      await calendar.store.replaceText({ ...text, status: 'delivered' });
+      renderApp(`/appointments/${added.id}`, { calendar });
+      expect(await inReminders('Delivered')).toBeTruthy();
+      expect(await inReminders(/phone company accepted it for her phone/)).toBeTruthy();
+      // "Delivered" means her phone company took it; nothing says she read, saw or opened it.
+      expect(screen.queryByText(/read it|was read|has read|seen|opened/i)).not.toBeInTheDocument();
+    });
+
+    it('tells a text not confirmed delivered apart from one reported not delivered', async () => {
+      const calendar = createSampleCalendar(EASTERN, { empty: true });
+      const unconfirmed = await calendar.core.addAppointment(linda, {
+        what: 'Eye exam',
+        date: daysFromToday(4),
+        time: '15:30',
+      });
+      const undelivered = await calendar.core.addAppointment(linda, {
+        what: 'Blood draw',
+        date: daysFromToday(5),
+        time: '09:00',
+      });
+      for (const [appointment, reason] of [
+        [unconfirmed, 'unconfirmed'],
+        [undelivered, 'undelivered'],
+      ] as const) {
+        const text = await sentReminder(calendar, appointment);
+        await calendar.store.replaceText({ ...text, status: 'failed', reason });
+      }
+      renderApp(`/appointments/${unconfirmed.id}`, { calendar });
+      expect(await inReminders('Failed')).toBeTruthy();
+      expect(await inReminders(/^Not confirmed delivered/)).toBeTruthy();
+      cleanup();
+      renderApp(`/appointments/${undelivered.id}`, { calendar });
+      expect(await inReminders('Failed')).toBeTruthy();
+      expect(await inReminders(/reported that it was not delivered/)).toBeTruthy();
+      expect(screen.queryByText(/Not confirmed delivered/)).not.toBeInTheDocument();
+    });
+
+    it('shows a Reminder whose words hold a web address as one that will not be sent, and why', async () => {
+      const calendar = createSampleCalendar(EASTERN, { empty: true });
+      const added = await calendar.core.addAppointment(linda, {
+        what: 'Eye exam',
+        date: daysFromToday(4),
+        time: '15:30',
+        noteForSusan: 'Check in at www.example.com',
+      });
+      renderApp(`/appointments/${added.id}`, { calendar });
+      expect(await inReminders('Will not be sent')).toBeTruthy();
+      expect(await inReminders(/Its words hold a web address/)).toBeTruthy();
+      expect(
+        await inReminders(/This text holds a web address, so it will not be sent/),
+      ).toBeTruthy();
+      // The words are shown as they are, address and all.
+      expect(await inReminders(/Check in at www\.example\.com/)).toBeTruthy();
+    });
+
+    it('shows a Reminder kept from going for a web address as not sent, and why', async () => {
+      const calendar = createSampleCalendar(EASTERN, { empty: true });
+      const added = await calendar.core.addAppointment(linda, {
+        what: 'Eye exam',
+        date: daysFromToday(4),
+        time: '15:30',
+        noteForSusan: 'Check in at www.example.com',
+      });
+      const text = await sentReminder(calendar, added);
+      await calendar.store.replaceText({
+        ...text,
+        status: 'notSent',
+        reason: 'webAddress',
+        attempts: 0,
+      });
+      renderApp(`/appointments/${added.id}`, { calendar });
+      expect(await inReminders('Not sent')).toBeTruthy();
+      expect(await inReminders(/^Its words held a web address/)).toBeTruthy();
+    });
+
     it('shows a Reminder whose time had passed when it was set as not sent, and why', async () => {
       const calendar = createSampleCalendar(EASTERN, { empty: true });
       const { date, time } = inMinutes(120);
@@ -113,6 +196,7 @@ describe.each(['phone', 'desktop'] as const)(
           triedAt: added.reminders[0].dueAt,
           sentAt: added.reminders[0].dueAt,
           reference: null,
+          creditLeft: null,
           alert: null,
         });
       });

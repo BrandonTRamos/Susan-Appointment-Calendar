@@ -12,7 +12,7 @@ import { formatMoment } from './localTime';
 
 /** A text's status in a word or two, and what more there is to say about it. */
 export interface StatusWords {
-  /** "Waiting", "Sent", "Delivered", "Failed" or "Not sent". */
+  /** "Waiting", "Sent", "Delivered", "Failed", "Not sent" or "Will not be sent". */
   label: string;
   /** Why, or when; null when the label says it all. */
   detail: string | null;
@@ -39,6 +39,7 @@ export function textStatus(text: Text, timeZone: string): StatusWords {
             : 'Being sent now.',
         trouble: text.attempts > 1,
       };
+    // Delivered means only that: the calendar never says she read it.
     case 'sent':
       return {
         label: 'Sent',
@@ -71,9 +72,11 @@ function failedBecause(text: Text): string {
     case 'outdated':
       return 'Its Reminder was changed or removed before sending went through.';
     case 'undelivered':
-      return 'Her phone company reported that it could not be delivered.';
+      return 'Her phone company reported that it was not delivered.';
     case 'unconfirmed':
-      return 'Not confirmed delivered: her phone company did not confirm that it reached her phone.';
+      return 'Not confirmed delivered: no word came in time that her phone company accepted it.';
+    case 'webAddress':
+      return 'Its words held a web address, which texts to Susan cannot carry, so it was not sent again.';
     default:
       return `Sending did not go through after ${SEND_ATTEMPTS} tries.`;
   }
@@ -85,6 +88,8 @@ function notSentBecause(text: Text): string {
       return "Susan's mobile number was not set in Settings.";
     case 'cancelled':
       return 'The Appointment was cancelled.';
+    case 'webAddress':
+      return 'Its words held a web address, which texts to Susan cannot carry.';
     default:
       return 'Its time had passed and the Appointment had started before it could go.';
   }
@@ -131,7 +136,25 @@ export function troubleWords(
         opens: '/settings',
         label: 'Open Settings',
       };
+    case 'webAddress':
+      return {
+        words: `The last text to Susan, ${kind}, was not sent: its words held a web address.`,
+        ...look,
+      };
   }
+}
+
+/** What the Reminder previews say when a text's words hold a web address. */
+export const WEB_ADDRESS_WARNING =
+  "This text holds a web address, so it will not be sent: texts to Susan cannot carry one. Take the address out of the Appointment's details; the Private notes can hold it.";
+
+/** A Reminder still to go whose words hold a web address: it will not be sent. */
+export function webAddressStatus(): StatusWords {
+  return {
+    label: 'Will not be sent',
+    detail: 'Its words hold a web address, which texts to Susan cannot carry.',
+    trouble: true,
+  };
 }
 
 /** What will become of a Reminder that has no text recorded yet. */

@@ -67,14 +67,27 @@ export const systemClock: Clock = { now: () => new Date() };
 
 /** What became of a send that certainly did or did not go through. */
 export type SendResult =
-  /** The text was taken for sending. `reference` is the sender's own name for it, if it has one. */
-  | { sent: true; reference: string | null }
+  /**
+   * The text was taken for sending. `reference` is the sender's own name for it, for asking later
+   * what became of it; null when it gives none, and then nobody can be asked.
+   */
+  | { sent: true; reference: string | null; creditLeft?: number | null }
   /** The text was refused and certainly did not go: there is no point trying it again. */
-  | { sent: false };
+  | { sent: false; creditLeft?: number | null };
+// `creditLeft` on either is the credit left for texts afterwards, when the sender says.
+
+export const DELIVERY_REPORTS = ['delivered', 'failed', 'pending'] as const;
+/**
+ * What the text sender says became of a text it took. Delivered: the carrier accepted it for her
+ * phone, which is not to say she read it. Failed: it was not delivered. Pending: no word yet, or
+ * none that settles it; asked again on the next run.
+ */
+export type DeliveryReport = (typeof DELIVERY_REPORTS)[number];
 
 /**
- * How texts reach Susan's phone. The single seam ADR 0002 keeps: Textbelt sits behind it from ticket
- * 13, and the stand-in in memory.ts until then and wherever Textbelt's key is absent.
+ * How texts reach Susan's phone. The single seam ADR 0002 keeps: Textbelt sits behind it
+ * (amplify/calendar/textbelt.ts), and the stand-in in memory.ts wherever Textbelt's key is absent.
+ * Nothing outside the sender knows which provider it is or what its answers look like.
  */
 export interface TextSender {
   /**
@@ -83,11 +96,19 @@ export interface TextSender {
    * Never puts the number or the words in an error or a log.
    */
   send(text: { to: string; words: string }): Promise<SendResult>;
+  /**
+   * What became of the text it named `reference` when it took it. Throws when it cannot find out
+   * just now; the core asks again on the next run.
+   */
+  delivery(reference: string): Promise<DeliveryReport>;
 }
 
 /** The sender for a core that only reads, such as the subscription feed's: it sends nothing. */
 export const NO_TEXT_SENDER: TextSender = {
   send: async () => {
+    throw new Error('This calendar only reads: it sends no texts.');
+  },
+  delivery: async () => {
     throw new Error('This calendar only reads: it sends no texts.');
   },
 };
