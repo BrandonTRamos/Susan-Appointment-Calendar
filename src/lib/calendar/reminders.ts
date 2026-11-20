@@ -22,9 +22,6 @@ import type {
 /** The Reminder a new Appointment starts with: the day before at 6:00 pm. */
 export const STARTING_REMINDER: ReminderTiming = { shape: 'daysBefore', days: 1, time: '18:00' };
 
-/** The most Reminders one Appointment can have. */
-export const MOST_REMINDERS = 20;
-
 const MINUTE = 60_000;
 const UNIT_LENGTH: Record<Exclude<ReminderUnit, 'days'>, number> = {
   minutes: MINUTE,

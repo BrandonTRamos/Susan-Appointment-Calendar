@@ -23,7 +23,7 @@ import {
   type Stamp,
 } from './appointment';
 import type { Clock, Store } from './ports';
-import { MOST_REMINDERS, reminderDue, STARTING_REMINDER } from './reminders';
+import { reminderDue, STARTING_REMINDER } from './reminders';
 
 /** Why a command was refused. */
 export type RefusalReason =
@@ -264,8 +264,6 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
   ): Reminder[] {
     if (!Array.isArray(sent))
       invalid("The Appointment's Reminders could not be read.", 'reminders');
-    if (sent.length > MOST_REMINDERS)
-      invalid(`Keep to ${MOST_REMINDERS} Reminders or fewer.`, 'reminders');
     const taken = new Set<string>();
     const reminders = sent.map((each: unknown, n): Reminder => {
       const wrong = (message: string): never =>

@@ -660,14 +660,24 @@ describe('Reminders on an Appointment', () => {
     expect(store.appointments()).toEqual([]);
   });
 
-  it('refuses a list of Reminders that is not one, or is very long', async () => {
+  it('carries more than twenty, with no count it stops at', async () => {
+    const { core, store } = calendar();
+    const many = (count: number) =>
+      Array.from({ length: count }, (_, n) => ({
+        shape: 'before' as const,
+        amount: n + 1,
+        unit: 'hours' as const,
+      }));
+    const added = await core.addAppointment(linda, { ...checkUp, reminders: many(21) });
+    expect(added.reminders).toHaveLength(21);
+    const changed = await core.changeAppointment(mark, added.id, { reminders: many(30) });
+    expect(changed.reminders).toHaveLength(30);
+    expect(new Set(changed.reminders.map((r) => r.id)).size).toBe(30);
+    expect(store.appointments()[0].reminders).toHaveLength(30);
+  });
+
+  it('refuses a list of Reminders that is not one', async () => {
     const { core } = calendar();
-    const many = Array.from({ length: 21 }, (_, n) => ({
-      shape: 'before' as const,
-      amount: n + 1,
-      unit: 'hours' as const,
-    }));
-    await refused(core.addAppointment(linda, { ...checkUp, reminders: many }), 'invalid');
     await refused(
       core.addAppointment(linda, { ...checkUp, reminders: 'none' as unknown as [] }),
       'invalid',
