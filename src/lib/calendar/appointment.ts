@@ -133,12 +133,40 @@ export function inDateOrder(appointments: readonly Appointment[]): Appointment[]
 
 /**
  * The Appointments still to come, in date order: everything dated `today` (Susan's date, from
- * `today` in src/lib/localTime.ts) or later. One that started earlier today is still listed, so
- * that nobody loses the address while she is on her way.
+ * `today` in src/lib/localTime.ts) or later and not cancelled. One that started earlier today is
+ * still listed, so that nobody loses the address while she is on her way.
  */
 export function upcomingAppointments(
   appointments: readonly Appointment[],
   today: string,
 ): Appointment[] {
-  return inDateOrder(appointments.filter((appointment) => appointment.date >= today));
+  return inDateOrder(
+    appointments.filter(
+      (appointment) => appointment.date >= today && appointment.state === 'active',
+    ),
+  );
+}
+
+/** An Appointment has no end time; for overlaps, each is taken to be about this long. */
+const ABOUT_AN_HOUR = 60 * 60_000;
+
+/**
+ * The other Appointments that overlap one, in date order, taking each to be about an hour long:
+ * those starting less than an hour before or after it. Cancelled ones overlap nothing. Measured
+ * between the moments they start, so a clock change between them counts as it really is.
+ */
+export function overlappingAppointments(
+  appointment: Appointment,
+  appointments: readonly Appointment[],
+): Appointment[] {
+  if (appointment.state !== 'active') return [];
+  const starts = Date.parse(appointment.startsAt);
+  return inDateOrder(
+    appointments.filter(
+      (other) =>
+        other.id !== appointment.id &&
+        other.state === 'active' &&
+        Math.abs(Date.parse(other.startsAt) - starts) < ABOUT_AN_HOUR,
+    ),
+  );
 }

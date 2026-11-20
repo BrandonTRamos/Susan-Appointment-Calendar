@@ -1,12 +1,15 @@
 import { useCalendar } from '../data/CalendarContext';
+import { useInPanel } from './Page';
 
 /**
  * Says so when the calendar could not be read, or when what is showing may be out of date, and
- * offers to read it again. Shows nothing otherwise.
+ * offers to read it again. Shows nothing otherwise, and nothing in the desktop layout's detail panel:
+ * the tab beside it says so once for the whole page.
  */
 export function CalendarTrouble() {
   const { appointments, failed, retry } = useCalendar();
-  if (!failed) return null;
+  const inPanel = useInPanel();
+  if (!failed || inPanel) return null;
   return (
     <div className="trouble" role="alert">
       <p>

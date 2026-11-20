@@ -35,10 +35,10 @@ describe('adding an Appointment', () => {
       { what: 'Cardiology check-up', date, time: '14:00', state: 'active', withWhom: null },
     ]);
 
-    // And it is in the Upcoming list.
-    await userEvent.click(screen.getByRole('link', { name: 'Upcoming' }));
-    const list = await screen.findByRole('list', { name: 'Upcoming Appointments' });
-    expect(within(list).getByRole('link', { name: /Cardiology check-up/ })).toBeInTheDocument();
+    // And it is next on Upcoming.
+    await userEvent.click(screen.getByRole('link', { name: 'Back to Upcoming' }));
+    const next = await screen.findByRole('region', { name: 'Next up' });
+    expect(within(next).getByRole('link', { name: /Cardiology check-up/ })).toBeInTheDocument();
   });
 
   it('takes who it is with, where, the Driver and pickup time, and both kinds of note', async () => {
@@ -231,5 +231,58 @@ describe('changing an Appointment', () => {
     renderApp(`/appointments/${id}/edit`, { calendar });
     expect(await screen.findByText(/is cancelled, so it cannot be changed/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+  });
+});
+
+describe('an Appointment that overlaps another', () => {
+  it('is saved, with a warning that names the other one', async () => {
+    const date = daysFromToday(4);
+    const calendar = emptyCalendar();
+    await calendar.core.addAppointment(linda, { what: 'Blood draw', date, time: '14:00' });
+    renderApp('/appointments/new', { calendar });
+    await userEvent.type(field('What it is'), 'Cardiology check-up');
+    await userEvent.type(field('Date'), date);
+    await userEvent.type(field('Start time'), '14:30');
+    await save();
+
+    await screen.findByRole('heading', { level: 1, name: 'Cardiology check-up' });
+    expect(screen.getByRole('note')).toHaveTextContent(
+      `This overlaps Blood draw, ${formatDate(date, 'short')} at 2:00 pm.`,
+    );
+    expect(calendar.store.appointments()).toHaveLength(2);
+  });
+
+  it('is warned about when a change makes it overlap, and not once it no longer does', async () => {
+    const date = daysFromToday(4);
+    const calendar = emptyCalendar();
+    await calendar.core.addAppointment(linda, { what: 'Blood draw', date, time: '09:00' });
+    const { id } = await calendar.core.addAppointment(linda, { what: 'Hair', date, time: '11:00' });
+    renderApp(`/appointments/${id}/edit`, { calendar });
+    await userEvent.clear(await screen.findByLabelText('Start time'));
+    await userEvent.type(field('Start time'), '09:45');
+    await save();
+    expect(await screen.findByRole('note')).toHaveTextContent(/This overlaps Blood draw/);
+
+    await userEvent.click(screen.getByRole('link', { name: 'Edit' }));
+    await userEvent.clear(field('Start time'));
+    await userEvent.type(field('Start time'), '10:00');
+    await save();
+    await screen.findByRole('heading', { level: 1, name: 'Hair' });
+    expect(screen.queryByRole('note')).not.toBeInTheDocument();
+  });
+
+  it('is not warned about when the other one is cancelled', async () => {
+    const date = daysFromToday(4);
+    const calendar = emptyCalendar();
+    const other = await calendar.core.addAppointment(linda, {
+      what: 'Blood draw',
+      date,
+      time: '14:00',
+    });
+    await calendar.core.cancelAppointment(linda, other.id);
+    const { id } = await calendar.core.addAppointment(linda, { what: 'Hair', date, time: '14:00' });
+    renderApp(`/appointments/${id}`, { calendar });
+    await screen.findByRole('heading', { level: 1, name: 'Hair' });
+    expect(screen.queryByRole('note')).not.toBeInTheDocument();
   });
 });

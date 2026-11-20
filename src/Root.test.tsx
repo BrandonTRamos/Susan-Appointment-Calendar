@@ -69,7 +69,9 @@ describe('signed in', () => {
 
   it('opens the calendar, read from the data API and not from sample data', async () => {
     renderRoot('/');
-    expect(await screen.findByRole('heading', { level: 1, name: 'Upcoming' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { level: 1, name: "Susan's Calendar" }),
+    ).toBeInTheDocument();
     expect(await screen.findByText('No upcoming Appointments.')).toBeInTheDocument();
     expect(screen.queryByText(/Sample data/)).not.toBeInTheDocument();
   });
@@ -86,7 +88,7 @@ describe('with no backend', () => {
   it('runs the calendar on sample data with nobody signed in', async () => {
     renderRoot('/', { backend: false });
     await settled();
-    expect(screen.getByRole('heading', { level: 1, name: 'Upcoming' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: "Susan's Calendar" })).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent(/Sample data/);
     expect(screen.getByRole('link', { name: /Cardiology check-up/ })).toBeInTheDocument();
     expect(auth.session).not.toHaveBeenCalled();

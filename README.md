@@ -14,9 +14,10 @@ installable web app on AWS Amplify Gen 2.
 - **Notes for contributors and AI sessions:** [`AGENTS.md`](AGENTS.md) (`CLAUDE.md` is an identical copy)
 
 So far: sign-in, the [public pages](#public-pages), and Appointments. Anyone signed in can add an
-Appointment, see the upcoming ones, open one, change it, cancel it, and delete one entered by
-mistake; what one person changes shows for the others as it happens. Reminders, texts and the other
-tabs arrive with the later tickets, and the screens get their chosen design in ticket 06.
+Appointment, see the next one in full and the later ones beneath it, open one, change it, cancel it,
+and delete one entered by mistake, and is warned when one overlaps another; what one person changes
+shows for the others as it happens. Reminders, texts and the other tabs arrive with the later
+tickets.
 
 ## Run it locally
 

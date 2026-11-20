@@ -1,4 +1,4 @@
-import { useLayoutEffect } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import {
   BrowserRouter,
   Navigate,
@@ -6,15 +6,18 @@ import {
   Route,
   Routes,
   useLocation,
+  useMatch,
   useNavigationType,
 } from 'react-router-dom';
 import { Sidebar, TabBar } from './components/Navigation';
-import { Placeholder } from './components/Page';
-import { CalendarProvider } from './data/CalendarContext';
+import { InPanel, Placeholder } from './components/Page';
+import { CalendarProvider, useCalendar } from './data/CalendarContext';
 import type { CalendarClient } from './data/calendarClient';
 import { forgetAtSignOut, type DeviceRegistry } from './lib/appNotifications';
+import { upcomingAppointments } from './lib/calendar';
 import { useDesktopWidth } from './lib/useDesktopWidth';
 import { useNotificationTaps } from './lib/useNotificationTaps';
+import { useToday } from './lib/useToday';
 import { AppointmentDetail } from './routes/AppointmentDetail';
 import { EditAppointment, NewAppointment } from './routes/AppointmentForm';
 import { Month } from './routes/Month';
@@ -46,12 +49,21 @@ function Layout({
 }: Omit<AppProps, 'calendar'>) {
   const desktop = useDesktopWidth();
   useNotificationTaps(devices);
-  // A new screen opens at the top; Back (a POP) returns to where you were.
+  // An Appointment's own addresses: on a phone a full screen, on a desktop the detail panel.
+  const onAppointment = useMatch('/appointments/*') !== null;
+  const panel = useRef<HTMLElement>(null);
+
+  // A new screen opens at the top; Back (a POP) returns to where you were. On a desktop the
+  // middle column keeps its place while only the detail panel changes.
   const { pathname } = useLocation();
   const navigation = useNavigationType();
+  const middle = desktop && onAppointment ? '/' : pathname;
   useLayoutEffect(() => {
     if (navigation !== 'POP') window.scrollTo(0, 0);
-  }, [pathname, navigation]);
+  }, [middle, navigation]);
+  useLayoutEffect(() => {
+    panel.current?.scrollTo?.(0, 0);
+  }, [pathname]);
 
   const notice = sampleData && (
     <div className="notice" role="status">
@@ -61,10 +73,10 @@ function Layout({
 
   if (!desktop)
     return (
-      <div className="app phone">
+      <div className={onAppointment ? 'app phone full-screen' : 'app phone'}>
         {notice}
         <Outlet />
-        <TabBar />
+        {!onAppointment && <TabBar />}
       </div>
     );
   return (
@@ -72,13 +84,26 @@ function Layout({
       <Sidebar displayName={displayName} onSignOut={onSignOut} />
       <div className="middle">
         {notice}
-        <Outlet />
+        {/* An Appointment opens beside the list it was picked from. */}
+        {onAppointment ? <Upcoming /> : <Outlet />}
       </div>
-      <aside className="detail" aria-label="Appointment details">
-        <Placeholder>The picked Appointment's details will show here.</Placeholder>
+      <aside className="detail" aria-label="Appointment details" ref={panel}>
+        <InPanel.Provider value={true}>
+          {onAppointment ? <Outlet /> : <PickedToBeginWith />}
+        </InPanel.Provider>
       </aside>
     </div>
   );
+}
+
+/** The detail panel before anything is picked: on Upcoming, the next Appointment. */
+function PickedToBeginWith() {
+  const onUpcoming = useMatch('/') !== null;
+  const { appointments, timeZone } = useCalendar();
+  const today = useToday(timeZone);
+  const next = onUpcoming && appointments ? upcomingAppointments(appointments, today)[0] : null;
+  if (next) return <AppointmentDetail id={next.id} />;
+  return <Placeholder>Pick an Appointment to see it here.</Placeholder>;
 }
 
 export function App({ calendar, onSignOut, ...rest }: AppProps) {
