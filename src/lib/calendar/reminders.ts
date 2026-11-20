@@ -11,6 +11,7 @@ import {
   momentOf,
   momentOrSkipped,
 } from '../localTime';
+import { reminderPlan } from './texts';
 import type {
   Appointment,
   AppointmentDetails,
@@ -83,12 +84,14 @@ export function describeReminder(timing: ReminderTiming): string {
 }
 
 /**
- * The Reminders still to be sent: those whose time has not yet come, in the order they go out. A
- * cancelled Appointment has none.
+ * The Reminders still to be sent: those whose time has not yet come, in the order they go out, as
+ * reminderPlan (texts.ts) has them. A cancelled Appointment has none, and a Reminder held for review
+ * since its Appointment moved is not one: it goes out only once someone keeps or changes it.
  */
 export function remindersStillToSend(appointment: Appointment, now: Date): Reminder[] {
-  if (appointment.state === 'cancelled') return [];
-  return appointment.reminders.filter((reminder) => new Date(reminder.dueAt) > now);
+  return appointment.reminders.filter(
+    (reminder) => reminderPlan(appointment, reminder, now) === 'later',
+  );
 }
 
 /** Words as they are typed or kept, as one line with no stray spaces, or null for none. */

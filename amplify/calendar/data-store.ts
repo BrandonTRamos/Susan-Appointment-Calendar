@@ -6,12 +6,23 @@
 import { getAmplifyDataClientConfig } from '@aws-amplify/backend/function/runtime';
 import { Amplify } from 'aws-amplify';
 import { generateClient } from 'aws-amplify/data';
-import type { Appointment, Series, Store, SubscriptionLink } from '../../src/lib/calendar';
 import {
+  NO_SETTINGS,
+  type Appointment,
+  type Series,
+  type Store,
+  type SubscriptionLink,
+  type Text,
+} from '../../src/lib/calendar';
+import {
+  SETTINGS_ID,
   toAppointment,
   toSeries,
+  toSettings,
+  toText,
   type AppointmentRow,
   type SeriesRow,
+  type TextRow,
 } from '../../src/lib/calendarApi';
 import type { Schema } from '../data/resource';
 
@@ -27,12 +38,63 @@ export interface DataClient {
       Models['SubscriptionLink'],
       'get' | 'create' | 'update' | 'delete' | 'subscriptionLinkByHash'
     >;
+    Text: Pick<Models['Text'], 'list' | 'create' | 'update' | 'textsByAppointment'>;
+    CalendarSettings: Pick<Models['CalendarSettings'], 'get' | 'create' | 'update'>;
   };
+  /**
+   * A raw data API operation, for a write that carries a condition: the models' own `update`
+   * cannot, and the data API's can. The client throws the whole answer when it carries errors.
+   */
+  graphql(options: { query: string; variables: Record<string, unknown> }): Promise<unknown>;
 }
 
-function check<T>(result: { data: T; errors?: readonly { message: string }[] }): T {
+/**
+ * Replaces a text's record only if, as DynamoDB writes it, it is still as the condition says: the
+ * data API adds `condition` to its own check that the row exists, in the one conditional write
+ * (`npm run synth` checks that its resolver does).
+ */
+const RETAKE_TEXT = /* GraphQL */ `
+  mutation RetakeText($input: UpdateTextInput!, $condition: ModelTextConditionInput!) {
+    updateText(input: $input, condition: $condition) {
+      id
+    }
+  }
+`;
+
+interface DataError {
+  message: string;
+  errorType?: string | null;
+}
+
+function check<T>(result: { data: T; errors?: readonly DataError[] }): T {
   if (result.errors?.length) throw new Error(result.errors.map((e) => e.message).join('; '));
   return result.data;
+}
+
+/**
+ * Whether a write failed only because DynamoDB refused its condition: for a create, that a row
+ * with its ID is already there; for a retake, that the row is no longer as it was read.
+ */
+const alreadyThere = (errors: readonly DataError[] | undefined) =>
+  Boolean(errors?.length) &&
+  errors!.every((error) => /ConditionalCheckFailed/.test(error.errorType ?? error.message));
+
+/** Every row of a model, page by page. */
+async function everyRow<Row>(
+  list: (options: { limit: number; nextToken?: string | null }) => Promise<{
+    data: Row[];
+    errors?: readonly DataError[];
+    nextToken?: string | null;
+  }>,
+): Promise<Row[]> {
+  const rows: Row[] = [];
+  let nextToken: string | null | undefined;
+  do {
+    const page = await list({ limit: 1000, nextToken });
+    rows.push(...check(page));
+    nextToken = page.nextToken;
+  } while (nextToken);
+  return rows;
 }
 
 /** Only the fields a subscription link has; the data API adds its own beside them. */
@@ -54,7 +116,8 @@ function differing<T extends { id: string }>(was: T | undefined, now: T) {
 }
 
 export function dataStore(client: DataClient): Store {
-  const { Appointment, Series, ActivityRecord, SubscriptionLink } = client.models;
+  const { Appointment, Series, ActivityRecord, SubscriptionLink, Text, CalendarSettings } =
+    client.models;
   /** Each Appointment and Series as the core last read it here, until it is written. */
   const read = new Map<string, Appointment>();
   const readSeries = new Map<string, Series>();
@@ -79,22 +142,64 @@ export function dataStore(client: DataClient): Store {
       read.delete(id);
       check(await Appointment.delete({ id }));
     },
-    // Nothing sends texts yet. The ticket that does (11) answers this from the texts it records.
-    async textSentAbout() {
-      return false;
+    async textsAbout(appointmentId) {
+      const rows = await everyRow<TextRow>((options) =>
+        Text.textsByAppointment({ appointmentId }, options),
+      );
+      return rows.map(toText);
+    },
+    async everyText() {
+      return (await everyRow<TextRow>((options) => Text.list(options))).map(toText);
+    },
+    // The data API creates a row only if none has its ID, in one step: the claim.
+    async claimText(text) {
+      const result = await Text.create(text);
+      if (alreadyThere(result.errors)) return false;
+      check(result);
+      return true;
+    },
+    // Only if no other run has taken it up since it was read: still waiting, after the same tries.
+    async retakeText(next, current) {
+      const condition = {
+        and: [
+          { status: { eq: 'waiting' } },
+          { attempts: { eq: current.attempts } },
+          { triedAt: { eq: current.triedAt } },
+        ],
+      };
+      let answer: { errors?: readonly DataError[] };
+      try {
+        answer = (await client.graphql({
+          query: RETAKE_TEXT,
+          variables: { input: next, condition },
+        })) as { errors?: readonly DataError[] };
+      } catch (thrown) {
+        if (!(thrown && typeof thrown === 'object' && 'errors' in thrown)) throw thrown;
+        answer = thrown as { errors?: readonly DataError[] };
+      }
+      if (!answer.errors?.length) return true;
+      if (alreadyThere(answer.errors)) return false;
+      throw new Error(answer.errors.map((e) => e.message).join('; '));
+    },
+    async replaceText(text: Text) {
+      check(await Text.update(text));
+    },
+    async settings() {
+      const row = check(await CalendarSettings.get({ id: SETTINGS_ID }));
+      return row ? toSettings(row) : NO_SETTINGS;
+    },
+    async keepSettings(settings) {
+      const had = check(await CalendarSettings.get({ id: SETTINGS_ID }));
+      const row = { id: SETTINGS_ID, ...settings };
+      check(await (had ? CalendarSettings.update(row) : CalendarSettings.create(row)));
     },
     async recordActivity(record) {
       check(await ActivityRecord.create(record));
     },
     async everyAppointment() {
-      const rows: AppointmentRow[] = [];
-      let nextToken: string | null | undefined;
-      do {
-        const page = await Appointment.list({ limit: 1000, nextToken });
-        rows.push(...check(page));
-        nextToken = page.nextToken;
-      } while (nextToken);
-      const all = rows.map(toAppointment);
+      const all = (await everyRow<AppointmentRow>((options) => Appointment.list(options))).map(
+        toAppointment,
+      );
       for (const appointment of all) read.set(appointment.id, appointment);
       return all;
     },
@@ -114,14 +219,7 @@ export function dataStore(client: DataClient): Store {
       check(await Series.update(differing(was, series)));
     },
     async everySeries() {
-      const rows: SeriesRow[] = [];
-      let nextToken: string | null | undefined;
-      do {
-        const page = await Series.list({ limit: 1000, nextToken });
-        rows.push(...check(page));
-        nextToken = page.nextToken;
-      } while (nextToken);
-      const all = rows.map(toSeries);
+      const all = (await everyRow<SeriesRow>((options) => Series.list(options))).map(toSeries);
       for (const series of all) readSeries.set(series.id, series);
       return all;
     },
@@ -162,5 +260,6 @@ export async function connectDataApi(env: NodeJS.ProcessEnv = process.env) {
 
 /** The store for a backend function that the data schema lets call the data API. */
 export async function createDataStore(env: NodeJS.ProcessEnv = process.env): Promise<Store> {
-  return dataStore(await connectDataApi(env));
+  // The data API's own client type is too deep to compare against the narrow one.
+  return dataStore((await connectDataApi(env)) as unknown as DataClient);
 }

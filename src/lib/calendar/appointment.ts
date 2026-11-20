@@ -109,6 +109,13 @@ export type Reminder = ReminderTiming & {
    * someone confirms or changes it.
    */
   needsReview: boolean;
+  /**
+   * When its time was last worked out: when it was set, changed or confirmed, or its Appointment
+   * moved it. An edit that leaves its time as it was leaves this as it was. A Reminder whose time
+   * had already passed by then is never sent (reminderPlan in texts.ts). Null for one kept before
+   * the calendar recorded this.
+   */
+  setAt: string | null;
 };
 
 /**

@@ -898,16 +898,19 @@ p {
 
 /* ---------- Reminders ---------- */
 .form-reminders,
-.reminders {
+.reminders,
+.texts {
   display: flex;
   flex-direction: column;
   gap: 14px;
 }
 .form-reminders h2,
-.reminders h2 {
+.reminders h2,
+.texts h2 {
   margin: 0;
 }
-.reminders ul {
+.reminders ul,
+.texts ul {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -922,7 +925,8 @@ p {
   min-width: 0;
   margin: 0;
 }
-.reminders .reminder {
+.reminders .reminder,
+.texts .reminder {
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border);
 }
@@ -1221,4 +1225,17 @@ body.has-update .public {
 .details dd .muted {
   display: block;
   font-size: 16px;
+}
+
+/* ---------- Texts to Susan ---------- */
+.text-status {
+  margin: 0;
+}
+.text-status .badge {
+  margin-right: 6px;
+}
+.test-text {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }

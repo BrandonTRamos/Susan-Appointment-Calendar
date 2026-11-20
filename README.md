@@ -20,8 +20,10 @@ what one person changes shows for the others as it happens. Each Appointment car
 showing when each goes out and the exact words Susan will read. An Appointment can be made to repeat,
 as a [Series](#series). The Month tab shows a month at a
 glance, and Past lists the Appointments that have already happened. Anyone signed in can also get
-their own [calendar subscription](#calendar-subscription) link. No text is sent yet: sending texts
-and Replies arrive with the later tickets.
+their own [calendar subscription](#calendar-subscription) link. Reminders go out on schedule and
+each Appointment shows every text about it with its status, but no text reaches a phone yet: until
+Textbelt is connected (ticket 13) a stand-in records each text instead (see
+[Texts to Susan](#texts-to-susan)). Replies arrive with a later ticket.
 
 ## Run it locally
 
@@ -73,10 +75,12 @@ sign up, sign-in has no second step, anyone signed in can read everything in the
 calendar core's commands (and turning app notifications on and off for a device) are the only way a
 signed-in person can change anything, nobody signed in can read the devices app notifications go to
 or the key that signs them, the app-notifications function reaches nothing else, a device is only
-ever deleted on a condition checked as it is deleted, the Series top-up runs once a day, one run at
-a time, and can only read the calendar, add Appointments and note how far a Series is made, no rule
-tells Susan from an Admin, every table can be restored to a point in time, and everything carries
-the cost tag.
+ever deleted on a condition checked as it is deleted, no rule tells Susan from an Admin, one
+scheduled run sends texts every minute and never overlaps itself, a text is claimed by creating its
+record, which fails when it is already there, and taken up again only by a conditional write, the
+Series top-up runs once a day, one run at a time with its retries bounded, and can only read the
+calendar, add Appointments and note how far a Series is made, every table can be restored to a
+point in time, and everything carries the cost tag.
 
 ## How the calendar is kept
 
@@ -85,9 +89,10 @@ is the only thing that writes calendar data.
 
 - The app reads Appointments straight from the data API and is sent every change as it happens.
 - The app changes the calendar only by calling the core's commands (add, change, cancel and delete an
-  Appointment; add, change and end a Series). They run in a backend function, `calendar-commands`;
-  nothing a signed-in person can call writes calendar data any other way. The one other writer is
-  the daily Series top-up, `series-top-up`, which runs the same core.
+  Appointment; add, change and end a Series; change the settings; send a test text). They run in a
+  backend function, `calendar-commands`; nothing a signed-in person can call writes calendar data
+  any other way. The other writers are the scheduled run that sends texts, `send-texts`, and the
+  daily Series top-up, `series-top-up`, which run the same core.
 - Each command is carried out as the signed-in person. The Appointment shows who added it and who
   last changed it, and the calendar keeps a record of each change.
 - Adding, changing or cancelling an Appointment sends the other Admins an Activity update: an app
@@ -108,7 +113,10 @@ few months on the day it starts, ending on a date or never.
   `series-top-up` backend function runs once a day at 08:00 UTC and makes the Appointments each
   Series still needs, so one with no end never runs dry. It records no activity and sends no
   Activity update: nobody acted. If a Series is ended or split while it runs, it takes out again
-  any Appointment it made after the new end.
+  any Appointment it made after the new end. It is separate from the scheduled run that sends
+  texts, and sends none itself. A failed run is not retried; the next day's catches up.
+- Each Reminder of an Appointment in a Series is set when that Appointment is made or changed, by
+  the same rule as any other: one whose time has already passed then is never sent.
 - Patterns are worked out on Susan's dates, so a weekly 9:00 am stays at 9:00 am across a clock
   change. The first Appointment has to be on a day the pattern gives. A monthly Series on the 29th,
   30th or 31st lands on the last day of a shorter month. A day on which the clocks skip its start
@@ -119,11 +127,35 @@ few months on the day it starts, ending on a date or never.
   on its own, or **this and all later ones**, which ends the Series the day before and continues it
   as a new Series. Later Appointments are replaced, including ones changed on their own: one on a
   date the new Series also has is changed in place, and any other is removed, or cancelled if Susan
-  was texted about it. Cancelling this and all later ones keeps them, marked cancelled. Deleting
+  may have been texted about it, which keeps it, and its texts, on record. Cancelling this and all later ones keeps them, marked cancelled. Deleting
   one entered by mistake deletes only that one, and the top-up does not bring it back.
 - Adding, changing or cancelling a Series leaves one activity record and sends one Activity update,
   not one per Appointment. An Appointment in a Series shows **Repeats** in every list, and how it
   repeats on its detail.
+
+## Texts to Susan
+
+Every minute the `send-texts` backend function runs the calendar core's "run what is due", which
+sends each Reminder that has come due, once, and keeps a record of every text: its kind, the
+Appointment it is about, its words, when it was due, and whether it is waiting, sent, delivered,
+failed or not sent. The Appointment's screen shows each Reminder's status and every text about it.
+
+- **Nothing reaches a phone yet.** Until ticket 13 connects Textbelt, texts go to a stand-in that
+  records them and sends nothing, in the backend and on sample data alike; Settings says so.
+- **Settings → Susan's phone and contact** holds Susan's mobile number, and the name and number the
+  automatic answer to a Reply will give her. With no number set, nothing is sent, and each Reminder
+  that comes due is recorded as not sent. **Send a test text** sends one by the same path and shows
+  its status.
+- A Reminder found late is still sent while its Appointment has not started, and recorded as not
+  sent once it has. One whose time had already passed when it was set is never sent. None is sent
+  for a cancelled Appointment.
+- Only one run goes at a time, and each text is claimed before it is sent, so none goes twice. A
+  send that might not have gone through is tried again, up to three times, by whichever run takes
+  it up first, and only while its Reminder is still the same and its Appointment has not started.
+- An exact-time Reminder flagged for review because its Appointment moved is not sent until
+  someone keeps it or changes it.
+- Logs never hold Susan's number or the words of a text: they say only how many texts ended up in
+  each status, and, when something fails, which operation and what kind of failure.
 
 ## Calendar subscription
 

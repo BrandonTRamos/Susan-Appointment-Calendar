@@ -40,9 +40,8 @@ function readOnly(): never {
   throw new Error('The subscription feed only reads the calendar.');
 }
 
-/** The feed shows Appointments; it has no need of their Series. */
-function noSeries(): never {
-  throw new Error('The subscription feed does not read Series.');
+function notRead(): never {
+  throw new Error('The subscription feed reads only Appointments and subscription links.');
 }
 
 export function feedStore(reader: TableReader, tables: FeedTables): Store {
@@ -97,14 +96,20 @@ export function feedStore(reader: TableReader, tables: FeedTables): Store {
       const now = await linkOf(found.personId);
       return now && now.hash === hash ? now : null;
     },
-    // Nothing sends texts yet; the feed never asks.
-    textSentAbout: async () => false,
+    // The feed never asks about texts or settings, and must not send any.
+    textsAbout: async () => notRead(),
+    everyText: async () => notRead(),
+    settings: async () => notRead(),
+    claimText: async () => readOnly(),
+    retakeText: async () => readOnly(),
+    replaceText: async () => readOnly(),
+    keepSettings: async () => readOnly(),
     addAppointment: async () => readOnly(),
     replaceAppointment: async () => readOnly(),
     removeAppointment: async () => readOnly(),
     recordActivity: async () => readOnly(),
-    series: async () => noSeries(),
-    everySeries: async () => noSeries(),
+    series: async () => notRead(),
+    everySeries: async () => notRead(),
     addSeries: async () => readOnly(),
     replaceSeries: async () => readOnly(),
     keepSubscriptionLink: async () => readOnly(),

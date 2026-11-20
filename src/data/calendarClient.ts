@@ -5,10 +5,13 @@
 import type {
   Appointment,
   AppointmentChanges,
+  CalendarSettings,
   NewAppointment,
   NewSeries,
   Series,
   SeriesChanges,
+  SettingsChanges,
+  Text,
 } from '../lib/calendar';
 
 export interface CalendarClient {
@@ -50,6 +53,23 @@ export interface CalendarClient {
    */
   makeSubscriptionLink(): Promise<{ address: string; madeAt: string }>;
   switchOffSubscriptionLink(): Promise<void>;
+
+  // Texts to Susan (src/lib/calendar/texts.ts).
+  /**
+   * Keeps `listener` told of the record of every text, as `watchAppointments` does Appointments:
+   * once read, and again after every change, such as a text being sent.
+   */
+  watchTexts(listener: (texts: Text[]) => void, onError: (error: Error) => void): () => void;
+  /** Where texts go, and who Susan is told to call. */
+  settings(): Promise<CalendarSettings>;
+  changeSettings(changes: SettingsChanges): Promise<CalendarSettings>;
+  /** Sends Susan a test text now, and answers with its record. */
+  sendTestText(): Promise<Text>;
+  /**
+   * Whether texts are only recorded, by the stand-in sender, and reach no phone: on sample data,
+   * and wherever the backend has no Textbelt key.
+   */
+  textsRecordedOnly: boolean;
 }
 
 /** Said when a backend has no address for the feed, so a link cannot be made. */

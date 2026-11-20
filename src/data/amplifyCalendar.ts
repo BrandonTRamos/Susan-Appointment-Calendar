@@ -8,16 +8,20 @@ import type { Schema } from '../../amplify/data/resource';
 import {
   CalendarRefusal,
   inDateOrder,
+  NO_SETTINGS,
   subscriptionAddress,
   type Appointment,
 } from '../lib/calendar';
 import {
   COMMAND_FAILED,
+  SETTINGS_ID,
   toAppointment,
   toSeries,
+  toSettings,
   type AppointmentRow,
   type CommandAnswer,
 } from '../lib/calendarApi';
+import { liveTexts } from './amplifyTexts';
 import { NO_FEED, type CalendarClient } from './calendarClient';
 
 interface Watcher {
@@ -58,8 +62,12 @@ async function command(call: () => Promise<Answer>) {
  * The calendar over the data API. `feedUrl` is the subscription feed's address, from the backend's
  * outputs (src/config.ts); null when the backend has none.
  */
-export function createAmplifyCalendar(feedUrl: string | null): CalendarClient {
+export function createAmplifyCalendar(
+  feedUrl: string | null,
+  { textsRecordedOnly = true }: { textsRecordedOnly?: boolean } = {},
+): CalendarClient {
   const client = generateClient<Schema>();
+  const texts = liveTexts(client);
   const model = client.models.Appointment;
 
   /** Every Appointment, as last heard. */
@@ -214,6 +222,27 @@ export function createAmplifyCalendar(feedUrl: string | null): CalendarClient {
     },
     async switchOffSubscriptionLink() {
       await command(() => client.mutations.switchOffSubscriptionLink());
+    },
+
+    textsRecordedOnly,
+    watchTexts: (listener, onError) => texts.watch(listener, onError),
+    async settings() {
+      const { data, errors } = await client.models.CalendarSettings.get({ id: SETTINGS_ID });
+      if (errors?.length) throw new Error(errors.map((e) => e.message).join('; '));
+      return data ? toSettings(data) : NO_SETTINGS;
+    },
+    async changeSettings(changes) {
+      const said = await command(() =>
+        client.mutations.changeSettings({ settings: JSON.stringify(changes) }),
+      );
+      if (!('settings' in said)) throw new Error(COMMAND_FAILED);
+      return said.settings;
+    },
+    async sendTestText() {
+      const said = await command(() => client.mutations.sendTestText());
+      if (!('text' in said)) throw new Error(COMMAND_FAILED);
+      texts.put(said.text);
+      return said.text;
     },
   };
 }

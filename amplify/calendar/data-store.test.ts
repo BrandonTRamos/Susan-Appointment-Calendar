@@ -5,6 +5,7 @@ import {
   createMemoryMessenger,
   type Actor,
   type Appointment,
+  createStandInSender,
 } from '../../src/lib/calendar';
 import { dataStore, type DataClient } from './data-store';
 
@@ -19,6 +20,8 @@ function dataApi() {
     Appointment: new Map<string, Row>(),
     Series: new Map<string, Row>(),
     ActivityRecord: new Map<string, Row>(),
+    Text: new Map<string, Row>(),
+    CalendarSettings: new Map<string, Row>(),
   };
   let failure: string | null = null;
   const answer = <T>(data: T) =>
@@ -34,8 +37,19 @@ function dataApi() {
       const more = from + 2 < rows.size;
       return { ...answer(page), nextToken: more ? String(from + 2) : null };
     },
+    // As the data API's own create does: only if no row has the ID, in one step.
     async create(input: Row) {
       if (failure) return answer(null);
+      if (rows.has(input.id))
+        return {
+          data: null,
+          errors: [
+            {
+              errorType: 'DynamoDB:ConditionalCheckFailedException',
+              message: 'The conditional request failed (Service: DynamoDb, Status Code: 400)',
+            },
+          ],
+        };
       const row = {
         ...input,
         createdAt: '2026-11-19T20:00:01.000Z',
@@ -90,6 +104,39 @@ function dataApi() {
       Series: model(tables.Series),
       ActivityRecord: model(tables.ActivityRecord),
       SubscriptionLink,
+      Text: {
+        ...model(tables.Text),
+        async textsByAppointment({ appointmentId }: { appointmentId: string }) {
+          const rows = [...tables.Text.values()].filter(
+            (row) => row.appointmentId === appointmentId,
+          );
+          return { ...answer(rows), nextToken: null };
+        },
+      },
+      CalendarSettings: model(tables.CalendarSettings),
+    },
+    // Only the conditional update of a text, as DynamoDB checks it: every `eq` in the condition
+    // must hold of the row as it is when written. The client throws an answer that has errors.
+    async graphql({ query, variables }: { query: string; variables: Record<string, unknown> }) {
+      if (!query.includes('updateText(input: $input, condition: $condition)'))
+        throw new Error('This stand-in only answers a conditional updateText.');
+      const input = variables.input as Row;
+      const { and } = variables.condition as { and: Record<string, { eq: unknown }>[] };
+      const row = tables.Text.get(input.id);
+      const holds =
+        row && and.every((each) => Object.entries(each).every(([f, { eq }]) => row[f] === eq));
+      if (!holds)
+        throw {
+          data: null,
+          errors: [
+            {
+              errorType: 'DynamoDB:ConditionalCheckFailedException',
+              message: 'The conditional request failed (Service: DynamoDb, Status Code: 400)',
+            },
+          ],
+        };
+      tables.Text.set(input.id, { ...row, ...input });
+      return { data: { updateText: { id: input.id } } };
     },
   } as unknown as DataClient;
   return {
@@ -98,6 +145,7 @@ function dataApi() {
     series: () => [...tables.Series.values()],
     activity: () => [...tables.ActivityRecord.values()],
     links: () => [...links.values()],
+    texts: () => [...tables.Text.values()],
     /** The index stops hearing of changes until it is told to catch up. */
     freezeIndex() {
       index = structuredClone([...links.values()]);
@@ -118,6 +166,7 @@ function calendar() {
     store,
     clock: createFixedClock('2026-11-19T20:00:00.000Z'),
     messenger: createMemoryMessenger(),
+    textSender: createStandInSender(),
     timeZone: 'America/New_York',
   });
   return { api, store, core };
@@ -273,10 +322,84 @@ describe('the calendar kept in the data API', () => {
     expect(await store.appointment(added.id)).toEqual({ ...added, reminders: [] });
   });
 
-  it('says no text has gone to Susan: nothing sends texts yet', async () => {
+  it('reads a Reminder kept before ticket 11 as having no record of when it was set', async () => {
+    const { api, store, core } = calendar();
+    const added = await core.addAppointment(linda, checkUp);
+    delete (api.appointments()[0].reminders as Record<string, unknown>[])[0].setAt;
+    const [reminder] = (await store.appointment(added.id))!.reminders;
+    expect(reminder).toEqual({ ...added.reminders[0], setAt: null });
+  });
+
+  it('keeps the record of each text, claimed once: a second claim of it fails', async () => {
+    const { api, store, core } = calendar();
+    await core.changeSettings(linda, { susansNumber: '555 555 0123' });
+    const text = await core.sendTestText(linda);
+    expect(api.texts()).toMatchObject([{ id: text.id, status: 'sent' }]);
+    expect(await store.claimText({ ...text, status: 'waiting' })).toBe(false);
+    expect(await store.everyText()).toEqual([text]);
+  });
+
+  it('takes up a waiting text only while it is as it was read, through a conditional write', async () => {
     const { store, core } = calendar();
-    const { id } = await core.addAppointment(linda, checkUp);
-    expect(await store.textSentAbout(id)).toBe(false);
+    await core.changeSettings(linda, { susansNumber: '555 555 0123' });
+    const waiting = {
+      id: 'test:2026-11-19T20:00:00.000Z',
+      kind: 'test' as const,
+      appointmentId: null,
+      reminderId: null,
+      words: "Susan's Calendar: This is a test text.",
+      dueAt: '2026-11-19T20:00:00.000Z',
+      status: 'waiting' as const,
+      reason: null,
+      attempts: 1,
+      triedAt: '2026-11-19T20:00:00.000Z',
+      sentAt: null,
+      reference: null,
+    };
+    await store.claimText(waiting);
+    const again = { ...waiting, attempts: 2, triedAt: '2026-11-19T20:02:00.000Z' };
+    expect(await store.retakeText(again, waiting)).toBe(true);
+    // A second run read it before the first took it up: its retake is refused.
+    expect(await store.retakeText({ ...again, triedAt: '2026-11-19T20:02:01.000Z' }, waiting)).toBe(
+      false,
+    );
+    expect(await store.everyText()).toEqual([again]);
+  });
+
+  it('finds the texts about an Appointment, which decide whether it can be deleted', async () => {
+    const { store, core } = calendar();
+    const added = await core.addAppointment(linda, checkUp);
+    const [reminder] = added.reminders;
+    const text = {
+      id: `reminder:${added.id}:${reminder.id}:${reminder.dueAt}`,
+      kind: 'reminder' as const,
+      appointmentId: added.id,
+      reminderId: reminder.id,
+      words: "Susan's Calendar: Cardiology check-up.",
+      dueAt: reminder.dueAt,
+      status: 'sent' as const,
+      reason: null,
+      attempts: 1,
+      triedAt: reminder.dueAt,
+      sentAt: reminder.dueAt,
+      reference: null,
+    };
+    expect(await store.claimText(text)).toBe(true);
+    expect(await store.textsAbout(added.id)).toEqual([text]);
+    await expect(core.deleteAppointment(linda, added.id)).rejects.toThrow(/Cancel it instead/);
+  });
+
+  it('keeps the settings in one row, and reads none as none set', async () => {
+    const { store, core } = calendar();
+    expect(await store.settings()).toEqual({
+      susansNumber: null,
+      contactName: null,
+      contactPhone: null,
+      lastChanged: null,
+    });
+    await core.changeSettings(linda, { susansNumber: '555 555 0123' });
+    const changed = await core.changeSettings(linda, { contactName: 'Linda' });
+    expect(await store.settings()).toEqual(changed);
   });
 
   it('fails the command when the data API reports an error', async () => {

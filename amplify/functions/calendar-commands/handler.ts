@@ -4,6 +4,7 @@ import { adminMessenger, userPoolAdmins, webPushSender } from '../../calendar/ad
 import { dataApiDevices, type DeviceClient } from '../../calendar/app-notification-devices';
 import { connectDataApi, dataStore, type DataClient } from '../../calendar/data-store';
 import { rememberedNames, userPoolNames } from '../../calendar/people';
+import { textSenderFor } from '../../calendar/text-sender';
 import { calendarCommandHandler } from './commands';
 
 const userPoolId = process.env.USER_POOL_ID ?? '';
@@ -17,6 +18,7 @@ function getCore() {
         // The data API's own client type is too deep to compare against both narrow ones.
         store: dataStore(client as DataClient),
         clock: systemClock,
+        textSender: textSenderFor(),
         messenger: adminMessenger({
           admins: userPoolAdmins(userPoolId),
           devices: dataApiDevices(client as DeviceClient),

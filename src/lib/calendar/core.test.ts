@@ -5,6 +5,7 @@ import {
   createFixedClock,
   createMemoryMessenger,
   createMemoryStore,
+  createStandInSender,
   NO_ADMIN_MESSENGER,
   overlappingAppointments,
   pastAppointments,
@@ -17,6 +18,7 @@ import {
   type NewAppointment,
   type NewSeries,
   type ReminderSetting,
+  NO_TEXT_SENDER,
 } from './index';
 
 const EASTERN = 'America/New_York';
@@ -48,12 +50,30 @@ function calendar(timeZone = EASTERN) {
   const store = createMemoryStore();
   const clock = createFixedClock('2026-11-19T20:00:00.000Z');
   const messenger = createMemoryMessenger(ADMINS);
+  const sender = createStandInSender();
   return {
     store,
     clock,
     messenger,
-    core: createCalendarCore({ store, clock, messenger, timeZone }),
+    sender,
+    core: createCalendarCore({ store, clock, messenger, textSender: sender, timeZone }),
   };
+}
+
+/** An invented mobile number for Susan: 555-01xx numbers belong to nobody. */
+const SUSANS_NUMBER = '+15555550123';
+
+/**
+ * Sends Susan the Appointment's first Reminder, as the scheduled run would: sets her number, moves
+ * the clock to the Reminder's time and runs what is due.
+ */
+async function remind(
+  { core, clock }: ReturnType<typeof calendar>,
+  appointment: Appointment,
+): Promise<void> {
+  await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+  clock.set(appointment.reminders[0].dueAt);
+  await core.runDue();
 }
 
 /** Expects the command to be refused for `reason`, with words a person can read. */
@@ -307,30 +327,62 @@ describe('deleting an Appointment entered by mistake', () => {
   });
 
   it('is refused once any text about it has gone to Susan', async () => {
-    const { core, store } = calendar();
+    const cal = calendar();
+    const { core, store } = cal;
     const added = await core.addAppointment(linda, checkUp);
-    store.noteTextSentAbout(added.id);
+    await remind(cal, added);
+    expect(store.texts()).toMatchObject([{ appointmentId: added.id, status: 'sent' }]);
     const refusal = await refused(core.deleteAppointment(linda, added.id), 'texted');
     expect(refusal.message).toMatch(/Cancel it instead/);
     expect(store.appointments()).toEqual([added]);
   });
 
   it('is still allowed for another Appointment she has not been texted about', async () => {
-    const { core, store } = calendar();
+    const cal = calendar();
+    const { core, store } = cal;
     const texted = await core.addAppointment(linda, checkUp);
-    const mistake = await core.addAppointment(linda, { ...checkUp, what: 'Wrong day' });
-    store.noteTextSentAbout(texted.id);
+    const mistake = await core.addAppointment(linda, {
+      ...checkUp,
+      what: 'Wrong day',
+      date: '2026-11-27',
+    });
+    await remind(cal, texted);
     await core.deleteAppointment(mark, mistake.id);
     expect(store.appointments()).toEqual([texted]);
   });
 
+  it('is allowed when its only texts were never sent, or refused outright', async () => {
+    const cal = calendar();
+    const { core, store, clock, sender } = cal;
+    const notSent = await core.addAppointment(linda, checkUp);
+    clock.set(notSent.reminders[0].dueAt);
+    await core.runDue(); // no number yet: recorded as not sent
+    const refusedOne = await core.addAppointment(linda, {
+      ...checkUp,
+      what: 'Blood draw',
+      reminders: [{ shape: 'before', amount: 1, unit: 'hours' }],
+    });
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    sender.refuseNext();
+    clock.set(refusedOne.reminders[0].dueAt);
+    await core.runDue();
+    expect(store.texts().map((text) => [text.status, text.reason])).toEqual([
+      ['notSent', 'noNumber'],
+      ['failed', 'refused'],
+    ]);
+    await core.deleteAppointment(linda, notSent.id);
+    await core.deleteAppointment(linda, refusedOne.id);
+    expect(store.appointments()).toEqual([]);
+  });
+
   it('removes a cancelled Appointment too, unless she was texted about it', async () => {
-    const { core, store } = calendar();
-    const first = await core.addAppointment(linda, checkUp);
+    const cal = calendar();
+    const { core, store } = cal;
+    const first = await core.addAppointment(linda, { ...checkUp, date: '2026-11-27' });
     const second = await core.addAppointment(linda, { ...checkUp, what: 'Blood draw' });
+    await remind(cal, second);
     await core.cancelAppointment(linda, first.id);
     await core.cancelAppointment(linda, second.id);
-    store.noteTextSentAbout(second.id);
     await core.deleteAppointment(linda, first.id);
     await refused(core.deleteAppointment(linda, second.id), 'texted');
     expect(store.appointments().map((appointment) => appointment.what)).toEqual(['Blood draw']);
@@ -436,9 +488,11 @@ describe('activity records', () => {
   });
 
   it('a refused command leaves none', async () => {
-    const { core, store } = calendar();
-    const { id } = await core.addAppointment(linda, checkUp);
-    store.noteTextSentAbout(id);
+    const cal = calendar();
+    const { core, store } = cal;
+    const added = await core.addAppointment(linda, checkUp);
+    const { id } = added;
+    await remind(cal, added);
     await refused(core.changeAppointment(mark, id, { what: '' }), 'invalid');
     await refused(core.deleteAppointment(mark, id), 'texted');
     await refused(core.cancelAppointment(mark, 'no-such-appointment'), 'missing');
@@ -530,6 +584,37 @@ describe('Activity updates', () => {
     );
   });
 
+  it('do not name the Reminders when a move later on works out when their times were set', async () => {
+    const { core, clock, messenger } = calendar();
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      reminders: [{ shape: 'before', amount: 2, unit: 'hours' }],
+    });
+    clock.set('2026-11-19T21:00:00.000Z');
+    const moved = await core.changeAppointment(mark, added.id, { time: '15:30' });
+    // The move worked the Reminder's time out again an hour after it was set, and says so.
+    expect(moved.reminders[0].setAt).not.toBe(added.reminders[0].setAt);
+    expect(told(messenger)[1].body).toBe(
+      'Mark changed Cardiology check-up, Fri, Nov 20, 2026 at 3:30 pm: the start time (was 2:00 pm).',
+    );
+  });
+
+  it('do not name the Reminders when an edit records when an older Reminder was set', async () => {
+    const { core, clock, messenger, store } = calendar();
+    const added = await core.addAppointment(linda, checkUp);
+    // As ticket 07 kept it: no record of when its Reminder was set.
+    await store.replaceAppointment({
+      ...added,
+      reminders: added.reminders.map((reminder) => ({ ...reminder, setAt: null })),
+    });
+    clock.set('2026-11-19T21:00:00.000Z');
+    const edited = await core.changeAppointment(mark, added.id, { noteForSusan: 'Glasses.' });
+    expect(edited.reminders[0].setAt).toBe(added.added.at);
+    expect(told(messenger)[1].body).toBe(
+      'Mark changed Cardiology check-up, Fri, Nov 20, 2026 at 2:00 pm: the Note for Susan.',
+    );
+  });
+
   it('say who cancelled an Appointment', async () => {
     const { core, messenger } = calendar();
     const { id } = await core.addAppointment(linda, checkUp);
@@ -554,7 +639,13 @@ describe('Activity updates', () => {
     const store = createMemoryStore();
     const messenger = createMemoryMessenger(['person-linda']);
     const clock = createFixedClock('2026-11-19T20:00:00.000Z');
-    const core = createCalendarCore({ store, clock, messenger, timeZone: EASTERN });
+    const core = createCalendarCore({
+      store,
+      clock,
+      messenger,
+      textSender: createStandInSender(),
+      timeZone: EASTERN,
+    });
     await core.addAppointment(linda, checkUp);
     expect(messenger.appNotifications()).toEqual([]);
   });
@@ -603,15 +694,17 @@ describe('Activity updates', () => {
   });
 
   it('are not sent for a command that changes nothing, is refused, or arrives twice', async () => {
-    const { core, store, messenger } = calendar();
+    const cal = calendar();
+    const { core, messenger } = cal;
     const sentId = '3f0c8a52-9d1e-4b7a-8c11-5e2f6a7b8c9d';
-    await core.addAppointment(linda, checkUp, sentId);
+    const added = await core.addAppointment(linda, checkUp, sentId);
     await core.addAppointment(linda, checkUp, sentId);
     await core.changeAppointment(mark, sentId, { time: '14:00' });
     await refused(core.changeAppointment(mark, sentId, { what: '' }), 'invalid');
+    // Susan is sent a Reminder, so that the delete below is refused. Sending tells no Admin.
+    await remind(cal, added);
     await core.cancelAppointment(mark, sentId);
     await refused(core.cancelAppointment(mark, sentId), 'cancelled');
-    store.noteTextSentAbout(sentId);
     await refused(core.deleteAppointment(mark, sentId), 'texted');
     expect(messenger.appNotifications().map(({ notification }) => notification.body)).toEqual([
       expect.stringMatching(/^Linda added /),
@@ -634,6 +727,7 @@ describe('Activity updates', () => {
       store,
       clock,
       messenger: NO_ADMIN_MESSENGER,
+      textSender: NO_TEXT_SENDER,
       timeZone: EASTERN,
     });
     await core.addAppointment(linda, checkUp);
@@ -888,8 +982,9 @@ describe('overlapping Appointments', () => {
 });
 
 /** Each Reminder's shape, when it goes out and whether it is flagged, without its ID. */
+/** Each Reminder's timing, when it goes out and whether it is flagged; when it was set is apart. */
 const plan = (appointment: Appointment) =>
-  appointment.reminders.map(({ id: _id, ...reminder }) => reminder);
+  appointment.reminders.map(({ id: _id, setAt: _setAt, ...reminder }) => reminder);
 
 /** When each Reminder goes out. */
 const dueTimes = (appointment: Appointment) => appointment.reminders.map((r) => r.dueAt);
@@ -1312,6 +1407,20 @@ describe('Reminders still to be sent', () => {
     ]);
     const cancelled = await core.cancelAppointment(linda, added.id);
     expect(remindersStillToSend(cancelled, now)).toEqual([]);
+  });
+
+  it('leave out one held for review since its Appointment moved: it is not sent as it stands', async () => {
+    const { core } = calendar();
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      reminders: [thursdayAtEight, twoHoursBefore],
+    });
+    const moved = await core.changeAppointment(mark, added.id, { time: '15:00' });
+    const now = new Date('2026-11-19T20:00:00.000Z');
+    expect(moved.reminders.map((r) => r.needsReview)).toEqual([true, false]);
+    expect(remindersStillToSend(moved, now).map((r) => r.dueAt)).toEqual([
+      '2026-11-20T18:00:00.000Z',
+    ]);
   });
 });
 
@@ -1881,6 +1990,64 @@ describe('a Series', () => {
       expect(refusal.message).toMatch(/after the Appointment starts/);
     });
 
+    it('are set when each Appointment is made, by the rule for any Reminder', async () => {
+      const { core, store, clock } = calendar();
+      const { series, appointments } = await core.addSeries(linda, dialysis);
+      for (const { reminders } of appointments)
+        expect(reminders.every(({ setAt }) => setAt === '2026-11-19T20:00:00.000Z')).toBe(true);
+      clock.set('2027-02-01T20:00:00.000Z');
+      await core.topUpSeries();
+      const topped = inSeries(store, series.id).filter(({ date }) => date > series.madeThrough);
+      expect(topped.length).toBeGreaterThan(0);
+      for (const { reminders } of topped)
+        expect(reminders.every(({ setAt }) => setAt === '2027-02-01T20:00:00.000Z')).toBe(true);
+    });
+
+    it('whose time had passed when the Series was entered are never sent', async () => {
+      const { core, store, clock, sender } = calendar();
+      // Entered on Thursday afternoon, from that day: its Reminder, the evening before, had passed.
+      const { appointments } = await core.addSeries(linda, {
+        ...dialysis,
+        date: '2026-11-19',
+        time: '17:00',
+        repeat: { every: 'week', weekdays: [3] },
+      });
+      await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+      clock.set('2026-11-19T20:30:00.000Z');
+      await core.runDue();
+      // Never sent, nor recorded, as for any Reminder past when it was set.
+      expect(sender.taken()).toEqual([]);
+      expect(
+        store.texts().filter(({ appointmentId }) => appointmentId === appointments[0].id),
+      ).toEqual([]);
+    });
+
+    it('changed with this and all later ones are set again when their time moves', async () => {
+      const { core, store, clock } = calendar();
+      // Two hours before: it moves with the start time. The day before at 6:00 pm would not.
+      const { appointments } = await core.addSeries(linda, {
+        ...dialysis,
+        reminders: [twoHoursBefore],
+      });
+      clock.set('2026-11-20T15:00:00.000Z');
+      const changed = await core.changeSeries(mark, appointments[2].id, { time: '10:00' });
+      const later = inSeries(store, changed.series!.id);
+      expect(
+        later.every(({ reminders }) => reminders[0].setAt === '2026-11-20T15:00:00.000Z'),
+      ).toBe(true);
+      clock.set('2026-11-20T16:00:00.000Z');
+      // A change that leaves their time alone leaves alone when they were set. (The changed Series
+      // starts later, so it reaches a few days further; those new ones are set now.)
+      const kept = new Set(later.map(({ id }) => id));
+      const again = await core.changeSeries(mark, appointments[3].id, { driverName: 'Mark' });
+      const now = inSeries(store, again.series!.id);
+      expect(now.filter(({ id }) => kept.has(id)).length).toBeGreaterThan(40);
+      for (const { id, reminders } of now)
+        expect(reminders[0].setAt).toBe(
+          kept.has(id) ? '2026-11-20T15:00:00.000Z' : '2026-11-20T16:00:00.000Z',
+        );
+    });
+
     it('an exact-time Reminder can still be added to one Appointment in a Series', async () => {
       const { core, store } = calendar();
       const { series, appointments } = await core.addSeries(linda, dialysis);
@@ -2110,10 +2277,14 @@ describe('a Series', () => {
     });
 
     it('can change how it repeats, and when it ends, from that point', async () => {
-      const { core, store, series, appointments } = await changing();
+      const setup = await changing();
+      const { core, store, series, appointments } = setup;
       const [, , third, fourth] = appointments;
-      // Susan was told of the Thursday after it: she has to hear it is off.
-      store.noteTextSentAbout(fourth.id);
+      // Susan was reminded of the Thursday after it: she has to hear it is off.
+      await remind(setup, fourth);
+      expect(store.texts().filter(({ status }) => status === 'sent')).toMatchObject([
+        { appointmentId: fourth.id },
+      ]);
       const changed = await core.changeSeries(mark, third.id, {
         date: '2026-12-01',
         repeat: { every: 'week', weekdays: [1, 4] },
@@ -2142,6 +2313,22 @@ describe('a Series', () => {
         [fourth.id, 'cancelled'],
       ]);
       expect(await store.series(changed.series!.id)).toMatchObject({ ends: '2026-12-31' });
+    });
+
+    it('keeps on record a replaced one that Susan was texted about, with its texts', async () => {
+      const setup = await changing();
+      const { core, store, appointments } = setup;
+      const [, , third, fourth] = appointments;
+      await remind(setup, fourth);
+      const textsBefore = store.texts().filter(({ appointmentId }) => appointmentId === fourth.id);
+      await core.changeSeries(mark, third.id, { repeat: { every: 'week', weekdays: [0] } });
+      expect(store.appointments().find(({ id }) => id === fourth.id)).toMatchObject({
+        state: 'cancelled',
+      });
+      expect(store.texts().filter(({ appointmentId }) => appointmentId === fourth.id)).toEqual(
+        textsBefore,
+      );
+      await refused(core.deleteAppointment(linda, fourth.id), 'texted');
     });
 
     it('can start the changed Series running with no end', async () => {
@@ -2320,7 +2507,7 @@ describe('a Series', () => {
        * command's reading of the Appointments.
        */
       async function overlapping() {
-        const { core, store, clock, messenger } = calendar();
+        const { core, store, clock, messenger, sender } = calendar();
         const pauses: { add?: () => Promise<unknown>; read?: () => Promise<unknown> } = {};
         const toppingUp: MemoryStore = {
           ...store,
@@ -2342,8 +2529,9 @@ describe('a Series', () => {
           },
         };
         const timeZone = EASTERN;
-        const topUp = createCalendarCore({ store: toppingUp, clock, messenger, timeZone });
-        const commands = createCalendarCore({ store: commanding, clock, messenger, timeZone });
+        const options = { clock, messenger, textSender: sender, timeZone };
+        const topUp = createCalendarCore({ ...options, store: toppingUp });
+        const commands = createCalendarCore({ ...options, store: commanding });
         const { series, appointments } = await core.addSeries(linda, dialysis);
         clock.set('2027-02-01T20:00:00.000Z');
         return { store, series, appointments, pauses, topUp, commands };
@@ -2438,5 +2626,819 @@ describe('a Series', () => {
       const feed = await core.subscriptionFeed(secret);
       expect(feed?.match(/SUMMARY:Dialysis/g)).toHaveLength(2);
     });
+  });
+});
+
+describe('sending texts on schedule', () => {
+  /** A calendar with Susan's number set, and an Appointment tomorrow at 2:00 pm. */
+  async function ready(details: Partial<NewAppointment> = {}) {
+    const cal = calendar();
+    await cal.core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    const added = await cal.core.addAppointment(linda, { ...everyDetail, ...details });
+    return { ...cal, added };
+  }
+
+  it('sends a due Reminder on the next run, to her number, in its words', async () => {
+    const { core, clock, sender, added } = await ready();
+    expect(await core.runDue()).toEqual([]);
+    clock.set('2026-11-19T23:00:00.000Z'); // 6:00 pm, the day before
+    await core.runDue();
+    expect(sender.taken()).toEqual([
+      { to: SUSANS_NUMBER, words: reminderWords(added, added.reminders[0], EASTERN) },
+    ]);
+    expect(sender.taken()[0].words).toMatch(/^Susan's Calendar: Cardiology check-up .* tomorrow/);
+    expect(sender.taken()[0].words).not.toMatch(/prescription/);
+  });
+
+  it('records each text with its kind, Appointment, words, due time and status', async () => {
+    const { core, clock, sender, store, added } = await ready();
+    clock.set('2026-11-19T23:00:30.000Z');
+    await core.runDue();
+    expect(store.texts()).toEqual([
+      {
+        id: expect.any(String),
+        kind: 'reminder',
+        appointmentId: added.id,
+        reminderId: added.reminders[0].id,
+        words: sender.taken()[0].words,
+        dueAt: '2026-11-19T23:00:00.000Z',
+        status: 'sent',
+        reason: null,
+        attempts: 1,
+        triedAt: '2026-11-19T23:00:30.000Z',
+        sentAt: '2026-11-19T23:00:30.000Z',
+        reference: expect.any(String),
+      },
+    ]);
+    // The record holds neither Susan's number nor the Private notes.
+    expect(JSON.stringify(store.texts())).not.toMatch(/5555550123|prescription/);
+  });
+
+  it('sends each Reminder once, however many runs see it', async () => {
+    const { core, clock, sender } = await ready();
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    clock.set('2026-11-19T23:01:00.000Z');
+    await core.runDue();
+    clock.set('2026-11-19T23:30:00.000Z');
+    await core.runDue();
+    expect(sender.taken()).toHaveLength(1);
+  });
+
+  it('sends a text once when two runs overlap, each claiming it before sending', async () => {
+    const { core, clock, sender, store, added } = await ready();
+    // A second core over the same store, as a second run in another function would be.
+    const other = createCalendarCore({
+      store,
+      clock,
+      messenger: createMemoryMessenger(),
+      textSender: sender,
+      timeZone: EASTERN,
+    });
+    clock.set(added.reminders[0].dueAt);
+    await Promise.all([core.runDue(), other.runDue(), core.runDue()]);
+    expect(sender.taken()).toHaveLength(1);
+    expect(store.texts()).toHaveLength(1);
+  });
+
+  it('sends every Reminder that is due, in the order they fell due', async () => {
+    const { core, clock, sender } = await ready({
+      reminders: [
+        { shape: 'before', amount: 2, unit: 'hours' },
+        { shape: 'daysBefore', days: 1, time: '18:00' },
+      ],
+    });
+    await core.addAppointment(mark, {
+      what: 'Blood draw',
+      date: '2026-11-20',
+      time: '13:00',
+      reminders: [{ shape: 'before', amount: 2, unit: 'hours' }],
+    });
+    clock.set('2026-11-20T17:00:00.000Z'); // noon on Friday: all three have come due
+    await core.runDue();
+    expect(sender.taken().map((text) => /Cardiology|Blood draw/.exec(text.words)?.[0])).toEqual([
+      'Cardiology',
+      'Blood draw',
+      'Cardiology',
+    ]);
+  });
+
+  it('tries again a send that might not have gone through, a little later', async () => {
+    const { core, clock, sender, store } = await ready();
+    sender.breakNext();
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    expect(store.texts()).toMatchObject([{ status: 'waiting', attempts: 1 }]);
+    clock.set('2026-11-19T23:01:00.000Z'); // a minute on: it may still be going, so it is left
+    await core.runDue();
+    expect(store.texts()).toMatchObject([{ status: 'waiting', attempts: 1 }]);
+    clock.set('2026-11-19T23:02:00.000Z');
+    await core.runDue();
+    expect(store.texts()).toMatchObject([{ status: 'sent', attempts: 2, reason: null }]);
+    expect(sender.taken()).toHaveLength(1);
+  });
+
+  it('counts a text as failed once every try has failed', async () => {
+    const { core, clock, sender, store } = await ready();
+    sender.breakNext(3);
+    for (const at of ['23:00', '23:02', '23:04', '23:06', '23:08']) {
+      clock.set(`2026-11-19T${at}:00.000Z`);
+      await core.runDue();
+    }
+    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'gaveUp', attempts: 3 }]);
+    expect(sender.taken()).toEqual([]);
+  });
+
+  it('does not try again a text the sender refused: it certainly did not go', async () => {
+    const { core, clock, sender, store } = await ready();
+    sender.refuseNext();
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    clock.set('2026-11-19T23:10:00.000Z');
+    await core.runDue();
+    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'refused', attempts: 1 }]);
+    expect(sender.taken()).toEqual([]);
+  });
+
+  it('takes up again a text a run claimed and then stopped on', async () => {
+    const { core, clock, sender, store, added } = await ready();
+    // What a run that stopped mid-send leaves: a claim, tried once, never answered.
+    const [reminder] = added.reminders;
+    await store.claimText({
+      id: `reminder:${added.id}:${reminder.id}:${reminder.dueAt}`,
+      kind: 'reminder',
+      appointmentId: added.id,
+      reminderId: reminder.id,
+      words: "Susan's Calendar: Cardiology check-up.",
+      dueAt: reminder.dueAt,
+      status: 'waiting',
+      reason: null,
+      attempts: 1,
+      triedAt: reminder.dueAt,
+      sentAt: null,
+      reference: null,
+    });
+    clock.set('2026-11-19T23:05:00.000Z');
+    await core.runDue();
+    expect(store.texts()).toMatchObject([{ status: 'sent', attempts: 2 }]);
+    expect(sender.taken()).toHaveLength(1);
+  });
+
+  it('still sends a Reminder found overdue, as long as the Appointment has not started', async () => {
+    const { core, clock, sender, store } = await ready();
+    // The runs stopped from 5:30 pm and start again just before 2:00 pm the next day.
+    clock.set('2026-11-20T18:55:00.000Z');
+    await core.runDue();
+    expect(store.texts()).toMatchObject([{ status: 'sent', dueAt: '2026-11-19T23:00:00.000Z' }]);
+    // Its words are right for when it goes out: the Appointment is now today.
+    expect(sender.taken()[0].words).toMatch(
+      /Cardiology check-up with Dr\. Patel, today at 2:00 pm/,
+    );
+  });
+
+  it('records an overdue Reminder as not sent once the Appointment has started', async () => {
+    const { core, clock, sender, store } = await ready();
+    clock.set('2026-11-20T19:00:00.000Z'); // 2:00 pm, the moment it starts
+    await core.runDue();
+    expect(sender.taken()).toEqual([]);
+    expect(store.texts()).toMatchObject([
+      { kind: 'reminder', status: 'notSent', reason: 'tooLate', attempts: 0 },
+    ]);
+    clock.set('2026-11-20T19:01:00.000Z');
+    await core.runDue();
+    expect(store.texts()).toHaveLength(1);
+  });
+
+  it("stops at each Appointment's start as the run reaches it, not as it was when the run began", async () => {
+    const { core, clock, sender, store } = calendar();
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    // Two overdue Reminders, found at 1:50 pm on Friday: one for an Appointment at 2:20 pm, due at
+    // 1:00 pm, and one for an Appointment at 2:00 pm, due at 1:10 pm.
+    const later = await core.addAppointment(linda, {
+      what: 'Eye exam',
+      date: '2026-11-20',
+      time: '14:20',
+      reminders: [{ shape: 'at', date: '2026-11-20', time: '13:00' }],
+    });
+    const sooner = await core.addAppointment(linda, {
+      what: 'Blood draw',
+      date: '2026-11-20',
+      time: '14:00',
+      reminders: [{ shape: 'at', date: '2026-11-20', time: '13:10' }],
+    });
+    clock.set('2026-11-20T18:50:00.000Z');
+    // The first send is slow: it takes until 2:05 pm, after the Blood draw has started.
+    const slow = createCalendarCore({
+      store,
+      clock,
+      messenger: createMemoryMessenger(),
+      textSender: {
+        async send(text) {
+          const result = await sender.send(text);
+          clock.set('2026-11-20T19:05:00.000Z');
+          return result;
+        },
+      },
+      timeZone: EASTERN,
+    });
+    await slow.runDue();
+    expect(sender.taken().map((text) => /Eye exam|Blood draw/.exec(text.words)?.[0])).toEqual([
+      'Eye exam',
+    ]);
+    expect(
+      store.texts().map((text) => [text.appointmentId, text.status, text.reason, text.attempts]),
+    ).toEqual([
+      [later.id, 'sent', null, 1],
+      [sooner.id, 'notSent', 'tooLate', 0],
+    ]);
+    // Never tried, so it did not reach her: the Blood draw can still be deleted.
+    await core.deleteAppointment(mark, sooner.id);
+  });
+
+  it('stops trying a text again at its start as the run reaches it, too', async () => {
+    const { core, clock, sender, store } = calendar();
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    await core.addAppointment(linda, {
+      what: 'Eye exam',
+      date: '2026-11-20',
+      time: '14:20',
+      reminders: [{ shape: 'at', date: '2026-11-20', time: '13:40' }],
+    });
+    const sooner = await core.addAppointment(linda, {
+      what: 'Blood draw',
+      date: '2026-11-20',
+      time: '14:00',
+      reminders: [{ shape: 'at', date: '2026-11-20', time: '13:45' }],
+    });
+    // At 1:45 pm neither send can tell whether it went.
+    sender.breakNext(2);
+    clock.set('2026-11-20T18:45:00.000Z');
+    await core.runDue();
+    expect(store.texts().map((text) => [text.status, text.attempts])).toEqual([
+      ['waiting', 1],
+      ['waiting', 1],
+    ]);
+    // At 1:50 pm both are tried again. The first try, the Eye exam's, is slow: it takes until
+    // 2:01 pm, after the Blood draw has started.
+    const slow = createCalendarCore({
+      store,
+      clock,
+      messenger: createMemoryMessenger(),
+      textSender: {
+        async send(text) {
+          const result = await sender.send(text);
+          clock.set('2026-11-20T19:01:00.000Z');
+          return result;
+        },
+      },
+      timeZone: EASTERN,
+    });
+    clock.set('2026-11-20T18:50:00.000Z');
+    await slow.runDue();
+    expect(sender.taken().map((text) => /Eye exam|Blood draw/.exec(text.words)?.[0])).toEqual([
+      'Eye exam',
+    ]);
+    // Failed, not "not sent": its first try may have reached her.
+    expect(store.texts().find((text) => text.appointmentId === sooner.id)).toMatchObject({
+      status: 'failed',
+      reason: 'tooLate',
+      attempts: 1,
+    });
+    await refused(core.deleteAppointment(mark, sooner.id), 'texted');
+  });
+
+  it('gives up trying a text again once the Appointment has started', async () => {
+    const { core, clock, sender, store } = await ready({
+      reminders: [{ shape: 'before', amount: 1, unit: 'minutes' }],
+    });
+    sender.breakNext();
+    clock.set('2026-11-20T18:59:00.000Z');
+    await core.runDue();
+    clock.set('2026-11-20T19:01:00.000Z');
+    await core.runDue();
+    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'tooLate' }]);
+    expect(sender.taken()).toEqual([]);
+  });
+
+  it('sends no Reminder for a cancelled Appointment, and records none', async () => {
+    const { core, clock, sender, store, added } = await ready();
+    await core.cancelAppointment(mark, added.id);
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    clock.set('2026-11-20T20:00:00.000Z');
+    await core.runDue();
+    expect(sender.taken()).toEqual([]);
+    expect(store.texts()).toEqual([]);
+  });
+
+  it('does not try again a text whose Appointment was cancelled while it waited', async () => {
+    const { core, clock, sender, store, added } = await ready();
+    sender.breakNext();
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    await core.cancelAppointment(mark, added.id);
+    clock.set('2026-11-19T23:03:00.000Z');
+    await core.runDue();
+    // Failed, not "not sent": the first try may have reached her, so it still cannot be deleted.
+    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'cancelled' }]);
+    expect(sender.taken()).toEqual([]);
+    await refused(core.deleteAppointment(mark, added.id), 'texted');
+  });
+
+  it('tries a waiting text again once, however many runs overlap to take it up', async () => {
+    const { core, clock, sender, store } = await ready();
+    const other = createCalendarCore({
+      store,
+      clock,
+      messenger: createMemoryMessenger(),
+      textSender: sender,
+      timeZone: EASTERN,
+    });
+    sender.breakNext();
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    expect(store.texts()).toMatchObject([{ status: 'waiting', attempts: 1 }]);
+    clock.set('2026-11-19T23:02:00.000Z');
+    await Promise.all([core.runDue(), other.runDue(), core.runDue(), other.runDue()]);
+    expect(sender.taken()).toHaveLength(1);
+    expect(store.texts()).toMatchObject([{ status: 'sent', attempts: 2 }]);
+  });
+
+  it('gives up a waiting text whose Reminder was removed, and still counts it as maybe sent', async () => {
+    const { core, clock, sender, store, added } = await ready();
+    sender.breakNext();
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    await core.changeAppointment(mark, added.id, { reminders: [] });
+    clock.set('2026-11-19T23:03:00.000Z');
+    await core.runDue();
+    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'outdated' }]);
+    expect(sender.taken()).toEqual([]);
+    await refused(core.deleteAppointment(mark, added.id), 'texted');
+  });
+
+  it('gives up a waiting text whose Reminder was retimed, and sends the Reminder at its new time', async () => {
+    const { core, clock, sender, store, added } = await ready();
+    sender.breakNext();
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    const [reminder] = added.reminders;
+    await core.changeAppointment(mark, added.id, {
+      reminders: [{ id: reminder.id, shape: 'daysBefore', days: 1, time: '19:00' }],
+    });
+    clock.set('2026-11-19T23:03:00.000Z');
+    await core.runDue();
+    expect(sender.taken()).toEqual([]);
+    clock.set('2026-11-20T00:00:00.000Z'); // 7:00 pm
+    await core.runDue();
+    expect(sender.taken()).toHaveLength(1);
+    expect(store.texts().map((text) => [text.dueAt, text.status, text.reason])).toEqual([
+      ['2026-11-19T23:00:00.000Z', 'failed', 'outdated'],
+      ['2026-11-20T00:00:00.000Z', 'sent', null],
+    ]);
+  });
+
+  it('tries a waiting text again with the details as they now are', async () => {
+    const { core, clock, sender, added } = await ready();
+    sender.breakNext();
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    await core.changeAppointment(mark, added.id, { noteForSusan: 'Bring your glasses.' });
+    clock.set('2026-11-19T23:03:00.000Z');
+    await core.runDue();
+    expect(sender.taken()).toHaveLength(1);
+    expect(sender.taken()[0].words).toMatch(/Bring your glasses\.$/);
+  });
+
+  it('holds a waiting text whose Reminder is now flagged for review', async () => {
+    const { core, clock, sender, store, added } = await ready({
+      reminders: [{ shape: 'at', date: '2026-11-20', time: '09:00' }],
+    });
+    sender.breakNext();
+    clock.set('2026-11-20T14:00:00.000Z'); // 9:00 am
+    await core.runDue();
+    // The Appointment moves while the text waits: the exact-time Reminder is flagged.
+    const moved = await core.changeAppointment(mark, added.id, { time: '16:00' });
+    expect(moved.reminders[0].needsReview).toBe(true);
+    clock.set('2026-11-20T14:05:00.000Z');
+    await core.runDue();
+    expect(store.texts()).toMatchObject([{ status: 'waiting', attempts: 1 }]);
+    expect(sender.taken()).toEqual([]);
+    clock.set('2026-11-20T21:00:00.000Z'); // 4:00 pm: it started, still flagged
+    await core.runDue();
+    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'tooLate' }]);
+    expect(sender.taken()).toEqual([]);
+  });
+
+  it('sends nothing while her number is not set, and says why on each text', async () => {
+    const { core, clock, sender, store } = calendar();
+    await core.addAppointment(linda, checkUp);
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    expect(sender.taken()).toEqual([]);
+    expect(store.texts()).toMatchObject([{ status: 'notSent', reason: 'noNumber' }]);
+    // Setting the number later does not send a pile of old Reminders at once.
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    clock.set('2026-11-19T23:01:00.000Z');
+    await core.runDue();
+    expect(sender.taken()).toEqual([]);
+  });
+
+  it('stops trying a text again if her number is cleared while it waits', async () => {
+    const { core, clock, sender, store } = await ready();
+    sender.breakNext();
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    await core.changeSettings(linda, { susansNumber: null });
+    clock.set('2026-11-19T23:03:00.000Z');
+    await core.runDue();
+    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'noNumber' }]);
+  });
+});
+
+describe('an exact-time Reminder flagged for review', () => {
+  async function flagged() {
+    const cal = calendar();
+    await cal.core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    const added = await cal.core.addAppointment(linda, {
+      ...checkUp,
+      reminders: [{ shape: 'at', date: '2026-11-20', time: '09:00' }],
+    });
+    const moved = await cal.core.changeAppointment(mark, added.id, { time: '16:00' });
+    expect(moved.reminders[0].needsReview).toBe(true);
+    return { ...cal, moved };
+  }
+
+  it('does not go out at its time while nobody has reviewed it, and leaves no record', async () => {
+    const { core, clock, sender, store } = await flagged();
+    clock.set('2026-11-20T14:00:00.000Z'); // 9:00 am, its time
+    await core.runDue();
+    clock.set('2026-11-20T20:00:00.000Z');
+    await core.runDue();
+    expect(sender.taken()).toEqual([]);
+    expect(store.texts()).toEqual([]);
+  });
+
+  it('goes out at its time once someone keeps it', async () => {
+    const { core, clock, sender, moved } = await flagged();
+    const [reminder] = moved.reminders;
+    await core.changeAppointment(linda, moved.id, {
+      reminders: [
+        { id: reminder.id, shape: 'at', date: '2026-11-20', time: '09:00', reviewed: true },
+      ],
+    });
+    clock.set('2026-11-20T14:00:00.000Z');
+    await core.runDue();
+    expect(sender.taken()).toHaveLength(1);
+  });
+
+  it('is not sent late if someone keeps it after its time has passed', async () => {
+    const { core, clock, sender, moved } = await flagged();
+    clock.set('2026-11-20T15:00:00.000Z'); // 10:00 am, an hour after its time
+    const [reminder] = moved.reminders;
+    await core.changeAppointment(linda, moved.id, {
+      reminders: [
+        { id: reminder.id, shape: 'at', date: '2026-11-20', time: '09:00', reviewed: true },
+      ],
+    });
+    await core.runDue();
+    expect(sender.taken()).toEqual([]);
+  });
+});
+
+describe("a Reminder whose time had passed when it was set (the owner's policy)", () => {
+  async function ready() {
+    const cal = calendar();
+    await cal.core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    return cal;
+  }
+
+  it('is never sent, nor recorded, even though its Appointment has not started', async () => {
+    const { core, clock, sender, store } = await ready();
+    // At 3:00 pm on Thursday, a Reminder for 9:00 am that morning.
+    await core.addAppointment(linda, {
+      ...checkUp,
+      reminders: [{ shape: 'at', date: '2026-11-19', time: '09:00' }],
+    });
+    await core.runDue();
+    clock.set('2026-11-20T18:00:00.000Z');
+    await core.runDue();
+    expect(sender.taken()).toEqual([]);
+    expect(store.texts()).toEqual([]);
+  });
+
+  it('is not one set for the very moment it is set: that one is due, and goes out', async () => {
+    const { core, sender, store } = await ready();
+    // At 3:00 pm on Thursday, a Reminder for 3:00 pm on Thursday.
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      reminders: [{ shape: 'at', date: '2026-11-19', time: '15:00' }],
+    });
+    expect(added.reminders[0].dueAt).toBe(added.reminders[0].setAt);
+    await core.runDue();
+    expect(sender.taken()).toHaveLength(1);
+    expect(store.texts()).toMatchObject([{ status: 'sent' }]);
+  });
+
+  it('is told apart from one that was due later and became overdue while it waited', async () => {
+    const { core, clock, sender } = await ready();
+    await core.addAppointment(linda, {
+      ...checkUp,
+      reminders: [
+        { shape: 'at', date: '2026-11-19', time: '09:00' }, // already past
+        { shape: 'at', date: '2026-11-19', time: '16:00' }, // still to come
+      ],
+    });
+    clock.set('2026-11-20T15:00:00.000Z'); // the runs missed 4:00 pm; it is now 10:00 am Friday
+    await core.runDue();
+    expect(sender.taken()).toHaveLength(1);
+  });
+
+  it('keeps that difference through an edit that leaves its time alone', async () => {
+    const { core, clock, sender, store } = await ready();
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      reminders: [
+        { shape: 'at', date: '2026-11-19', time: '09:00' },
+        { shape: 'at', date: '2026-11-19', time: '16:00' },
+      ],
+    });
+    const [past, toCome] = added.reminders;
+    clock.set('2026-11-20T14:00:00.000Z');
+    // A note is added on Friday morning, keeping both Reminders as they are.
+    const edited = await core.changeAppointment(mark, added.id, {
+      noteForSusan: 'Bring your glasses.',
+      // The Reminders as the form sends them back: each with its ID, unchanged.
+      reminders: added.reminders.map(
+        ({ id, dueAt: _dueAt, needsReview: _n, setAt: _s, ...timing }) => ({
+          id,
+          ...timing,
+        }),
+      ) as ReminderSetting[],
+    });
+    expect(edited.reminders.map((r) => r.setAt)).toEqual([past.setAt, toCome.setAt]);
+    clock.set('2026-11-20T15:00:00.000Z');
+    await core.runDue();
+    expect(store.texts().map((text) => text.reminderId)).toEqual([toCome.id]);
+    expect(sender.taken()[0].words).toMatch(/Bring your glasses/);
+  });
+
+  it('is worked out afresh when its Appointment moves it', async () => {
+    const { core, clock, sender } = await ready();
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      reminders: [{ shape: 'before', amount: 2, unit: 'hours' }],
+    });
+    clock.set('2026-11-20T17:30:00.000Z'); // 12:30 pm Friday
+    // Moved to 1:00 pm, so "2 hours before" is 11:00 am: already past when the move set it.
+    const moved = await core.changeAppointment(mark, added.id, { time: '13:00' });
+    expect(moved.reminders[0].setAt).toBe('2026-11-20T17:30:00.000Z');
+    await core.runDue();
+    expect(sender.taken()).toEqual([]);
+    // Moved again, to 3:00 pm: the Reminder is due at 1:00 pm, still to come.
+    await core.changeAppointment(mark, added.id, { time: '15:00' });
+    clock.set('2026-11-20T18:00:00.000Z');
+    await core.runDue();
+    expect(sender.taken()).toHaveLength(1);
+  });
+
+  it('is set again when a person changes it or confirms it after review', async () => {
+    const { core, clock } = await ready();
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      reminders: [{ shape: 'at', date: '2026-11-20', time: '09:00' }],
+    });
+    expect(added.reminders[0].setAt).toBe('2026-11-19T20:00:00.000Z');
+    clock.set('2026-11-19T21:00:00.000Z');
+    const moved = await core.changeAppointment(mark, added.id, { time: '15:00' });
+    // An exact time stays put when the Appointment moves, so when it was set stays put too.
+    expect(moved.reminders[0]).toMatchObject({
+      needsReview: true,
+      setAt: '2026-11-19T20:00:00.000Z',
+    });
+    clock.set('2026-11-19T22:00:00.000Z');
+    const [reminder] = moved.reminders;
+    const confirmed = await core.changeAppointment(mark, added.id, {
+      reminders: [
+        { id: reminder.id, shape: 'at', date: '2026-11-20', time: '09:00', reviewed: true },
+      ],
+    });
+    expect(confirmed.reminders[0]).toMatchObject({
+      needsReview: false,
+      setAt: '2026-11-19T22:00:00.000Z',
+    });
+  });
+});
+
+describe('Reminders kept before the calendar recorded when each was set', () => {
+  /** An Appointment as ticket 07 kept it: its Reminders have no record of when they were set. */
+  async function kept(
+    store: ReturnType<typeof calendar>['store'],
+    details: { date: string; time: string; startsAt: string; dueAt: string; at: string },
+  ): Promise<Appointment> {
+    const appointment: Appointment = {
+      id: crypto.randomUUID(),
+      what: 'Eye exam',
+      date: details.date,
+      time: details.time,
+      startsAt: details.startsAt,
+      withWhom: null,
+      placeName: null,
+      placeAddress: null,
+      driverName: null,
+      pickupTime: null,
+      noteForSusan: null,
+      privateNotes: null,
+      state: 'active',
+      series: null,
+      reminders: [
+        {
+          id: crypto.randomUUID(),
+          shape: 'before',
+          amount: 1,
+          unit: 'hours',
+          dueAt: details.dueAt,
+          needsReview: false,
+          setAt: null,
+        },
+      ],
+      added: { personId: linda.person.id, personName: 'Linda', viaAgent: false, at: details.at },
+      lastChanged: null,
+    };
+    await store.addAppointment(appointment);
+    return appointment;
+  }
+
+  async function ready() {
+    const cal = calendar();
+    await cal.core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    return cal;
+  }
+
+  it('are sent when their time comes, as any other', async () => {
+    const { core, clock, sender, store } = await ready();
+    await kept(store, {
+      date: '2026-11-20',
+      time: '14:00',
+      startsAt: '2026-11-20T19:00:00.000Z',
+      dueAt: '2026-11-20T18:00:00.000Z',
+      at: '2026-11-18T15:00:00.000Z',
+    });
+    clock.set('2026-11-20T18:00:00.000Z');
+    await core.runDue();
+    expect(sender.taken()).toHaveLength(1);
+  });
+
+  it("are taken to have been set at their Appointment's last save", async () => {
+    const { core, sender, store } = await ready();
+    // Added on Wednesday, with a Reminder that was already past then.
+    await kept(store, {
+      date: '2026-11-20',
+      time: '14:00',
+      startsAt: '2026-11-20T19:00:00.000Z',
+      dueAt: '2026-11-18T12:00:00.000Z',
+      at: '2026-11-18T15:00:00.000Z',
+    });
+    await core.runDue();
+    expect(sender.taken()).toEqual([]);
+    expect(store.texts()).toEqual([]);
+  });
+
+  it("are sent when their time was the very moment of their Appointment's last save", async () => {
+    const { core, clock, sender, store } = await ready();
+    await kept(store, {
+      date: '2026-11-20',
+      time: '14:00',
+      startsAt: '2026-11-20T19:00:00.000Z',
+      dueAt: '2026-11-18T15:00:00.000Z',
+      at: '2026-11-18T15:00:00.000Z',
+    });
+    clock.set('2026-11-19T20:00:00.000Z');
+    await core.runDue();
+    expect(sender.taken()).toHaveLength(1);
+  });
+
+  it('are let go unrecorded once their Appointment has started: nothing was sending then', async () => {
+    const { core, sender, store } = await ready();
+    await kept(store, {
+      date: '2026-11-17',
+      time: '10:00',
+      startsAt: '2026-11-17T15:00:00.000Z',
+      dueAt: '2026-11-17T14:00:00.000Z',
+      at: '2026-11-16T15:00:00.000Z',
+    });
+    await core.runDue();
+    expect(sender.taken()).toEqual([]);
+    expect(store.texts()).toEqual([]);
+  });
+
+  it('keep when they were set through an edit that leaves their time alone', async () => {
+    const { core, clock, sender, store } = await ready();
+    const appointment = await kept(store, {
+      date: '2026-11-20',
+      time: '14:00',
+      startsAt: '2026-11-20T19:00:00.000Z',
+      dueAt: '2026-11-20T18:00:00.000Z',
+      at: '2026-11-18T15:00:00.000Z',
+    });
+    // The runs miss 1:00 pm; at 1:10 pm someone adds a note.
+    clock.set('2026-11-20T18:10:00.000Z');
+    const edited = await core.changeAppointment(mark, appointment.id, { noteForSusan: 'Glasses.' });
+    expect(edited.reminders[0].setAt).toBe('2026-11-18T15:00:00.000Z');
+    await core.runDue();
+    expect(sender.taken()).toHaveLength(1);
+  });
+});
+
+describe('a test text', () => {
+  it('is refused while her number is not set, and nothing is recorded', async () => {
+    const { core, store } = calendar();
+    const refusal = await refused(core.sendTestText(linda), 'noNumber');
+    expect(refusal.message).toMatch(/mobile number/);
+    expect(store.texts()).toEqual([]);
+  });
+
+  it('goes out at once by the same path, and is recorded with its status', async () => {
+    const { core, sender, store } = calendar();
+    await core.changeSettings(linda, { susansNumber: '(555) 555-0123' });
+    const text = await core.sendTestText(mark);
+    expect(text).toMatchObject({ kind: 'test', appointmentId: null, status: 'sent' });
+    expect(sender.taken()).toEqual([{ to: SUSANS_NUMBER, words: text.words }]);
+    expect(text.words).toMatch(/^Susan's Calendar: This is a test text/);
+    expect(store.texts()).toEqual([text]);
+    expect(store.activity()).toEqual([]);
+  });
+
+  it('is tried again by the scheduled run when nobody can tell whether it went', async () => {
+    const { core, clock, sender, store } = calendar();
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    sender.breakNext();
+    expect(await core.sendTestText(linda)).toMatchObject({ status: 'waiting', attempts: 1 });
+    clock.set('2026-11-19T20:02:00.000Z');
+    await core.runDue();
+    expect(store.texts()).toMatchObject([{ kind: 'test', status: 'sent', attempts: 2 }]);
+  });
+
+  it('shows as failed when the sender refuses it', async () => {
+    const { core, sender } = calendar();
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    sender.refuseNext();
+    expect(await core.sendTestText(linda)).toMatchObject({ status: 'failed', reason: 'refused' });
+  });
+});
+
+describe('the settings for texts', () => {
+  it("keep Susan's number however it is typed, and the contact for the automatic answer", async () => {
+    const { core, store } = calendar();
+    const changed = await core.changeSettings(mark, {
+      susansNumber: '555.555.0123',
+      contactName: '  Linda  ',
+      contactPhone: '+1 (555) 555-0187',
+    });
+    expect(changed).toEqual({
+      susansNumber: SUSANS_NUMBER,
+      contactName: 'Linda',
+      contactPhone: '+15555550187',
+      lastChanged: {
+        personId: 'person-mark',
+        personName: 'Mark',
+        viaAgent: false,
+        at: '2026-11-19T20:00:00.000Z',
+      },
+    });
+    expect(await store.settings()).toEqual(changed);
+  });
+
+  it('change only what is given, and clear what is sent empty', async () => {
+    const { core } = calendar();
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER, contactName: 'Linda' });
+    const changed = await core.changeSettings(mark, { contactName: '' });
+    expect(changed).toMatchObject({ susansNumber: SUSANS_NUMBER, contactName: null });
+  });
+
+  it('refuse a number that is not a US number, without repeating it', async () => {
+    const { core, store } = calendar();
+    for (const typed of [
+      '555-0123',
+      '1234567890',
+      '+44 20 7946 0958',
+      'call Linda',
+      '555555012345',
+    ]) {
+      const refusal = await refused(core.changeSettings(linda, { susansNumber: typed }), 'invalid');
+      expect(refusal.detail).toBe('susansNumber');
+      expect(refusal.message).not.toContain(typed);
+    }
+    await refused(core.changeSettings(linda, { contactPhone: '12' }), 'invalid');
+    await refused(core.changeSettings(linda, { contactName: 'x'.repeat(81) }), 'invalid');
+    expect((await store.settings()).susansNumber).toBeNull();
+  });
+
+  it('do nothing when nothing changes, and leave no activity record', async () => {
+    const { core, clock, store } = calendar();
+    const first = await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    clock.set('2026-11-19T21:00:00.000Z');
+    expect(await core.changeSettings(mark, { susansNumber: '555 555 0123' })).toEqual(first);
+    expect(store.activity()).toEqual([]);
   });
 });

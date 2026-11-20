@@ -3,6 +3,7 @@
 
 import { CalendarRefusal, type Actor, type CalendarCore } from '../../../src/lib/calendar';
 import { COMMAND_FAILED, type CommandAnswer } from '../../../src/lib/calendarApi';
+import { logFailure } from '../../calendar/log';
 import type { FindName } from '../../calendar/people';
 
 /** What the data API hands a function for one mutation. */
@@ -19,6 +20,18 @@ export interface CommandDependencies {
   core: () => Promise<CalendarCore>;
   nameOf: FindName;
 }
+
+/** The commands, as the data API names them: the only names a log may repeat. */
+const COMMANDS = new Set([
+  'addAppointment',
+  'changeAppointment',
+  'cancelAppointment',
+  'removeAppointment',
+  'makeSubscriptionLink',
+  'switchOffSubscriptionLink',
+  'changeSettings',
+  'sendTestText',
+]);
 
 /** Shown when the account has no usable name. The owner gives every account one. */
 const NO_NAME = 'Someone';
@@ -46,7 +59,7 @@ function fromJson(sent: unknown): unknown {
 export function calendarCommandHandler({ core, nameOf }: CommandDependencies) {
   return async (event: CommandEvent): Promise<CommandAnswer> => {
     const command = event.fieldName ?? event.info?.fieldName;
-    const { id, details, changes } = event.arguments;
+    const { id, details, changes, settings } = event.arguments;
     try {
       const by = await actor(event.identity, nameOf);
       const calendar = await core();
@@ -92,6 +105,10 @@ export function calendarCommandHandler({ core, nameOf }: CommandDependencies) {
         case 'switchOffSubscriptionLink':
           await calendar.switchOffSubscriptionLink(by);
           return { subscriptionLink: null };
+        case 'changeSettings':
+          return { settings: await calendar.changeSettings(by, fromJson(settings) as never) };
+        case 'sendTestText':
+          return { text: await calendar.sendTestText(by) };
         default:
           throw new Error(`Unknown calendar command: ${String(command)}`);
       }
@@ -101,16 +118,15 @@ export function calendarCommandHandler({ core, nameOf }: CommandDependencies) {
         const { reason, message, detail } = error;
         return { refusal: { reason, message, detail } };
       }
-      // What broke and where, and nothing about the Appointment or a link.
-      const e = error instanceof Error ? error : null;
-      console.error(
-        'Calendar command failed',
-        String(command),
-        e?.name ?? 'Unknown error',
-        e?.message.slice(0, 300) ?? '',
-        e?.stack?.split('\n').slice(1, 6).join(' | ') ?? '',
+      // Fixed words only: which command, from the list, and the kind of failure. The error can
+      // quote the Appointment, a link, Susan's number or a text, so neither it nor its cause goes
+      // on: the data API is handed a fresh error that says only to try again.
+      logFailure(
+        `Calendar command ${COMMANDS.has(String(command)) ? command : '(unknown)'}`,
+        error,
       );
-      throw new Error(COMMAND_FAILED, { cause: error });
+      // eslint-disable-next-line preserve-caught-error -- the cause could quote a number or a text
+      throw new Error(COMMAND_FAILED);
     }
   };
 }

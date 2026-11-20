@@ -1,7 +1,8 @@
 // Synthesizes the Amplify backend with CDK locally, without AWS credentials. It catches CDK and
 // bundling errors before a deploy, then checks the sign-in rules, the rules about who may read and
-// write calendar data and subscription links, the feed's public address, the daily Series top-up's
-// schedule and access, and the cost tags in what was synthesized. Usage: npm run synth
+// write calendar data and subscription links, the feed's public address, the scheduled run that
+// sends texts, the daily Series top-up's schedule and access, and the cost tags in what was
+// synthesized. Usage: npm run synth
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -106,6 +107,9 @@ function onlyOwn(rules) {
   );
 }
 
+/** The query that lists a model's rows, as Amplify names it: a plural, not doubled. */
+const listOf = (model) => `list${model}${model.endsWith('s') ? '' : 's'}`;
+
 /** The calendar core's commands (amplify/data/resource.ts): the only way to change the calendar. */
 const COMMANDS = [
   'addAppointment',
@@ -114,17 +118,17 @@ const COMMANDS = [
   'changeAppointment',
   'changeSeries',
   'endSeries',
+  'changeSettings',
   'makeSubscriptionLink',
   'removeAppointment',
+  'sendTestText',
   'switchOffSubscriptionLink',
 ];
 /**
- * The calendar (amplify/data/resource.ts). Only the functions that run the calendar core write
- * these directly.
+ * The calendar, its Series, the record of texts, and the settings (amplify/data/resource.ts). Only
+ * the commands function, the scheduled run and the Series top-up write these directly.
  */
-const MODELS = ['Appointment', 'Series', 'ActivityRecord'];
-/** The query that lists a model, named as Amplify names it: Series is its own plural. */
-const listOf = (model) => (model.endsWith('s') ? `list${model}` : `list${model}s`);
+const MODELS = ['Appointment', 'Series', 'ActivityRecord', 'Text', 'CalendarSettings'];
 /** Kept per person, and read only by that person. Only the commands function writes these. */
 const OWN_MODELS = ['SubscriptionLink'];
 /**
@@ -258,6 +262,47 @@ function feedFunction() {
   return { urls, properties: lambda.Properties, actions, code };
 }
 
+/**
+ * A scheduled function, found by the start of its ID: the scheduled run (`sendtextslambda`) or the
+ * Series top-up (`seriestopuplambda`). Gives the schedules that invoke it, its properties, its
+ * settings for being invoked by them, and its code.
+ */
+function scheduledFunction(prefix) {
+  const all = stacks().flatMap((stack) => Object.entries(stack));
+  const [name, lambda] =
+    all.find(
+      ([id, resource]) =>
+        resource.Type === 'AWS::Lambda::Function' && new RegExp(`^${prefix}[0-9A-F]+$`).test(id),
+    ) ?? [];
+  const schedules = all
+    .filter(([, resource]) => resource.Type === 'AWS::Scheduler::Schedule')
+    .map(([, resource]) => resource.Properties)
+    .filter((schedule) => name && schedule.Target?.Arn?.['Fn::GetAtt']?.[0] === name);
+  const invoke = all
+    .filter(([, resource]) => resource.Type === 'AWS::Lambda::EventInvokeConfig')
+    .map(([, resource]) => resource.Properties)
+    .filter((config) => config.FunctionName?.Ref === name);
+  const asset = /^([0-9a-f]{64})\.zip$/.exec(lambda?.Properties.Code?.S3Key ?? '')?.[1];
+  const code = asset ? readFileSync(join(out, `asset.${asset}`, 'index.mjs'), 'utf8') : '';
+  return { schedules, properties: lambda?.Properties ?? {}, invoke, code };
+}
+
+/** The words of the step that writes a data API operation's row: the one that holds its condition. */
+function writeStep(kind, field) {
+  for (const stack of stacks()) {
+    for (const { Type, Properties } of Object.values(stack)) {
+      if (Type !== 'AWS::AppSync::Resolver' || Properties.TypeName !== kind) continue;
+      if (Properties.FieldName !== field) continue;
+      return (Properties.PipelineConfig?.Functions ?? [])
+        .map((step) => stack[step['Fn::GetAtt']?.[0]]?.Properties ?? {})
+        .filter((step) => /DataResolverFn$/.test(step.Name ?? ''))
+        .map((step) => stepWords(step, 'Request'))
+        .join('\n');
+    }
+  }
+  return '';
+}
+
 /** The names of the indexes on a model's table, as synthesized. */
 function indexesOf(model) {
   return stacks()
@@ -282,6 +327,10 @@ function checks() {
   const queries = openToSignedIn('Query');
   const queryRules = ruleSteps('Query');
   const feed = feedFunction();
+  const run = scheduledFunction('sendtextslambda');
+  const topUp = scheduledFunction('seriestopuplambda');
+  const claim = writeStep('Mutation', 'createText');
+  const retake = writeStep('Mutation', 'updateText');
   const mutations = openToSignedIn('Mutation');
   const subscriptions = openToSignedIn('Subscription');
   const tables = resources('Custom::AmplifyDynamoDBTable');
@@ -337,6 +386,10 @@ function checks() {
     [
       'anyone signed in is sent every change to an Appointment as it happens',
       ['onCreate', 'onUpdate', 'onDelete'].every((on) => subscriptions.get(`${on}Appointment`)),
+    ],
+    [
+      'anyone signed in is sent every new text and every change to one as it happens',
+      ['onCreate', 'onUpdate'].every((on) => subscriptions.get(`${on}Text`)),
     ],
     [
       "the calendar core's commands, and turning app notifications on and off, are the only " +
@@ -448,35 +501,66 @@ function checks() {
       ),
     ],
     [
-      "the commands, Series top-up and feed functions are told Susan's time zone",
+      "the commands, feed, scheduled run and Series top-up functions are told Susan's time zone",
       resources('AWS::Lambda::Function').filter(
         (lambda) => lambda.Environment?.Variables?.SUSAN_TIME_ZONE,
-      ).length === 3,
+      ).length === 4 &&
+        Boolean(run.properties.Environment?.Variables?.SUSAN_TIME_ZONE) &&
+        Boolean(topUp.properties.Environment?.Variables?.SUSAN_TIME_ZONE),
     ],
     [
-      'the Series top-up runs once a day, one run at a time',
-      (() => {
-        const lambda = stacks()
-          .flatMap((stack) => Object.entries(stack))
-          .find(
-            ([id, resource]) =>
-              resource.Type === 'AWS::Lambda::Function' && /^seriestopuplambda[0-9A-F]+$/.test(id),
-          );
-        const schedules = resources('AWS::Scheduler::Schedule').filter(
-          (schedule) => schedule.Target?.Arn?.['Fn::GetAtt']?.[0] === lambda?.[0],
-        );
-        return (
-          lambda?.[1].Properties.ReservedConcurrentExecutions === 1 &&
-          schedules.length === 1 &&
-          /^cron\(\d+ \d+ \* \* \? \*\)$/.test(schedules[0].ScheduleExpression) &&
-          schedules[0].State === 'ENABLED'
-        );
-      })(),
+      'the Series top-up runs once a day, one run at a time, with its retries bounded',
+      topUp.schedules.length === 1 &&
+        /^cron\(\d+ \d+ \* \* \? \*\)$/.test(topUp.schedules[0].ScheduleExpression) &&
+        topUp.schedules[0].State === 'ENABLED' &&
+        topUp.properties.ReservedConcurrentExecutions === 1 &&
+        topUp.schedules[0].Target?.RetryPolicy?.MaximumRetryAttempts <= 2 &&
+        topUp.schedules[0].Target?.RetryPolicy?.MaximumEventAgeInSeconds <= 3600 &&
+        topUp.invoke.length === 1 &&
+        topUp.invoke[0].MaximumRetryAttempts === 0,
     ],
     [
       // It makes Appointments and notes how far each Series is made, and changes nothing else.
       'the Series top-up may only read the calendar, add Appointments and note how far a Series is made',
       dataApiAccess('seriestopuplambdaServiceRole').join() === SERIES_TOP_UP_FIELDS.join(),
+    ],
+    [
+      // Every minute, in a cron expression, and one function for it.
+      'one scheduled run, every minute, sends the texts that are due',
+      run.schedules.length === 1 &&
+        /^cron\((?:\*|\*\/1|0\/1) \* \* \* \? \*\)$/.test(run.schedules[0].ScheduleExpression) &&
+        run.schedules[0].State === 'ENABLED' &&
+        Boolean(run.properties.Handler),
+    ],
+    [
+      // One at a time, finishing within the minute; a run that cannot start is dropped, by the
+      // schedule and by Lambda, rather than retried or queued behind the one still going.
+      'the scheduled run never overlaps itself',
+      run.properties.ReservedConcurrentExecutions === 1 &&
+        run.properties.Timeout > 0 &&
+        run.properties.Timeout < 60 &&
+        run.schedules[0]?.Target?.RetryPolicy?.MaximumRetryAttempts === 0 &&
+        run.schedules[0]?.Target?.RetryPolicy?.MaximumEventAgeInSeconds <= 60 &&
+        run.invoke.length === 1 &&
+        run.invoke[0].MaximumRetryAttempts === 0 &&
+        run.invoke[0].MaximumEventAgeInSeconds <= 60,
+    ],
+    [
+      // The claim (claimText in amplify/calendar/data-store.ts): creating a text's record fails
+      // when one with its ID is there, so two runs cannot both send it.
+      'a text is claimed by creating its record, which fails when the record is already there',
+      /"id":\s*\{\s*"attributeExists":\s*false\s*\}/.test(claim) &&
+        /"condition":\s*\$condition/.test(claim),
+    ],
+    [
+      // The retake (retakeText in amplify/calendar/data-store.ts): a waiting text is tried again
+      // only by the run whose write finds it still as it was read, so two runs cannot both try it.
+      'a waiting text is taken up again only by a write whose condition holds as it is written',
+      retake.includes('"operation": "UpdateItem"') &&
+        retake.includes('$util.qr($ctx.stash.conditions.add($args.condition))') &&
+        retake.includes('$util.qr($UpdateItem.put("condition", $Conditions))') &&
+        run.code.includes('updateText(input: $input, condition: $condition)') &&
+        /status:\s*\{\s*eq:\s*"waiting"\s*\}/.test(run.code),
     ],
     [
       // The feed has the only public address. Its link is checked inside the function.

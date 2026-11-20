@@ -4,6 +4,7 @@ import {
   createFixedClock,
   createMemoryMessenger,
   createMemoryStore,
+  createStandInSender,
   type Actor,
 } from '../../../src/lib/calendar';
 import { seriesTopUpHandler } from './topUp';
@@ -17,7 +18,9 @@ describe('the daily Series top-up', () => {
     const store = createMemoryStore();
     const clock = createFixedClock('2026-11-19T20:00:00.000Z');
     const messenger = createMemoryMessenger(['person-linda', 'person-mark']);
-    const core = createCalendarCore({ store, clock, messenger, timeZone: 'America/New_York' });
+    const textSender = createStandInSender();
+    const timeZone = 'America/New_York';
+    const core = createCalendarCore({ store, clock, messenger, textSender, timeZone });
     await core.addSeries(linda, {
       what: 'Dialysis',
       date: '2026-11-23',
@@ -30,6 +33,7 @@ describe('the daily Series top-up', () => {
     expect(store.appointments().length).toBeGreaterThan(made);
     // One Activity update, for the add; none for the Appointments the top-up made.
     expect(messenger.appNotifications()).toHaveLength(1);
+    expect(textSender.taken()).toEqual([]);
   });
 
   it('logs what broke without anything about an Appointment, and fails the run', async () => {

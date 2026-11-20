@@ -5,7 +5,15 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createFixedClock } from '../lib/calendar';
 import { createSampleCalendar } from '../data/sampleCalendar';
 import { formatDate } from '../lib/localTime';
-import { atWidth, daysFromToday, EASTERN, linda, mark, renderApp } from '../test/renderApp';
+import {
+  atWidth,
+  daysFromToday,
+  EASTERN,
+  linda,
+  mark,
+  renderApp,
+  sentReminder,
+} from '../test/renderApp';
 
 const realMatchMedia = window.matchMedia;
 beforeEach(() => atWidth('phone'));
@@ -195,7 +203,7 @@ describe('deleting an Appointment entered by mistake', () => {
 
   it('is refused once Susan has been texted about it, and says to cancel instead', async () => {
     const { calendar, appointment } = await withAppointment();
-    calendar.store.noteTextSentAbout(appointment.id);
+    await sentReminder(calendar, appointment);
     renderApp(`/appointments/${appointment.id}`, { calendar });
     await userEvent.click(await screen.findByRole('button', { name: 'Delete Appointment' }));
     await userEvent.click(screen.getByRole('button', { name: 'Yes, delete it' }));

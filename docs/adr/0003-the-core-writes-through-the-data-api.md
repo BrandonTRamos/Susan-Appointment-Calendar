@@ -6,7 +6,7 @@ status: accepted
 
 The calendar core's commands run in a backend function, and that function writes calendar data by calling the data API with its own role, not by writing to the tables. We chose this in November 2026, when the first commands were built, because the spec asks for two things at once: only the core may write, and a change made by one person must appear for everyone else without a reload. The data API announces a change to the people subscribed to it only when the change is made through it. A write straight to a table is announced to nobody.
 
-So the models are read-only to anyone signed in, the core's commands are custom mutations run by the function, and only the backend functions that run the core may use the models' own mutations: the commands function, and the daily Series top-up, which may use only the few it needs (see Updates). `npm run synth` checks all of this.
+So the models are read-only to anyone signed in, the core's commands are custom mutations run by the function, and only the backend functions that run the core may use the models' own mutations: the commands function, the scheduled run that sends texts, and the daily Series top-up, which may use only the few it needs (see Updates). `npm run synth` checks all of this.
 
 ## Considered options
 
@@ -27,3 +27,4 @@ So the models are read-only to anyone signed in, the core's commands are custom 
 ## Updates
 
 - **20 November 2026, ticket 12 (Series).** This record first said the commands function was the one caller allowed to use the models' own mutations. A second backend function now writes calendar data: the daily Series top-up, which runs the same core to make the Appointments a Series still needs. It may call only the data API fields that needs (reading Appointments and Series, adding an Appointment, updating a Series), which `amplify/backend.ts` sets and `npm run synth` checks. The decision itself is unchanged: every calendar write, the top-up's included, goes through the calendar core and the data API, never straight to a table.
+- **20 November 2026, ticket 11 (Sending texts on schedule), merged alongside ticket 12.** The scheduled run that sends texts, `send-texts`, is a third backend function that runs the core and writes through the data API: it records each text, claimed by creating its record. It keeps to the same decision. Its one conditional write, taking a waiting text up again, also goes through the data API.
