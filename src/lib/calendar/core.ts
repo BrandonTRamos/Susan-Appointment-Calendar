@@ -8,6 +8,7 @@
 import { formatDate, formatTime, isDate, isTime, momentOf } from '../localTime';
 import {
   DETAILS,
+  REMINDER_UNITS,
   type ActivityAction,
   type ActivityRecord,
   type Actor,
@@ -16,9 +17,13 @@ import {
   type AppointmentDetails,
   type Detail,
   type NewAppointment,
+  type Reminder,
+  type ReminderTiming,
+  type ReminderUnit,
   type Stamp,
 } from './appointment';
 import type { Clock, Store } from './ports';
+import { MOST_REMINDERS, reminderDue, STARTING_REMINDER } from './reminders';
 
 /** Why a command was refused. */
 export type RefusalReason =
@@ -31,6 +36,9 @@ export type RefusalReason =
   /** Susan has been texted about the Appointment. */
   | 'texted';
 
+/** What a refusal can point at: one detail, or the Reminders. */
+export type RefusalField = Detail | 'reminders';
+
 /**
  * A command the core would not carry out. Nothing was changed. The message is written for the
  * person who asked, and says what to do next; it holds nothing about the Appointment beyond what
@@ -40,8 +48,8 @@ export class CalendarRefusal extends Error {
   constructor(
     readonly reason: RefusalReason,
     message: string,
-    /** The detail that was wrong, when it was one. */
-    readonly detail?: Detail,
+    /** The detail that was wrong, when it was one, or 'reminders' when it was a Reminder. */
+    readonly detail?: RefusalField,
   ) {
     super(message);
     this.name = 'CalendarRefusal';
@@ -50,15 +58,20 @@ export class CalendarRefusal extends Error {
 
 export interface CalendarCore {
   /**
-   * Adds an Appointment. It needs what it is, its date and its start time.
+   * Adds an Appointment. It needs what it is, its date and its start time. It starts with one
+   * Reminder, the day before at 6:00 pm, unless it is given its own Reminders, which can be none.
    *
    * Whoever sends the command can give the new Appointment its ID, a UUID. Then the same add
    * arriving twice, as when the answer to the first was lost on the way back, is carried out once.
    */
   addAppointment(by: Actor, details: NewAppointment, id?: string | null): Promise<Appointment>;
   /**
-   * Changes the details given; the rest stay as they were. Refused for a cancelled Appointment.
-   * Changes that leave the Appointment as it is do nothing: nobody changed it.
+   * Changes the details given; the rest stay as they were. Reminders, when given, are the whole new
+   * list. Refused for a cancelled Appointment. Changes that leave the Appointment as it is do
+   * nothing: nobody changed it.
+   *
+   * When the Appointment moves, Reminders set as a gap or as days before follow it; one set at an
+   * exact time keeps its time and is flagged for review until someone confirms or changes it.
    */
   changeAppointment(by: Actor, id: string, changes: AppointmentChanges): Promise<Appointment>;
   /** Marks the Appointment cancelled. It stays in the calendar. */
@@ -122,7 +135,7 @@ const detailsOf = (appointment: AppointmentDetails) =>
     string | null
   >;
 
-function invalid(message: string, detail?: Detail): never {
+function invalid(message: string, detail?: RefusalField): never {
   throw new CalendarRefusal('invalid', message, detail);
 }
 
@@ -181,6 +194,51 @@ function checked(details: Record<Detail, string | null>): AppointmentDetails {
   return { ...details, what, date, time };
 }
 
+/** A Reminder's timing as one string, to tell whether two Reminders go out on the same terms. */
+function timingKey(timing: ReminderTiming): string {
+  switch (timing.shape) {
+    case 'before':
+      return `before ${timing.amount} ${timing.unit}`;
+    case 'daysBefore':
+      return `daysBefore ${timing.days} ${timing.time}`;
+    case 'at':
+      return `at ${timing.date} ${timing.time}`;
+  }
+}
+
+/** Everything about a Reminder as one string. */
+const reminderKey = (reminder: Reminder) =>
+  `${reminder.id} ${timingKey(reminder)} ${reminder.dueAt} ${reminder.needsReview}`;
+
+const sameReminders = (a: readonly Reminder[], b: readonly Reminder[]) =>
+  a.length === b.length && a.every((reminder, n) => reminderKey(reminder) === reminderKey(b[n]));
+
+const whole = (n: unknown, least: number, most: number): n is number =>
+  Number.isInteger(n) && (n as number) >= least && (n as number) <= most;
+
+/** A Reminder's timing as it was sent, or a refusal saying what is wrong with it. */
+function timingOf(sent: unknown, wrong: (message: string) => never): ReminderTiming {
+  if (typeof sent !== 'object' || sent === null || Array.isArray(sent))
+    wrong('It could not be read.');
+  const { shape, amount, unit, days, date, time } = sent as Record<string, unknown>;
+  switch (shape) {
+    case 'before':
+      if (!whole(amount, 1, 999) || !REMINDER_UNITS.includes(unit as never))
+        wrong('Say how long before the start, in whole minutes, hours or days.');
+      return { shape, amount, unit: unit as ReminderUnit };
+    case 'daysBefore':
+      if (!whole(days, 0, 365)) wrong('Say how many days before, from 0 to 365.');
+      if (typeof time !== 'string' || !isTime(time)) wrong('Pick the time it goes out.');
+      return { shape, days, time };
+    case 'at':
+      if (typeof date !== 'string' || !isDate(date)) wrong('Pick the date it goes out.');
+      if (typeof time !== 'string' || !isTime(time)) wrong('Pick the time it goes out.');
+      return { shape, date, time };
+    default:
+      return wrong('It could not be read.');
+  }
+}
+
 export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptions): CalendarCore {
   /** The moment an Appointment starts, in Susan's time zone. */
   function startOf({ date, time }: AppointmentDetails): string {
@@ -191,6 +249,47 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
         'time',
       );
     return moment.toISOString();
+  }
+
+  /**
+   * The Reminders an Appointment will have, from those sent, or a refusal naming the one that is
+   * wrong. `before` are the ones it had, and `moved` whether its date or time is changing.
+   */
+  function settled(
+    sent: unknown,
+    details: AppointmentDetails,
+    startsAt: string,
+    before: readonly Reminder[],
+    moved: boolean,
+  ): Reminder[] {
+    if (!Array.isArray(sent))
+      invalid("The Appointment's Reminders could not be read.", 'reminders');
+    if (sent.length > MOST_REMINDERS)
+      invalid(`Keep to ${MOST_REMINDERS} Reminders or fewer.`, 'reminders');
+    const taken = new Set<string>();
+    const reminders = sent.map((each: unknown, n): Reminder => {
+      const wrong = (message: string): never =>
+        invalid(`Reminder ${n + 1}: ${message}`, 'reminders');
+      const timing = timingOf(each, wrong);
+      const { id, reviewed } = each as { id?: unknown; reviewed?: unknown };
+      const was = before.find((reminder) => reminder.id === id && !taken.has(reminder.id));
+      const same = was !== undefined && timingKey(was) === timingKey(timing);
+      // An exact time stays put when the Appointment moves, so a person has to look at it again.
+      const needsReview =
+        timing.shape === 'at' && same && (moved || (was.needsReview && reviewed !== true));
+      const due = reminderDue(timing, details, timeZone);
+      if (!due && timing.shape === 'at')
+        wrong(
+          `There is no ${formatTime(timing.time)} on ${formatDate(timing.date)}: the clocks go forward that night. Pick another time.`,
+        );
+      if (!due) return wrong('It could not be worked out.');
+      if (!needsReview && due.toISOString() >= startsAt)
+        wrong('It would go out after the Appointment starts. Pick an earlier time.');
+      const reminderId = was?.id ?? crypto.randomUUID();
+      taken.add(reminderId);
+      return { id: reminderId, ...timing, dueAt: due.toISOString(), needsReview };
+    });
+    return reminders.sort((a, b) => a.dueAt.localeCompare(b.dueAt));
   }
 
   const stamp = (by: Actor, at: string): Stamp => ({
@@ -228,12 +327,20 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
     async addAppointment(by, sent, id) {
       const details = checked({ ...NO_DETAILS, ...given(sent) });
       const startsAt = startOf(details);
+      const asked = (sent as { reminders?: unknown }).reminders;
+      const reminders = settled(asked ?? [STARTING_REMINDER], details, startsAt, [], false);
       if (id !== undefined && id !== null) {
         if (typeof id !== 'string' || !ID.test(id))
           invalid("The Appointment's ID could not be read.");
         const already = await store.appointment(id);
         // The same add, arriving again: it has been carried out, so there is nothing left to do.
-        if (already && already.added.personId === by.person.id && hasDetails(already, details))
+        const timings = (all: Reminder[]) => all.map(timingKey).join('; ');
+        if (
+          already &&
+          already.added.personId === by.person.id &&
+          hasDetails(already, details) &&
+          timings(already.reminders) === timings(reminders)
+        )
           return already;
         if (already)
           invalid('That Appointment has already been saved. Open it from the list to change it.');
@@ -244,6 +351,7 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
         ...details,
         startsAt,
         state: 'active',
+        reminders,
         added: stamp(by, at),
         lastChanged: null,
       };
@@ -260,12 +368,24 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
           'This Appointment is cancelled, so it cannot be changed. Add a new one if it is happening after all.',
         );
       const details = checked({ ...detailsOf(current), ...given(sent) });
-      if (hasDetails(current, details)) return current;
+      const startsAt = startOf(details);
+      const moved = details.date !== current.date || details.time !== current.time;
+      const asked = (sent as { reminders?: unknown }).reminders;
+      const reminders = settled(
+        asked ?? current.reminders,
+        details,
+        startsAt,
+        current.reminders,
+        moved,
+      );
+      if (hasDetails(current, details) && sameReminders(current.reminders, reminders))
+        return current;
       const at = clock.now().toISOString();
       const appointment: Appointment = {
         ...current,
         ...details,
-        startsAt: startOf(details),
+        startsAt,
+        reminders,
         lastChanged: stamp(by, at),
       };
       await store.replaceAppointment(appointment);

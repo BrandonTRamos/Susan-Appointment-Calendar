@@ -8,6 +8,7 @@ import {
   isTime,
   localDateTime,
   momentOf,
+  momentOrSkipped,
   today,
 } from './localTime';
 
@@ -56,6 +57,15 @@ describe("Susan's local time", () => {
     );
   });
 
+  it('can read a time the clocks skip as the same time an hour later', () => {
+    expect(momentOrSkipped('2027-03-14', '02:30', EASTERN).toISOString()).toBe(
+      '2027-03-14T07:30:00.000Z',
+    );
+    expect(momentOrSkipped('2027-03-14', '01:30', EASTERN).toISOString()).toBe(
+      '2027-03-14T06:30:00.000Z',
+    );
+  });
+
   it('takes the first of the two when the clocks repeat an hour going back', () => {
     // US Eastern, 1 November 2026: 1:59 am is followed by 1:00 am again.
     expect(momentOf('2026-11-01', '01:30', EASTERN)?.toISOString()).toBe(
@@ -98,6 +108,7 @@ describe("Susan's local time", () => {
   it('writes dates, times and moments in words', () => {
     expect(formatDate('2026-11-20')).toBe('Friday, November 20, 2026');
     expect(formatDate('2026-11-20', 'short')).toBe('Fri, Nov 20, 2026');
+    expect(formatDate('2026-11-20', 'noYear')).toBe('Friday, November 20');
     expect(formatTime('14:30')).toBe('2:30 pm');
     expect(formatTime('00:05')).toBe('12:05 am');
     expect(formatTime('12:00')).toBe('12:00 pm');

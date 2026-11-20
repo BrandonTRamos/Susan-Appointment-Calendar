@@ -95,6 +95,18 @@ export function momentOf(date: string, time: string, zone: string): Date | null 
   return null;
 }
 
+/**
+ * The moment a date and time happen in a zone, reading a time the clocks skip as the same time an
+ * hour later, when they have landed. For times worked out by the calendar rather than typed by a
+ * person, which have to happen at some moment.
+ */
+export function momentOrSkipped(date: string, time: string, zone: string): Date {
+  const moment = momentOf(date, time, zone);
+  if (moment) return moment;
+  const later = localDateTime(new Date(asIfUtc(date, time) + 60 * MINUTE), 'UTC');
+  return momentOf(later.date, later.time, zone) ?? new Date(asIfUtc(date, time));
+}
+
 const weekdayAndDate = (style: 'long' | 'short') =>
   new Intl.DateTimeFormat('en-US', {
     timeZone: 'UTC',
@@ -103,10 +115,22 @@ const weekdayAndDate = (style: 'long' | 'short') =>
     day: 'numeric',
     year: 'numeric',
   });
-const DATE_FORMATS = { long: weekdayAndDate('long'), short: weekdayAndDate('short') };
+const DATE_FORMATS = {
+  long: weekdayAndDate('long'),
+  short: weekdayAndDate('short'),
+  noYear: new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC',
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  }),
+};
 
-/** A date in words: "Friday, November 20, 2026", or "Fri, Nov 20, 2026" when short. */
-export function formatDate(date: string, style: 'long' | 'short' = 'long'): string {
+/**
+ * A date in words: "Friday, November 20, 2026", "Fri, Nov 20, 2026" when short, or "Friday,
+ * November 20" with no year.
+ */
+export function formatDate(date: string, style: keyof typeof DATE_FORMATS = 'long'): string {
   return DATE_FORMATS[style].format(new Date(asIfUtc(date, '00:00')));
 }
 

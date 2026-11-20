@@ -4,9 +4,13 @@ import {
   createCalendarCore,
   createFixedClock,
   createMemoryStore,
+  remindersStillToSend,
+  reminderWords,
   upcomingAppointments,
   type Actor,
+  type Appointment,
   type NewAppointment,
+  type ReminderSetting,
 } from './index';
 
 const EASTERN = 'America/New_York';
@@ -537,5 +541,429 @@ describe('upcoming Appointments', () => {
       'Blood draw',
       'Eye exam',
     ]);
+  });
+});
+
+/** Each Reminder's shape, when it goes out and whether it is flagged, without its ID. */
+const plan = (appointment: Appointment) =>
+  appointment.reminders.map(({ id: _id, ...reminder }) => reminder);
+
+/** When each Reminder goes out. */
+const dueTimes = (appointment: Appointment) => appointment.reminders.map((r) => r.dueAt);
+
+const dayBeforeAtSix: ReminderSetting = { shape: 'daysBefore', days: 1, time: '18:00' };
+const twoHoursBefore: ReminderSetting = { shape: 'before', amount: 2, unit: 'hours' };
+const thursdayAtEight: ReminderSetting = { shape: 'at', date: '2026-11-19', time: '20:00' };
+
+describe('Reminders on an Appointment', () => {
+  it('a new one starts with one Reminder, the day before at 6:00 pm', async () => {
+    const { core } = calendar();
+    const added = await core.addAppointment(linda, checkUp);
+    expect(plan(added)).toEqual([
+      {
+        shape: 'daysBefore',
+        days: 1,
+        time: '18:00',
+        // Thursday 19 November, 6:00 pm in US Eastern.
+        dueAt: '2026-11-19T23:00:00.000Z',
+        needsReview: false,
+      },
+    ]);
+    expect(added.reminders[0].id).toMatch(/\w{8}-/);
+  });
+
+  it('the starting Reminder can be removed: an Appointment can have none', async () => {
+    const { core } = calendar();
+    const added = await core.addAppointment(linda, { ...checkUp, reminders: [] });
+    expect(added.reminders).toEqual([]);
+    const { id } = await core.addAppointment(linda, checkUp);
+    const changed = await core.changeAppointment(linda, id, { reminders: [] });
+    expect(changed.reminders).toEqual([]);
+  });
+
+  it('carries any number, in the order they go out', async () => {
+    const { core } = calendar();
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      reminders: [
+        twoHoursBefore,
+        dayBeforeAtSix,
+        thursdayAtEight,
+        { shape: 'before', amount: 30, unit: 'minutes' },
+      ],
+    });
+    expect(added.reminders.map((r) => r.shape)).toEqual(['daysBefore', 'at', 'before', 'before']);
+    expect(new Set(added.reminders.map((r) => r.id)).size).toBe(4);
+  });
+
+  it.each<[string, ReminderSetting, string]>([
+    [
+      '30 minutes before',
+      { shape: 'before', amount: 30, unit: 'minutes' },
+      '2026-11-20T18:30:00.000Z',
+    ],
+    ['2 hours before', twoHoursBefore, '2026-11-20T17:00:00.000Z'],
+    ['1 day before', { shape: 'before', amount: 1, unit: 'days' }, '2026-11-19T19:00:00.000Z'],
+    [
+      '3 days before at 9:00 am',
+      { shape: 'daysBefore', days: 3, time: '09:00' },
+      '2026-11-17T14:00:00.000Z',
+    ],
+    [
+      'the same day at 8:00 am',
+      { shape: 'daysBefore', days: 0, time: '08:00' },
+      '2026-11-20T13:00:00.000Z',
+    ],
+    ['on Thursday at 8:00 pm', thursdayAtEight, '2026-11-20T01:00:00.000Z'],
+  ])('works out when one goes out: %s', async (_name, reminder, dueAt) => {
+    const { core } = calendar();
+    // Friday 20 November at 2:00 pm, US Eastern.
+    const added = await core.addAppointment(linda, { ...checkUp, reminders: [reminder] });
+    expect(dueTimes(added)).toEqual([dueAt]);
+  });
+
+  it('measures a gap from the start time, not the pickup time', async () => {
+    const { core } = calendar();
+    const added = await core.addAppointment(linda, {
+      ...everyDetail,
+      pickupTime: '13:15',
+      reminders: [{ shape: 'before', amount: 1, unit: 'hours' }],
+    });
+    // 1:00 pm, an hour before the 2:00 pm start.
+    expect(dueTimes(added)).toEqual(['2026-11-20T18:00:00.000Z']);
+  });
+
+  it.each<[string, unknown]>([
+    ['a gap of nothing', { shape: 'before', amount: 0, unit: 'hours' }],
+    ['a gap in part-hours', { shape: 'before', amount: 1.5, unit: 'hours' }],
+    ['a gap in weeks', { shape: 'before', amount: 1, unit: 'weeks' }],
+    ['days before that are fewer than none', { shape: 'daysBefore', days: -1, time: '18:00' }],
+    ['a clock time that is not one', { shape: 'daysBefore', days: 1, time: '6 pm' }],
+    ['a date that is not one', { shape: 'at', date: '2026-11-31', time: '18:00' }],
+    ['a shape there is not', { shape: 'weekly', days: 1 }],
+    ['not a Reminder at all', 'the day before'],
+    ['an exact time after the start', { shape: 'at', date: '2027-03-15', time: '15:00' }],
+    ['a same-day time after the start', { shape: 'daysBefore', days: 0, time: '15:00' }],
+    ['an exact time the clocks skip', { shape: 'at', date: '2027-03-14', time: '02:30' }],
+  ])('refuses %s, saying which Reminder, and keeps nothing', async (_name, reminder) => {
+    const { core, store } = calendar();
+    const refusal = await refused(
+      core.addAppointment(linda, {
+        ...checkUp,
+        date: '2027-03-15',
+        reminders: [dayBeforeAtSix, reminder as ReminderSetting],
+      }),
+      'invalid',
+    );
+    expect(refusal.detail).toBe('reminders');
+    expect(refusal.message).toMatch(/^Reminder 2: /);
+    expect(store.appointments()).toEqual([]);
+  });
+
+  it('refuses a list of Reminders that is not one, or is very long', async () => {
+    const { core } = calendar();
+    const many = Array.from({ length: 21 }, (_, n) => ({
+      shape: 'before' as const,
+      amount: n + 1,
+      unit: 'hours' as const,
+    }));
+    await refused(core.addAppointment(linda, { ...checkUp, reminders: many }), 'invalid');
+    await refused(
+      core.addAppointment(linda, { ...checkUp, reminders: 'none' as unknown as [] }),
+      'invalid',
+    );
+  });
+
+  it('can be changed and removed one by one, keeping the rest as they were', async () => {
+    const { core } = calendar();
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      reminders: [dayBeforeAtSix, twoHoursBefore, thursdayAtEight],
+    });
+    const [dayBefore, atEight, twoHours] = added.reminders;
+    const changed = await core.changeAppointment(mark, added.id, {
+      reminders: [
+        dayBefore,
+        { ...twoHours, amount: 3 } as ReminderSetting,
+        { shape: 'before', amount: 30, unit: 'minutes' },
+      ],
+    });
+    expect(changed.reminders).toHaveLength(3);
+    expect(changed.reminders[0]).toEqual(dayBefore);
+    expect(changed.reminders[1]).toMatchObject({ id: twoHours.id, amount: 3 });
+    expect(changed.reminders[1].dueAt).toBe('2026-11-20T16:00:00.000Z');
+    expect(changed.reminders.map((r) => r.id)).not.toContain(atEight.id);
+    expect(changed.lastChanged).toMatchObject({ personName: 'Mark' });
+  });
+
+  it('does nothing when the Reminders sent are the ones it has', async () => {
+    const { core, store } = calendar();
+    const added = await core.addAppointment(linda, checkUp);
+    expect(await core.changeAppointment(mark, added.id, { reminders: added.reminders })).toEqual(
+      added,
+    );
+    expect(store.activity()).toHaveLength(1);
+  });
+
+  it('an add that arrives twice with its Reminders is carried out once', async () => {
+    const { core, store } = calendar();
+    const id = '3f0c8a52-9d1e-4b7a-8c11-5e2f6a7b8c9d';
+    const details = { ...checkUp, reminders: [dayBeforeAtSix, twoHoursBefore] };
+    const first = await core.addAppointment(linda, details, id);
+    expect(await core.addAppointment(linda, details, id)).toEqual(first);
+    await refused(core.addAppointment(linda, { ...details, reminders: [] }, id), 'invalid');
+    expect(store.appointments()).toEqual([first]);
+  });
+});
+
+describe('when an Appointment moves', () => {
+  async function moving() {
+    const setup = calendar();
+    const added = await setup.core.addAppointment(linda, {
+      ...checkUp,
+      reminders: [dayBeforeAtSix, twoHoursBefore, thursdayAtEight],
+    });
+    return { ...setup, added };
+  }
+
+  it('its gap and day-before Reminders follow it to the new time', async () => {
+    const { core, added } = await moving();
+    const moved = await core.changeAppointment(mark, added.id, {
+      date: '2026-11-24',
+      time: '10:00',
+    });
+    const [dayBefore, twoHours] = moved.reminders.filter((r) => r.shape !== 'at');
+    // Monday 23 November at 6:00 pm, and Tuesday 24 November at 8:00 am.
+    expect(dayBefore.dueAt).toBe('2026-11-23T23:00:00.000Z');
+    expect(twoHours.dueAt).toBe('2026-11-24T13:00:00.000Z');
+    expect(dayBefore.needsReview).toBe(false);
+    expect(twoHours.needsReview).toBe(false);
+  });
+
+  it('an exact-time Reminder keeps its time and is flagged for review', async () => {
+    const { core, added } = await moving();
+    const moved = await core.changeAppointment(mark, added.id, { time: '10:00' });
+    expect(moved.reminders.find((r) => r.shape === 'at')).toMatchObject({
+      date: '2026-11-19',
+      time: '20:00',
+      dueAt: '2026-11-20T01:00:00.000Z',
+      needsReview: true,
+    });
+  });
+
+  it('a flagged Reminder stays flagged until someone confirms it or changes it', async () => {
+    const { core, added } = await moving();
+    const moved = await core.changeAppointment(mark, added.id, { time: '10:00' });
+    const later = await core.changeAppointment(mark, added.id, { what: 'Heart check-up' });
+    expect(later.reminders.find((r) => r.shape === 'at')?.needsReview).toBe(true);
+    // Sent back as it is, it is still flagged: nobody has looked at it.
+    const resent = await core.changeAppointment(mark, added.id, { reminders: later.reminders });
+    expect(resent.reminders.find((r) => r.shape === 'at')?.needsReview).toBe(true);
+
+    const confirmed = await core.changeAppointment(linda, added.id, {
+      reminders: moved.reminders.map((r) => (r.shape === 'at' ? { ...r, reviewed: true } : r)),
+    });
+    expect(confirmed.reminders.find((r) => r.shape === 'at')).toMatchObject({
+      dueAt: '2026-11-20T01:00:00.000Z',
+      needsReview: false,
+    });
+
+    const again = await core.changeAppointment(mark, added.id, { time: '14:00' });
+    const reset = await core.changeAppointment(linda, added.id, {
+      reminders: again.reminders.map((r) => (r.shape === 'at' ? { ...r, time: '19:00' } : r)),
+    });
+    expect(reset.reminders.find((r) => r.shape === 'at')).toMatchObject({
+      dueAt: '2026-11-20T00:00:00.000Z',
+      needsReview: false,
+    });
+  });
+
+  it('a flagged Reminder now after the start is kept, not refused, until someone sees to it', async () => {
+    const { core, added } = await moving();
+    const moved = await core.changeAppointment(mark, added.id, {
+      date: '2026-11-19',
+      time: '17:00',
+    });
+    expect(moved.reminders.find((r) => r.shape === 'at')?.needsReview).toBe(true);
+    // Confirming it as it is would leave a Reminder after the start.
+    await refused(
+      core.changeAppointment(linda, added.id, {
+        reminders: moved.reminders.map((r) => (r.shape === 'at' ? { ...r, reviewed: true } : r)),
+      }),
+      'invalid',
+    );
+  });
+
+  it('a change to the pickup time or any other detail moves no Reminder and flags none', async () => {
+    const { core, added } = await moving();
+    const changed = await core.changeAppointment(mark, added.id, {
+      pickupTime: '12:00',
+      placeName: 'Heart Clinic',
+    });
+    expect(changed.reminders).toEqual(added.reminders);
+  });
+
+  it('a Reminder added in the same change as the move is not flagged', async () => {
+    const { core, added } = await moving();
+    const moved = await core.changeAppointment(mark, added.id, {
+      time: '16:00',
+      reminders: [{ shape: 'at', date: '2026-11-20', time: '09:00' }],
+    });
+    expect(plan(moved)).toEqual([
+      {
+        shape: 'at',
+        date: '2026-11-20',
+        time: '09:00',
+        dueAt: '2026-11-20T14:00:00.000Z',
+        needsReview: false,
+      },
+    ]);
+  });
+});
+
+describe('Reminders across a clock change', () => {
+  // US Eastern clocks go back on Sunday 7 November 2027 and forward on Sunday 14 March 2027.
+  it('a day before means the same clock time the day before, not 24 hours', async () => {
+    const { core } = calendar();
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      date: '2027-11-07',
+      reminders: [
+        { shape: 'before', amount: 1, unit: 'days' },
+        { shape: 'before', amount: 24, unit: 'hours' },
+        dayBeforeAtSix,
+      ],
+    });
+    // Sunday at 2:00 pm EST is 19:00 UTC. A day before is Saturday at 2:00 pm EDT; 24 hours before
+    // is Saturday at 3:00 pm EDT, because that Sunday is an hour longer.
+    expect(dueTimes(added)).toEqual([
+      '2027-11-06T18:00:00.000Z',
+      '2027-11-06T19:00:00.000Z',
+      '2027-11-06T22:00:00.000Z',
+    ]);
+  });
+
+  it('a Reminder at a time the clocks skip goes out when they land, an hour later', async () => {
+    const { core } = calendar();
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      date: '2027-03-15',
+      time: '09:00',
+      reminders: [{ shape: 'daysBefore', days: 1, time: '02:30' }],
+    });
+    // 3:30 am EDT on Sunday 14 March.
+    expect(dueTimes(added)).toEqual(['2027-03-14T07:30:00.000Z']);
+  });
+
+  it('follows an Appointment that moves across the change', async () => {
+    const { core } = calendar();
+    const added = await core.addAppointment(linda, { ...checkUp, date: '2027-03-12' });
+    // Thursday 11 March, 6:00 pm EST.
+    expect(dueTimes(added)).toEqual(['2027-03-11T23:00:00.000Z']);
+    const moved = await core.changeAppointment(mark, added.id, { date: '2027-03-16' });
+    // Monday 15 March, 6:00 pm EDT.
+    expect(dueTimes(moved)).toEqual(['2027-03-15T22:00:00.000Z']);
+  });
+});
+
+describe('Reminders still to be sent', () => {
+  it('are those whose time has not yet come, on an Appointment that is not cancelled', async () => {
+    const { core } = calendar();
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      // Wednesday at 6:00 pm has passed; Thursday at 8:00 pm and two hours before have not.
+      reminders: [{ shape: 'daysBefore', days: 2, time: '18:00' }, thursdayAtEight, twoHoursBefore],
+    });
+    const now = new Date('2026-11-19T20:00:00.000Z');
+    expect(remindersStillToSend(added, now).map((r) => r.dueAt)).toEqual([
+      '2026-11-20T01:00:00.000Z',
+      '2026-11-20T17:00:00.000Z',
+    ]);
+    const cancelled = await core.cancelAppointment(linda, added.id);
+    expect(remindersStillToSend(cancelled, now)).toEqual([]);
+  });
+});
+
+describe("a Reminder's words", () => {
+  /** What Susan would read in each Reminder on an Appointment with these details. */
+  async function words(details: NewAppointment) {
+    const { core } = calendar();
+    const added = await core.addAppointment(linda, details);
+    return added.reminders.map((reminder) => reminderWords(added, reminder, EASTERN));
+  }
+
+  it('say what, who with, the day and time, where, the Driver and pickup, then the Note', async () => {
+    expect(await words(everyDetail)).toEqual([
+      "Susan's Calendar: Cardiology check-up with Dr. Patel, tomorrow at 2:00 pm, at Heart Clinic, 400 Main St. Linda picks you up at 1:15 pm. Bring your list of medicines.",
+    ]);
+  });
+
+  it('never include the Private notes', async () => {
+    const [text] = await words(everyDetail);
+    expect(text).not.toMatch(/prescription/);
+  });
+
+  it('leave out each detail the Appointment does not have', async () => {
+    expect(await words(checkUp)).toEqual([
+      "Susan's Calendar: Cardiology check-up, tomorrow at 2:00 pm.",
+    ]);
+    expect(await words({ ...checkUp, placeName: 'Heart Clinic' })).toEqual([
+      "Susan's Calendar: Cardiology check-up, tomorrow at 2:00 pm, at Heart Clinic.",
+    ]);
+    expect(await words({ ...checkUp, placeAddress: '400 Main St' })).toEqual([
+      "Susan's Calendar: Cardiology check-up, tomorrow at 2:00 pm, at 400 Main St.",
+    ]);
+    expect(await words({ ...checkUp, driverName: 'Linda' })).toEqual([
+      "Susan's Calendar: Cardiology check-up, tomorrow at 2:00 pm. Linda is driving you.",
+    ]);
+    expect(await words({ ...checkUp, pickupTime: '13:15' })).toEqual([
+      "Susan's Calendar: Cardiology check-up, tomorrow at 2:00 pm. Pickup is at 1:15 pm.",
+    ]);
+    expect(await words({ ...checkUp, noteForSusan: "Don't eat after midnight" })).toEqual([
+      "Susan's Calendar: Cardiology check-up, tomorrow at 2:00 pm. Don't eat after midnight.",
+    ]);
+  });
+
+  it('give the day as it is when the Reminder goes out: today, tomorrow, or the weekday and date', async () => {
+    expect(
+      await words({
+        ...checkUp,
+        reminders: [
+          { shape: 'before', amount: 2, unit: 'hours' },
+          // 11:00 pm Thursday in US Eastern, though it is already Friday in UTC.
+          { shape: 'at', date: '2026-11-19', time: '23:00' },
+          { shape: 'before', amount: 3, unit: 'days' },
+        ],
+      }),
+    ).toEqual([
+      "Susan's Calendar: Cardiology check-up, Friday, November 20 at 2:00 pm.",
+      "Susan's Calendar: Cardiology check-up, tomorrow at 2:00 pm.",
+      "Susan's Calendar: Cardiology check-up, today at 2:00 pm.",
+    ]);
+  });
+
+  it('follow the Appointment when its details change', async () => {
+    const { core } = calendar();
+    const added = await core.addAppointment(linda, checkUp);
+    const changed = await core.changeAppointment(mark, added.id, {
+      time: '15:30',
+      placeName: 'Vision Center',
+    });
+    expect(reminderWords(changed, changed.reminders[0], EASTERN)).toBe(
+      "Susan's Calendar: Cardiology check-up, tomorrow at 3:30 pm, at Vision Center.",
+    );
+  });
+
+  it('keep to the basic text-message characters where they can', async () => {
+    const [text] = await words({
+      ...checkUp,
+      what: 'Check-up — “annual”',
+      withWhom: 'Dr. O’Brien and Zoë',
+      placeName: 'Café Clinic…',
+      noteForSusan: 'Bring the ‘blue’ folder\u00a0– and £5.',
+    });
+    expect(text).toBe(
+      "Susan's Calendar: Check-up - \"annual\" with Dr. O'Brien and Zoe, tomorrow at 2:00 pm, at Café Clinic... Bring the 'blue' folder - and £5.",
+    );
   });
 });
