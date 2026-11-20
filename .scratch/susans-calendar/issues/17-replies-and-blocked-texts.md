@@ -10,7 +10,7 @@
 
 **Status:** ready-for-agent
 
-**Held for the owner:** everything but the real-phone STOP and HELP check is built on `ticket/17-replies-and-blocked-texts`. That check is the owner's, on the owner's own phone, with the steps in `docs/text-message-setup.md`, "Checking STOP and HELP"; its findings go in the spec's "Further Notes", and a refusal it finds goes in `TEXTBELT_OPTED_OUT_ERRORS`. This ticket is done once that is recorded.
+**Held for the owner:** everything but the real-phone STOP and HELP check is built on `ticket/17-replies-and-blocked-texts`. That check is the owner's, with the owner's own number on a personal sandbox from this branch, before the pull request is opened, following `docs/text-message-setup.md`, "Checking STOP and HELP". Only sanitized result shapes go into the project: no key, phone number, `textId`, balance or words of any text. Its findings go in the spec's "Further Notes", and a refusal it finds goes in `TEXTBELT_OPTED_OUT_ERRORS`. Until then the Textbelt sender recognises no refusal as an opt-out (only synthetic checks cover that path). This ticket is done once that is recorded.
 
 - [x] Every text the app sends names the app's reply address, so that her Replies come back to it.
 - [x] Texts from Susan arrive at that public endpoint, which checks Textbelt's signature, rejects a call whose timestamp is more than 15 minutes old, and rejects anything else.

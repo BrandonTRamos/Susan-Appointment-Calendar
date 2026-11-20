@@ -78,7 +78,12 @@ export interface Store {
   changeCalendarAlert(next: CalendarAlert, current: CalendarAlert): Promise<boolean>;
   /** When the newest Reply the person has seen arrived, or null when they have seen none. */
   repliesSeen(personId: string): Promise<string | null>;
-  keepRepliesSeen(personId: string, upTo: string): Promise<void>;
+  /**
+   * Moves the person's mark on to `upTo`, only if it is later than the mark as it is when written:
+   * in one step, so that two devices marking at once, or a first mark made twice, never take it
+   * back.
+   */
+  advanceRepliesSeen(personId: string, upTo: string): Promise<void>;
 }
 
 /** What time it is. */

@@ -119,7 +119,7 @@ export function feedStore(reader: TableReader, tables: FeedTables): Store {
     changeReply: async () => readOnly(),
     claimCalendarAlert: async () => readOnly(),
     changeCalendarAlert: async () => readOnly(),
-    keepRepliesSeen: async () => readOnly(),
+    advanceRepliesSeen: async () => readOnly(),
   };
 }
 

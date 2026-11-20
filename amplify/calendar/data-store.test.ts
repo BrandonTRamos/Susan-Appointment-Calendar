@@ -25,6 +25,15 @@ function dataApi() {
     CalendarAlert: new Map<string, Row>(),
   };
   const seen = new Map<string, Row>();
+  const conditionFailed = () => ({
+    data: null,
+    errors: [
+      {
+        errorType: 'DynamoDB:ConditionalCheckFailedException',
+        message: 'The conditional request failed (Service: DynamoDb, Status Code: 400)',
+      },
+    ],
+  });
   let failure: string | null = null;
   const answer = <T>(data: T) =>
     failure ? { data: null, errors: [{ message: failure }] } : { data };
@@ -121,13 +130,11 @@ function dataApi() {
         async get({ personId }: { personId: string }) {
           return answer(seen.get(personId) ?? null);
         },
+        // As the data API's own create does: only if the person has no mark yet, in one step.
         async create(input: Row) {
+          if (seen.has(input.personId as string)) return conditionFailed();
           seen.set(input.personId as string, input);
           return answer(input);
-        },
-        async update(input: Row) {
-          seen.set(input.personId as string, { ...seen.get(input.personId as string), ...input });
-          return answer(seen.get(input.personId as string));
         },
       },
     },
@@ -135,6 +142,16 @@ function dataApi() {
     // every `eq` in the condition must hold of the row as it is when written. The client throws
     // an answer that has errors.
     async graphql({ query, variables }: { query: string; variables: Record<string, unknown> }) {
+      // A person's mark of the Replies seen: moved on only while the kept one is earlier.
+      if (query.includes('updateRepliesSeen(input: $input, condition: $condition)')) {
+        const input = variables.input as Row;
+        const { and } = variables.condition as { and: Record<string, { lt: string }>[] };
+        const row = seen.get(input.personId as string);
+        if (!row || !and.every((each) => (row.seenUpTo as string) < each.seenUpTo.lt))
+          throw conditionFailed();
+        seen.set(input.personId as string, { ...row, ...input });
+        return { data: { updateRepliesSeen: { personId: input.personId } } };
+      }
       const model =
         /update(Text|Reply|CalendarAlert)\(input: \$input, condition: \$condition\)/.exec(
           query,
@@ -329,6 +346,7 @@ describe('the calendar kept in the data API', () => {
       triedAt: '2026-11-19T20:00:00.000Z',
       sentAt: null,
       reference: null,
+      replyId: null,
       creditLeft: null,
       alert: null,
     };
@@ -400,8 +418,14 @@ describe('the calendar kept in the data API', () => {
   it('keeps each Reply once, and answers or passes it on only while it is as it was read', async () => {
     const { api, store, core } = calendar();
     await core.changeSettings(linda, { susansNumber: '555 555 0123' });
-    const reply = await core.receiveReply({ key: 'abc', words: 'On my way', from: '+15555550123' });
-    expect(await core.receiveReply({ key: 'abc', words: 'On my way', from: null })).toEqual(reply);
+    const reply = (await core.receiveReply({
+      key: 'abc',
+      words: 'On my way',
+      from: '+15555550123',
+    }))!;
+    expect(
+      await core.receiveReply({ key: 'abc', words: 'On my way', from: '+15555550123' }),
+    ).toEqual(reply);
     expect(await store.everyReply()).toEqual([reply]);
     const answered = { ...reply, answer: 'sent' as const };
     expect(await store.changeReply(answered, reply)).toBe(true);
@@ -423,7 +447,7 @@ describe('the calendar kept in the data API', () => {
     expect(api.replies()[0]).toMatchObject({
       id: 'reply:abc',
       words: 'On my way',
-      fromSusan: true,
+      numberRevision: 1,
       answer: 'sent',
       passOn: 'sending',
       passOnTries: 1,
@@ -463,6 +487,21 @@ describe('the calendar kept in the data API', () => {
     expect(await store.repliesSeen('person-mark')).toBeNull();
   });
 
+  it("never takes a person's mark back, whichever of two devices writes first", async () => {
+    const { store } = calendar();
+    // Two devices make the person's first mark at once: the later one wins, in either order.
+    await Promise.all([
+      store.advanceRepliesSeen('person-linda', '2026-11-19T20:05:00.000Z'),
+      store.advanceRepliesSeen('person-linda', '2026-11-19T20:01:00.000Z'),
+    ]);
+    expect(await store.repliesSeen('person-linda')).toBe('2026-11-19T20:05:00.000Z');
+    // A device that read an older mark, and marks less than is kept now, changes nothing.
+    await store.advanceRepliesSeen('person-linda', '2026-11-19T20:03:00.000Z');
+    expect(await store.repliesSeen('person-linda')).toBe('2026-11-19T20:05:00.000Z');
+    await store.advanceRepliesSeen('person-linda', '2026-11-19T20:09:00.000Z');
+    expect(await store.repliesSeen('person-linda')).toBe('2026-11-19T20:09:00.000Z');
+  });
+
   it('reads a text kept before Alerts as having none', async () => {
     const { api, store, core } = calendar();
     await core.changeSettings(linda, { susansNumber: '555 555 0123' });
@@ -488,6 +527,7 @@ describe('the calendar kept in the data API', () => {
       triedAt: reminder.dueAt,
       sentAt: reminder.dueAt,
       reference: null,
+      replyId: null,
       creditLeft: 12,
       alert: null,
     };
@@ -502,11 +542,13 @@ describe('the calendar kept in the data API', () => {
       susansNumber: null,
       contactName: null,
       contactPhone: null,
+      numberRevision: 0,
       lastChanged: null,
     });
     await core.changeSettings(linda, { susansNumber: '555 555 0123' });
     const changed = await core.changeSettings(linda, { contactName: 'Linda' });
     expect(await store.settings()).toEqual(changed);
+    expect(changed.numberRevision).toBe(1);
   });
 
   it('fails the command when the data API reports an error', async () => {

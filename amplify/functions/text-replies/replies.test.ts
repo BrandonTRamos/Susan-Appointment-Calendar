@@ -48,8 +48,17 @@ function request({
   signWith = KEY,
   method = 'POST',
   base64 = false,
-}: { text?: string; at?: string; signWith?: string; method?: string; base64?: boolean } = {}) {
-  const body = JSON.stringify({ textId: '12345', fromNumber: SUSANS_NUMBER, text });
+  payload,
+}: {
+  text?: string;
+  at?: string;
+  signWith?: string;
+  method?: string;
+  base64?: boolean;
+  /** The JSON body in place of a Reply from Susan's number. */
+  payload?: Record<string, unknown>;
+} = {}) {
+  const body = JSON.stringify(payload ?? { textId: '12345', fromNumber: SUSANS_NUMBER, text });
   const timestamp = String(Math.floor(Date.parse(at) / 1000));
   const signature = createHmac('sha256', signWith)
     .update(timestamp + body)
@@ -80,7 +89,7 @@ describe('the reply address', () => {
     const { handler, store, core, messenger, sender } = await replyAddress();
     const answer = await handler(request());
     expect(answer.statusCode).toBe(200);
-    expect(store.replies()).toMatchObject([{ words: WORDS, fromSusan: true, receivedAt: NOW }]);
+    expect(store.replies()).toMatchObject([{ words: WORDS, numberRevision: 1, receivedAt: NOW }]);
     await core.runDue();
     expect(
       messenger
@@ -129,6 +138,65 @@ describe('the reply address', () => {
     expect(answer.statusCode).toBe(401);
     expect(store.replies()).toEqual([]);
     expect(logged()).toBe('Reply refused (stale)');
+  });
+
+  it('rejects a signed request missing the text it answers, a readable sender or the words', async () => {
+    const logged = logs();
+    const { handler, store, core, messenger, sender } = await replyAddress();
+    for (const payload of [
+      { fromNumber: SUSANS_NUMBER, text: WORDS },
+      { textId: '', fromNumber: SUSANS_NUMBER, text: WORDS },
+      { textId: { id: 1 }, fromNumber: SUSANS_NUMBER, text: WORDS },
+      { textId: '12345', text: WORDS },
+      { textId: '12345', fromNumber: 'not a number', text: WORDS },
+      { textId: '12345', fromNumber: '+442079460958', text: WORDS },
+      { textId: '12345', fromNumber: SUSANS_NUMBER },
+      { textId: '12345', fromNumber: SUSANS_NUMBER, text: 7 },
+    ]) {
+      const answer = await handler(request({ payload }));
+      expect(answer.statusCode).toBe(400);
+      expect(answer.body).toBe('Not accepted.\n');
+    }
+    await core.runDue();
+    expect(store.replies()).toEqual([]);
+    expect(messenger.emails()).toEqual([]);
+    expect(sender.taken()).toEqual([]);
+    expect(logged()).not.toMatch(/not well|5555550123|2079460958/);
+  });
+
+  it("takes Susan's number however Textbelt writes it, and a numeric textId", async () => {
+    const { handler, store } = await replyAddress();
+    const payload = { textId: 12345, fromNumber: '5555550123', text: WORDS };
+    expect((await handler(request({ payload }))).statusCode).toBe(200);
+    expect(store.replies()).toHaveLength(1);
+  });
+
+  it('keeps, passes on and answers nothing from another number, and says so to nobody', async () => {
+    const logged = logs();
+    const { handler, store, core, messenger, sender } = await replyAddress();
+    const payload = { textId: '12345', fromNumber: '+15555550199', text: WORDS };
+    const answer = await handler(request({ payload }));
+    // Answered as a Reply that was kept: the answer tells nothing about which numbers are texted.
+    expect(answer).toEqual(await handler(request()));
+    await core.runDue();
+    expect(store.replies()).toHaveLength(1);
+    expect(
+      messenger
+        .emails()
+        .map(({ email }) => email.body)
+        .join(),
+    ).not.toContain('0199');
+    expect(sender.taken()).toHaveLength(1);
+    expect(logged()).toBe('Reply ignored (not from the number in Settings)');
+  });
+
+  it("keeps nothing while Susan's number is not set", async () => {
+    const logs_ = logs();
+    const { handler, store, core } = await replyAddress();
+    await core.changeSettings(linda, { susansNumber: null });
+    expect((await handler(request())).statusCode).toBe(200);
+    expect(store.replies()).toEqual([]);
+    expect(logs_()).toBe('Reply ignored (not from the number in Settings)');
   });
 
   it('rejects anything that is not a signed POST', async () => {

@@ -67,6 +67,7 @@ export async function sentReminder(calendar: SampleCalendar, appointment: Appoin
     triedAt: reminder.dueAt,
     sentAt: reminder.dueAt,
     reference: null,
+    replyId: null,
     creditLeft: null,
     alert: null,
   };

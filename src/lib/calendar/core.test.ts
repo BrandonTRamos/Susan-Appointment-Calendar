@@ -1784,6 +1784,7 @@ describe('sending texts on schedule', () => {
         sentAt: '2026-11-19T23:00:30.000Z',
         // The stand-in names no text: nobody can be asked what became of it.
         reference: null,
+        replyId: null,
         creditLeft: null,
         alert: null,
       },
@@ -1916,6 +1917,7 @@ describe('sending texts on schedule', () => {
       triedAt: reminder.dueAt,
       sentAt: null,
       reference: null,
+      replyId: null,
       creditLeft: null,
       alert: null,
     });
@@ -2541,6 +2543,7 @@ describe('the settings for texts', () => {
       susansNumber: SUSANS_NUMBER,
       contactName: 'Linda',
       contactPhone: '+15555550187',
+      numberRevision: 1,
       lastChanged: {
         personId: 'person-mark',
         personName: 'Mark',
@@ -2549,6 +2552,18 @@ describe('the settings for texts', () => {
       },
     });
     expect(await store.settings()).toEqual(changed);
+  });
+
+  it("move the number's revision on with each change of her number, and with nothing else", async () => {
+    const { core } = calendar();
+    const revision = async (changes: Parameters<typeof core.changeSettings>[1]) =>
+      (await core.changeSettings(linda, changes)).numberRevision;
+    expect(await revision({ susansNumber: SUSANS_NUMBER })).toBe(1);
+    expect(await revision({ contactName: 'Linda', contactPhone: '5555550187' })).toBe(1);
+    expect(await revision({ susansNumber: '(555) 555-0123' })).toBe(1);
+    expect(await revision({ susansNumber: '5555550142' })).toBe(2);
+    expect(await revision({ susansNumber: null })).toBe(3);
+    expect(await revision({ susansNumber: SUSANS_NUMBER })).toBe(4);
   });
 
   it('change only what is given, and clear what is sent empty', async () => {
@@ -2820,6 +2835,7 @@ describe('Alerts', () => {
       triedAt: '2026-11-19T23:00:00.000Z',
       sentAt: '2026-11-19T23:00:00.000Z',
       reference: 'stand-in-9',
+      replyId: null,
       creditLeft: null,
       alert: null,
     };
@@ -2887,6 +2903,7 @@ describe('Alerts', () => {
       triedAt: reminder.dueAt,
       sentAt: null,
       reference: null,
+      replyId: null,
       creditLeft: null,
       alert: null,
     });
@@ -3147,6 +3164,7 @@ describe('the trouble with texts to Susan', () => {
     triedAt,
     sentAt: triedAt,
     reference: null,
+    replyId: null,
     creditLeft: null,
     alert: null,
     ...settled,
@@ -3581,6 +3599,8 @@ describe('web addresses', () => {
       noteForSusan: 'Check in at example.de',
     });
     const [reminder] = added.reminders;
+    // An automatic answer answers a Reply, which it is tried again only while it answers.
+    const reply = (await core.receiveReply({ key: null, words: 'Hello', from: SUSANS_NUMBER }))!;
     const fixtures: Record<TextKind, { id: string; reminderId: string | null; words: string }> = {
       reminder: {
         id: `reminder:${added.id}:${reminder.id}:${reminder.dueAt}`,
@@ -3593,7 +3613,7 @@ describe('web addresses', () => {
         words: "Susan's Calendar: Change: see https://example.com/new-time",
       },
       automaticAnswer: {
-        id: `automaticAnswer:${added.id}`,
+        id: 'automaticAnswer:1',
         reminderId: null,
         words: "Susan's Calendar: Nobody reads replies here. Email front-desk@example.xyz",
       },
@@ -3608,8 +3628,9 @@ describe('web addresses', () => {
       await store.claimText({
         id,
         kind,
-        appointmentId: kind === 'test' ? null : added.id,
+        appointmentId: kind === 'test' || kind === 'automaticAnswer' ? null : added.id,
         reminderId,
+        replyId: kind === 'automaticAnswer' ? reply.id : null,
         words,
         dueAt: reminder.dueAt,
         status: 'waiting',
@@ -3887,14 +3908,15 @@ describe('Replies', () => {
     const before = store.appointments();
     const activity = store.activity();
     clock.set('2026-11-19T20:02:00.000Z');
-    const reply = await core.receiveReply(fromSusan("I can't go, I'm not well", 'abc123'));
+    const reply = (await core.receiveReply(fromSusan("I can't go, I'm not well", 'abc123')))!;
     expect(store.replies()).toEqual([reply]);
     expect(reply).toMatchObject({
       id: 'reply:abc123',
       words: "I can't go, I'm not well",
       receivedAt: '2026-11-19T20:02:00.000Z',
-      fromSusan: true,
+      numberRevision: 1,
       answer: 'due',
+      answerTextId: null,
     });
     expect(store.appointments()).toEqual(before);
     expect(store.activity()).toEqual(activity);
@@ -4026,8 +4048,8 @@ describe('Replies', () => {
 
   it('are kept, passed on and answered once when the same Reply arrives twice', async () => {
     const cal = await withReplies();
-    const first = await cal.core.receiveReply(fromSusan('Running late', 'same'));
-    const again = await cal.core.receiveReply(fromSusan('Running late', 'same'));
+    const first = (await cal.core.receiveReply(fromSusan('Running late', 'same')))!;
+    const again = (await cal.core.receiveReply(fromSusan('Running late', 'same')))!;
     expect(again).toEqual(first);
     after(cal, 1);
     await cal.core.runDue();
@@ -4036,31 +4058,159 @@ describe('Replies', () => {
     expect(passedOn(cal.messenger).email).toHaveLength(ADMINS.length);
   });
 
-  it("from a number that is not Susan's are passed on, but answered by no text", async () => {
+  it("from any number but Susan's, or while hers is not set, are kept, passed on and answered not at all", async () => {
     const cal = await withReplies();
-    const reply = await cal.core.receiveReply({
-      key: null,
-      words: 'Who is this?',
-      from: '+15555550199',
-    });
-    expect(reply).toMatchObject({ fromSusan: false, answer: 'notSusan' });
+    expect(
+      await cal.core.receiveReply({ key: null, words: 'Who is this?', from: '+15555550199' }),
+    ).toBeNull();
+    expect(await cal.core.receiveReply({ key: null, words: 'Hi', from: null })).toBeNull();
+    expect(await cal.core.receiveReply({ key: null, words: 'Hi', from: 'Susan' })).toBeNull();
+    await cal.core.changeSettings(linda, { susansNumber: null });
+    expect(await cal.core.receiveReply(fromSusan('Hello'))).toBeNull();
     after(cal, 1);
     await cal.core.runDue();
+    expect(cal.store.replies()).toEqual([]);
     expect(cal.sender.taken()).toEqual([]);
-    const [{ email }] = cal.messenger.emails();
-    expect(email.subject).toBe("Susan's Calendar: a text came back from another number");
-    expect(email.body).toContain('No automatic answer was sent: texts go only to Susan.');
-    // The number it came from is kept nowhere.
-    expect(JSON.stringify(cal.store.replies())).not.toContain('5550199');
+    expect(passedOn(cal.messenger)).toEqual({ email: [], app: [] });
   });
 
   it('are taken as from Susan however her number is written', async () => {
     const cal = await withReplies();
     for (const from of ['+1 (555) 555-0123', '5555550123', '15555550123'])
-      expect((await cal.core.receiveReply({ key: null, words: 'Hi', from })).fromSusan).toBe(true);
-    expect((await cal.core.receiveReply({ key: null, words: 'Hi', from: null })).fromSusan).toBe(
-      false,
+      expect(await cal.core.receiveReply({ key: null, words: 'Hi', from })).not.toBeNull();
+  });
+
+  it("are not answered once Susan's number has changed since they came, but are still passed on", async () => {
+    const cal = await withReplies();
+    await cal.core.receiveReply(fromSusan('Hello'));
+    await cal.core.changeSettings(linda, { susansNumber: '+15555550142' });
+    after(cal, 1);
+    await cal.core.runDue();
+    expect(cal.sender.taken()).toEqual([]);
+    expect(cal.store.replies()[0]).toMatchObject({ answer: 'numberChanged', answerTextId: null });
+    expect(passedOn(cal.messenger).email[0][1]).toContain(
+      "She was not sent the automatic answer: Susan's mobile number was changed in Settings after it came.",
     );
+    // Changing it back is a change too: the Reply came under the first, not this one.
+    await cal.core.receiveReply(fromSusan('Again'));
+    await cal.core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    after(cal, 1);
+    await cal.core.runDue();
+    expect(cal.sender.taken()).toEqual([]);
+  });
+
+  it('are still answered when only the contact changed since they came, naming the new one', async () => {
+    const cal = await withReplies();
+    await cal.core.receiveReply(fromSusan('Hello'));
+    await cal.core.changeSettings(linda, { contactName: 'Mark', contactPhone: '5555550166' });
+    after(cal, 1);
+    await cal.core.runDue();
+    expect(cal.sender.taken()).toEqual([
+      {
+        to: SUSANS_NUMBER,
+        words:
+          "Susan's Calendar: Texts to this number are not answered. If you need anything, please call Mark at (555) 555-0166.",
+      },
+    ]);
+  });
+
+  it("send an answer that is tried again only while Susan's number is the one its Reply came from", async () => {
+    const cal = await withReplies();
+    await cal.core.receiveReply(fromSusan('Hello'));
+    cal.sender.breakNext();
+    await cal.core.runDue();
+    const [waiting] = cal.store.texts();
+    expect(waiting).toMatchObject({ kind: 'automaticAnswer', status: 'waiting' });
+    await cal.core.changeSettings(linda, { susansNumber: '+15555550142' });
+    after(cal, 3);
+    await cal.core.runDue();
+    // Nothing goes to the number that replaced hers; the earlier try may have gone, so it failed.
+    expect(cal.sender.taken()).toEqual([]);
+    expect(cal.store.texts()[0]).toMatchObject({ status: 'failed', reason: 'numberChanged' });
+    const alert = cal.messenger.emails().find(({ email }) => email.subject.includes('alert'));
+    expect(alert?.email.subject).toBe("Susan's Calendar alert: an automatic answer failed");
+  });
+
+  it('send an answer tried again to the same number when it has not changed', async () => {
+    const cal = await withReplies();
+    await cal.core.receiveReply(fromSusan('Hello'));
+    cal.sender.breakNext();
+    await cal.core.runDue();
+    await cal.core.changeSettings(linda, { contactName: 'Mark' });
+    after(cal, 3);
+    await cal.core.runDue();
+    expect(cal.sender.taken().map((text) => text.to)).toEqual([SUSANS_NUMBER]);
+    expect(cal.store.texts()[0]).toMatchObject({ status: 'sent', attempts: 2 });
+  });
+
+  it('send one answer for a backlog of Replies taken up together, however far apart they came', async () => {
+    const cal = await withReplies();
+    // Two Replies two hours apart, and no run between them, as when the scheduled run was down.
+    await cal.core.receiveReply(fromSusan('Morning'));
+    after(cal, 120);
+    await cal.core.receiveReply(fromSusan('Afternoon'));
+    after(cal, 1);
+    await cal.core.runDue();
+    expect(cal.sender.taken()).toHaveLength(1);
+    expect(cal.store.replies().map((reply) => reply.answer)).toEqual(['sent', 'recent']);
+    // Both are passed on.
+    expect(passedOn(cal.messenger).email).toHaveLength(2 * ADMINS.length);
+  });
+
+  it('send one answer when two runs overlap, and pass each Reply on once', async () => {
+    const cal = await withReplies();
+    const other = createCalendarCore({
+      store: cal.store,
+      clock: cal.clock,
+      messenger: cal.messenger,
+      textSender: cal.sender,
+      timeZone: EASTERN,
+    });
+    await cal.core.receiveReply(fromSusan('One'));
+    after(cal, 90);
+    await cal.core.receiveReply(fromSusan('Two'));
+    after(cal, 1);
+    await Promise.all([cal.core.runDue(), other.runDue()]);
+    after(cal, 1);
+    await Promise.all([cal.core.runDue(), other.runDue()]);
+    expect(cal.sender.taken()).toHaveLength(1);
+    expect(cal.store.texts().map((text) => text.id)).toEqual(['automaticAnswer:1']);
+    expect(
+      cal.store
+        .replies()
+        .map((reply) => reply.answer)
+        .sort(),
+    ).toEqual(['recent', 'sent']);
+    expect(passedOn(cal.messenger).email).toHaveLength(2 * ADMINS.length);
+  });
+
+  it('take up an answer a run claimed and stopped before marking its Reply, without a second', async () => {
+    const cal = await withReplies();
+    const reply = (await cal.core.receiveReply(fromSusan('Hello')))!;
+    await cal.store.claimText({
+      id: 'automaticAnswer:1',
+      kind: 'automaticAnswer',
+      appointmentId: null,
+      reminderId: null,
+      replyId: reply.id,
+      words: ANSWER,
+      dueAt: cal.clock.now().toISOString(),
+      status: 'sent',
+      reason: null,
+      attempts: 1,
+      triedAt: cal.clock.now().toISOString(),
+      sentAt: cal.clock.now().toISOString(),
+      reference: null,
+      creditLeft: null,
+      alert: null,
+    });
+    after(cal, 1);
+    await cal.core.runDue();
+    expect(cal.sender.taken()).toEqual([]);
+    expect(cal.store.replies()[0]).toMatchObject({
+      answer: 'sent',
+      answerTextId: 'automaticAnswer:1',
+    });
   });
 
   it('without a contact in Settings, still say texts here are not answered', async () => {
@@ -4143,11 +4293,11 @@ describe('Replies', () => {
 
   it('keep what she wrote, without characters nobody can see, up to a limit', async () => {
     const cal = await withReplies();
-    const reply = await cal.core.receiveReply(fromSusan('  On my​ way\r\nsee you\u0007 '));
+    const reply = (await cal.core.receiveReply(fromSusan('  On my​ way\r\nsee you\u0007 ')))!;
     expect(reply.words).toBe('On my way\nsee you');
-    const long = await cal.core.receiveReply(fromSusan('a'.repeat(5000)));
+    const long = (await cal.core.receiveReply(fromSusan('a'.repeat(5000))))!;
     expect(long.words).toHaveLength(1600);
-    const odd = await cal.core.receiveReply({ key: null, words: 42, from: SUSANS_NUMBER });
+    const odd = (await cal.core.receiveReply({ key: null, words: 42, from: SUSANS_NUMBER }))!;
     expect(odd.words).toBe('');
   });
 
@@ -4167,7 +4317,7 @@ describe('Replies', () => {
     const cal = await withReplies();
     await cal.core.receiveReply(fromSusan('One'));
     after(cal, 1);
-    const second = await cal.core.receiveReply(fromSusan('Two'));
+    const second = (await cal.core.receiveReply(fromSusan('Two')))!;
     const replies = cal.store.replies();
     expect(repliesNotSeen(replies, await cal.store.repliesSeen(linda.person.id))).toBe(2);
     expect(await cal.core.seeReplies(linda, second.receivedAt)).toBe(second.receivedAt);
@@ -4381,6 +4531,7 @@ describe('the credit left for texts running low', () => {
       triedAt: sentAt,
       sentAt,
       reference: null,
+      replyId: null,
       creditLeft: credit,
       alert: null,
     });

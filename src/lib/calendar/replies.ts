@@ -8,12 +8,13 @@ import { troubleOf, type Alert } from './alerts';
 import { basicCharacters } from './reminders';
 import { formatPhone, type CalendarSettings, type MessageProgress, type Text } from './texts';
 
-export const REPLY_ANSWERS = ['due', 'sent', 'recent', 'notSusan'] as const;
+export const REPLY_ANSWERS = ['due', 'sent', 'recent', 'numberChanged'] as const;
 /**
  * What became of the automatic answer to a Reply. Due: the next scheduled run decides. Sent: the
- * automatic answer was sent for it (its text's record says how that went). Recent: none, because
- * she was sent one less than AUTOMATIC_ANSWER_GAP before. NotSusan: none, because it came from a
- * number that was not Susan's mobile number in Settings, and texts go to nobody else.
+ * automatic answer was sent for it (its text's record, `answerTextId`, says how that went). Recent:
+ * none, because one was sent less than AUTOMATIC_ANSWER_GAP before. NumberChanged: none, because
+ * Susan's mobile number in Settings changed after it came, so the number it came from is no longer
+ * the one texts go to.
  */
 export type ReplyAnswer = (typeof REPLY_ANSWERS)[number];
 
@@ -25,17 +26,24 @@ export interface Reply {
   words: string;
   /** When the calendar received it, as an ISO timestamp. */
   receivedAt: string;
-  /** Whether it came from Susan's mobile number as Settings had it then. */
-  fromSusan: boolean;
+  /**
+   * Which of Susan's numbers it came from, as the revision of her number in Settings when it came
+   * (CalendarSettings.numberRevision), never the number itself. The automatic answer goes only
+   * while her number is still that one.
+   */
+  numberRevision: number;
   answer: ReplyAnswer;
+  /** The record of the automatic answer sent for it, once one was. */
+  answerTextId: string | null;
   /** How far passing it on to every Admin has got. */
   passOn: MessageProgress;
 }
 
 /**
  * A Reply as the text sender's inbound side hands it over (amplify/calendar/textbelt.ts): its
- * words and the number it came from, unchecked. `key` is what identifies it, the same each time the
- * same Reply arrives; null when there is nothing to tell it by.
+ * words and the number it came from. `key` is what identifies it, the same each time the same
+ * Reply arrives; null when there is nothing to tell it by. Only one from Susan's number in Settings
+ * is kept.
  */
 export interface IncomingReply {
   key: string | null;
@@ -44,7 +52,8 @@ export interface IncomingReply {
 }
 
 /**
- * The automatic answer goes at most once in this long: a run of Replies does not produce a run of
+ * The automatic answer goes at most once in this long, measured from when the last one was claimed
+ * for sending: a run of Replies, or a backlog of them taken up together, does not produce a run of
  * answers.
  */
 export const AUTOMATIC_ANSWER_GAP = 60 * 60_000;
@@ -52,8 +61,18 @@ export const AUTOMATIC_ANSWER_GAP = 60 * 60_000;
 /** As much of a Reply as is kept: ten text messages' worth, far more than she will write. */
 export const REPLY_WORDS_LIMIT = 1600;
 
-/** The ID of the automatic answer to a Reply. */
-export const automaticAnswerId = (reply: Pick<Reply, 'id'>) => `automaticAnswer:${reply.id}`;
+/**
+ * The ID of the nth automatic answer ever sent. Each is claimed under the next number after the
+ * last one a run can see, so two runs that both see the same last answer claim the same ID, and
+ * only one of them can: the gap holds even for runs that overlap.
+ */
+export const automaticAnswerTextId = (n: number) => `automaticAnswer:${n}`;
+
+/** Which automatic answer an ID names, or null when it is not one. */
+export function automaticAnswerNumber(id: string): number | null {
+  const n = /^automaticAnswer:(\d+)$/.exec(id)?.[1];
+  return n === undefined ? null : Number(n);
+}
 
 /**
  * The automatic answer's words: replies are not answered, and who to call, from Settings. With no
@@ -109,14 +128,11 @@ export function replyPassedOn(
           }.`,
     due: 'She is being sent the automatic answer.',
     recent: 'She was not sent the automatic answer again: she had it less than an hour before.',
-    notSusan: 'No automatic answer was sent: texts go only to Susan.',
+    numberChanged:
+      "She was not sent the automatic answer: Susan's mobile number was changed in Settings after it came.",
   };
-  const subject = reply.fromSusan
-    ? "Susan's Calendar: Susan texted back"
-    : "Susan's Calendar: a text came back from another number";
-  const lead = reply.fromSusan
-    ? `Susan texted back to the calendar's number, ${when}:`
-    : `A text came back to the calendar's number, ${when}, from a number that is not Susan's mobile number in Settings:`;
+  const subject = "Susan's Calendar: Susan texted back";
+  const lead = `Susan texted back to the calendar's number, ${when}:`;
   const body =
     `${lead}\n\n${quoted(reply.words)}\n\n` +
     'The calendar does not act on what she writes: nothing was changed, cancelled or confirmed. ' +
@@ -129,7 +145,7 @@ export function replyPassedOn(
   return {
     email: { subject, body, opens: '/replies' },
     notification: {
-      title: reply.fromSusan ? 'Susan texted back' : 'A text came back from another number',
+      title: 'Susan texted back',
       body: quoted(short),
       opens: '/replies',
       // Each Reply stands on its own on a device: a later one does not take its place.

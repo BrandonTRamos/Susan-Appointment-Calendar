@@ -351,6 +351,36 @@ describe('Replies from Textbelt', () => {
     expect(readTextbeltReply(KEY, signed({ at: minutes(-15) }))).toHaveProperty('reply');
   });
 
+  it('reject a signed Reply missing its textId, a readable sender or its words', () => {
+    const reply = { textId: '12345', fromNumber: '+15555550123', text: 'On my way' };
+    for (const changed of [
+      { textId: undefined },
+      { textId: '' },
+      { textId: 'has spaces in it' },
+      { textId: -1 },
+      { textId: 1.5 },
+      { fromNumber: undefined },
+      { fromNumber: '' },
+      { fromNumber: 'Susan' },
+      { fromNumber: '+442079460958' },
+      { fromNumber: 5555550123 },
+      { text: undefined },
+      { text: ['On my way'] },
+    ]) {
+      const body = JSON.stringify({ ...reply, ...changed });
+      expect(readTextbeltReply(KEY, signed({ body }))).toEqual({ rejected: 'unreadable' });
+    }
+  });
+
+  it('hand over the sender as the calendar keeps numbers, however Textbelt writes it', () => {
+    for (const fromNumber of ['+15555550123', '5555550123', '15555550123', '+1 (555) 555-0123']) {
+      const body = JSON.stringify({ textId: 12345, fromNumber, text: 'On my way' });
+      expect(readTextbeltReply(KEY, signed({ body }))).toMatchObject({
+        reply: { from: '+15555550123' },
+      });
+    }
+  });
+
   it('reject a signed request that is not a Reply', () => {
     for (const body of ['not JSON', '[]', 'null', '{"textId":"1","fromNumber":"+15555550123"}'])
       expect(readTextbeltReply(KEY, signed({ body }))).toEqual({ rejected: 'unreadable' });

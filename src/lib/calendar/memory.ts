@@ -177,7 +177,9 @@ export function createMemoryStore(): MemoryStore {
     async repliesSeen(personId) {
       return seen.get(personId) ?? null;
     },
-    async keepRepliesSeen(personId, upTo) {
+    async advanceRepliesSeen(personId, upTo) {
+      const kept = seen.get(personId);
+      if (kept !== undefined && kept >= upTo) return;
       seen.set(personId, upTo);
       changed();
     },

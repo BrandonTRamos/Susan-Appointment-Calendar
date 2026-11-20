@@ -66,7 +66,10 @@ export function textRepliesHandler({ core, key, clock }: RepliesDependencies) {
       return REFUSED[read.rejected];
     }
     try {
-      await (await core()).receiveReply(read.reply);
+      // One from any number but Susan's in Settings is kept nowhere, and answered as any other, so
+      // the answer says nothing about which numbers the calendar texts.
+      const kept = await (await core()).receiveReply(read.reply);
+      if (!kept) console.warn('Reply ignored (not from the number in Settings)');
       return plain(200, 'Received.');
     } catch (error) {
       // Fixed words only: the error could quote her words or her number.

@@ -99,12 +99,27 @@ describe.each(['phone', 'desktop'] as const)('the Replies tab, at %s width', (wi
     await waitFor(() => expect(repliesTab()).toHaveAccessibleName('Replies, 1 not yet seen'));
   });
 
-  it("says when a Reply came from a number that is not Susan's", async () => {
+  it("says when a Reply was not answered because Susan's number changed after it came", async () => {
     const { calendar } = await sampleCalendar();
-    await calendar.core.receiveReply({ key: null, words: 'Who is this?', from: '+15555550199' });
+    await calendar.core.receiveReply({ key: null, words: 'Hello', from: SAMPLE_NUMBER });
+    await calendar.core.changeSettings(linda, { susansNumber: '5555550142' });
+    await calendar.core.runDue();
     renderApp('/replies', { calendar });
     expect(
-      await screen.findByText(/not Susan's mobile number in Settings, so no automatic answer/),
+      await screen.findByText(
+        "No automatic answer: Susan's mobile number was changed in Settings after it came.",
+      ),
     ).toBeInTheDocument();
+  });
+
+  it('shows invented Replies on sample data, counted until the tab is opened', async () => {
+    const calendar = createSampleCalendar(EASTERN);
+    renderApp('/', { calendar, sampleData: true });
+    await waitFor(() => expect(repliesTab()).toHaveAccessibleName('Replies, 2 not yet seen'));
+    await userEvent.click(repliesTab());
+    const list = await screen.findByRole('list', { name: 'Replies' });
+    expect(within(list).getByText('Running a little late, see you soon')).toBeInTheDocument();
+    expect(within(list).getByText('Thank you for the reminder')).toBeInTheDocument();
+    await waitFor(() => expect(repliesTab()).toHaveAccessibleName('Replies'));
   });
 });

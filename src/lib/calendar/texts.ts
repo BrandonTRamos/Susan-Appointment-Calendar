@@ -29,6 +29,7 @@ export const TEXT_REASONS = [
   'unconfirmed',
   'webAddress',
   'blocked',
+  'numberChanged',
 ] as const;
 /**
  * Why a text failed or was not sent. noNumber: Susan's mobile number is not set. tooLate: the
@@ -39,7 +40,8 @@ export const TEXT_REASONS = [
  * that it was delivered came within UNCONFIRMED_AFTER of its sending ("not confirmed delivered").
  * webAddress: its words held a web address, which no text may (holdsWebAddress). blocked: the
  * text sender refused it because texts to her number are blocked: she has opted out, as by replying
- * STOP, and only she can undo it.
+ * STOP, and only she can undo it. numberChanged: it was an automatic answer, and Susan's mobile
+ * number changed in Settings before it went, so it is not sent to the new one.
  */
 export type TextReason = (typeof TEXT_REASONS)[number];
 
@@ -52,6 +54,8 @@ export interface Text {
   appointmentId: string | null;
   /** The Reminder it is, for a Reminder. */
   reminderId: string | null;
+  /** The Reply it answers, for an automatic answer. */
+  replyId: string | null;
   /** Its exact words. */
   words: string;
   /** When it was due, as an ISO timestamp. */
@@ -119,6 +123,13 @@ export interface CalendarSettings {
   /** Who the automatic answer to a Reply tells her to call, and their number. */
   contactName: string | null;
   contactPhone: string | null;
+  /**
+   * How many times Susan's mobile number has been set, changed or cleared: it moves on with each
+   * change of the number, and with nothing else. A Reply keeps the revision it came in under, so an
+   * automatic answer never goes to a number that has replaced the one the Reply came from, without
+   * a second copy of any number being kept.
+   */
+  numberRevision: number;
   /** Null until someone changes them. */
   lastChanged: Stamp | null;
 }
@@ -127,6 +138,7 @@ export const NO_SETTINGS: CalendarSettings = {
   susansNumber: null,
   contactName: null,
   contactPhone: null,
+  numberRevision: 0,
   lastChanged: null,
 };
 

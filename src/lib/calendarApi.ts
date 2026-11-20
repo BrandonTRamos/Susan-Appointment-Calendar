@@ -99,6 +99,7 @@ export function toText(row: Kept<TextRow, Text> & Partial<Pick<TextRow, AlertCol
     kind: row.kind ?? 'reminder',
     appointmentId: row.appointmentId ?? null,
     reminderId: row.reminderId ?? null,
+    replyId: row.replyId ?? null,
     words: row.words,
     dueAt: row.dueAt,
     status: row.status ?? 'waiting',
@@ -144,6 +145,8 @@ export function toSettings(row: Kept<SettingsRow, CalendarSettings>): CalendarSe
     susansNumber: row.susansNumber ?? null,
     contactName: row.contactName ?? null,
     contactPhone: row.contactPhone ?? null,
+    // Settings kept before ticket 17 have none: their number is the first revision there was.
+    numberRevision: row.numberRevision ?? 0,
     lastChanged: row.lastChanged ? toStamp(row.lastChanged) : null,
   };
 }
@@ -178,8 +181,9 @@ export function toReply(row: Kept<ReplyRow, Reply> & Partial<ReplyRow>): Reply {
     id: row.id,
     words: row.words,
     receivedAt: row.receivedAt,
-    fromSusan: row.fromSusan,
+    numberRevision: row.numberRevision,
     answer: row.answer ?? 'due',
+    answerTextId: row.answerTextId ?? null,
     passOn:
       toProgress(
         row.passOn,

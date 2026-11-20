@@ -6,6 +6,7 @@ import {
   createMemoryMessenger,
   createMemoryStore,
   createStandInSender,
+  NEW_ALERT,
   systemClock,
   type Actor,
   type CalendarCore,
@@ -59,6 +60,16 @@ const SAMPLES: [number, Actor, Omit<NewAppointment, 'date'>][] = [
   [-6, LINDA, { what: 'Flu shot', time: '10:30', placeName: 'Main Street Pharmacy' }],
 ];
 
+/**
+ * Invented Replies, as [minutes before now that each came, what it says], so that the Replies tab
+ * and its count show on sample data. Kept as the reply address keeps one; the first run answers and
+ * passes them on, as the scheduled run does.
+ */
+const SAMPLE_REPLIES: [number, string][] = [
+  [26 * 60, 'Thank you for the reminder'],
+  [25, 'Running a little late, see you soon'],
+];
+
 export interface SampleCalendar extends CalendarClient {
   /** The core and store behind it, so that a test can act as someone else or look at what is kept. */
   core: CalendarCore;
@@ -92,6 +103,18 @@ export function createSampleCalendar(
     if (empty) return;
     for (const [days, by, details] of SAMPLES)
       await core.addAppointment(by, { ...details, date: addDays(day, days) });
+    const { numberRevision, susansNumber: number } = await store.settings();
+    if (!number) return;
+    for (const [minutesAgo, words] of SAMPLE_REPLIES)
+      await store.claimReply({
+        id: `reply:sample-${minutesAgo}`,
+        words,
+        receivedAt: new Date(clock.now().getTime() - minutesAgo * 60_000).toISOString(),
+        numberRevision,
+        answer: 'due',
+        answerTextId: null,
+        passOn: NEW_ALERT,
+      });
   })();
 
   /** Tells `listener` what `read` finds once the samples are in, and again after every change. */

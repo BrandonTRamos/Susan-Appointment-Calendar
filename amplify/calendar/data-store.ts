@@ -45,7 +45,7 @@ export interface DataClient {
     CalendarSettings: Pick<Models['CalendarSettings'], 'get' | 'create' | 'update'>;
     Reply: Pick<Models['Reply'], 'list' | 'create'>;
     CalendarAlert: Pick<Models['CalendarAlert'], 'list' | 'create'>;
-    RepliesSeen: Pick<Models['RepliesSeen'], 'get' | 'create' | 'update'>;
+    RepliesSeen: Pick<Models['RepliesSeen'], 'get' | 'create'>;
   };
   /**
    * A raw data API operation, for a write that carries a condition: the models' own `update`
@@ -72,6 +72,18 @@ const CHANGE_REPLY = /* GraphQL */ `
   mutation ChangeReply($input: UpdateReplyInput!, $condition: ModelReplyConditionInput!) {
     updateReply(input: $input, condition: $condition) {
       id
+    }
+  }
+`;
+
+/** Moves a person's mark of the Replies they have seen on, only if it is still earlier. */
+const ADVANCE_REPLIES_SEEN = /* GraphQL */ `
+  mutation AdvanceRepliesSeen(
+    $input: UpdateRepliesSeenInput!
+    $condition: ModelRepliesSeenConditionInput!
+  ) {
+    updateRepliesSeen(input: $input, condition: $condition) {
+      personId
     }
   }
 `;
@@ -309,10 +321,13 @@ export function dataStore(client: DataClient): Store {
     async repliesSeen(personId) {
       return check(await RepliesSeen.get({ personId }))?.seenUpTo ?? null;
     },
-    async keepRepliesSeen(personId, seenUpTo) {
-      const had = check(await RepliesSeen.get({ personId }));
+    // Never read and then written: the first mark is a create, which fails when another device
+    // made one first, and any later one an update conditioned on the mark still being earlier, so
+    // two devices marking at once can only move it on.
+    async advanceRepliesSeen(personId, seenUpTo) {
       const row = { personId, seenUpTo };
-      check(await (had ? RepliesSeen.update(row) : RepliesSeen.create(row)));
+      if (created(await RepliesSeen.create(row))) return;
+      await changeIf(ADVANCE_REPLIES_SEEN, row, { and: [{ seenUpTo: { lt: seenUpTo } }] });
     },
   };
 }

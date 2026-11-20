@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Page } from '../components/Page';
 import { TextStatus } from '../components/TextStatus';
 import { useCalendar } from '../data/CalendarContext';
-import { automaticAnswerId, newestFirst, type Reply, type Text } from '../lib/calendar';
+import { newestFirst, type Reply, type Text } from '../lib/calendar';
 import { formatMoment } from '../lib/localTime';
 import { textStatus } from '../lib/textStatus';
 
@@ -39,7 +39,7 @@ export function Replies() {
             <ReplyItem
               key={reply.id}
               reply={reply}
-              answer={texts?.find((text) => text.id === automaticAnswerId(reply)) ?? null}
+              answer={texts?.find((text) => text.id === reply.answerTextId) ?? null}
               isNew={
                 seenBefore !== undefined && (seenBefore === null || reply.receivedAt > seenBefore)
               }
@@ -70,10 +70,9 @@ function ReplyItem({
         {isNew && <span className="badge new">New</span>}
       </p>
       <p className="quoted reply-words">{reply.words || '(It had no words.)'}</p>
-      {reply.answer === 'notSusan' && (
+      {reply.answer === 'numberChanged' && (
         <p className="muted">
-          From a number that is not Susan's mobile number in Settings, so no automatic answer was
-          sent.
+          No automatic answer: Susan's mobile number was changed in Settings after it came.
         </p>
       )}
       {reply.answer === 'recent' && (

@@ -325,6 +325,19 @@ function statementsFor(service) {
     );
 }
 
+/** The code a function runs as bundled for the deploy, by the name its definition gives it. */
+function functionCode(name) {
+  const lambda = stacks()
+    .flatMap((stack) => Object.entries(stack))
+    .find(
+      ([id, resource]) =>
+        resource.Type === 'AWS::Lambda::Function' &&
+        new RegExp(`^${name}lambda[0-9A-F]+$`).test(id),
+    )?.[1];
+  const asset = /^([0-9a-f]{64})\.zip$/.exec(lambda?.Properties.Code?.S3Key ?? '')?.[1];
+  return asset ? readFileSync(join(out, `asset.${asset}`, 'index.mjs'), 'utf8') : '';
+}
+
 /** Every function, by the logical ID its definition gives it, with its environment. */
 function functions() {
   return stacks()
@@ -408,6 +421,8 @@ function checks() {
   const replyChange = writeStep('Mutation', 'updateReply');
   const alertClaim = writeStep('Mutation', 'createCalendarAlert');
   const alertChange = writeStep('Mutation', 'updateCalendarAlert');
+  const seenChange = writeStep('Mutation', 'updateRepliesSeen');
+  const commandsCode = functionCode('calendarcommands');
   const conditional = (words) =>
     words.includes('"operation": "UpdateItem"') &&
     words.includes('$util.qr($ctx.stash.conditions.add($args.condition))') &&
@@ -745,6 +760,23 @@ function checks() {
           action === 's3:GetObject' ||
           String(action).startsWith('logs:'),
       ),
+    ],
+    [
+      // advanceRepliesSeen in amplify/calendar/data-store.ts: a first mark is a create that fails
+      // when one is there, and a later one an update conditioned on the kept mark being earlier.
+      "a person's mark of the Replies seen only ever moves on, by conditional writes",
+      conditional(seenChange) &&
+        // Keyed by person, the create's condition is that no row has the key (modelObjectKey).
+        (() => {
+          const create = writeStep('Mutation', 'createRepliesSeen');
+          return (
+            create.includes('"operation": "PutItem"') &&
+            create.includes('$ctx.stash.metadata.modelObjectKey') &&
+            /"attributeExists":\s*false/.test(create)
+          );
+        })() &&
+        commandsCode.includes('updateRepliesSeen(input: $input, condition: $condition)') &&
+        /\{\s*seenUpTo:\s*\{\s*lt:/.test(commandsCode),
     ],
     [
       // The claim (claimReply in amplify/calendar/data-store.ts): the same Reply arriving twice is

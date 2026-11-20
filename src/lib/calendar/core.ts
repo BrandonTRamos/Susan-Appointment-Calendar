@@ -49,7 +49,8 @@ import type {
 import { reminderDue, reminderWords, STARTING_REMINDER } from './reminders';
 import {
   AUTOMATIC_ANSWER_GAP,
-  automaticAnswerId,
+  automaticAnswerNumber,
+  automaticAnswerTextId,
   automaticAnswerWords,
   REPLY_WORDS_LIMIT,
   replyPassedOn,
@@ -203,9 +204,10 @@ export interface CalendarCore {
    * when it came, and nothing else is done with it here. The scheduled run passes it on to every
    * Admin and sends her the automatic answer. Its words are never read for meaning: no word in it
    * changes, cancels or confirms anything. The same Reply arriving again is kept once, and answers
-   * with the one already kept.
+   * with the one already kept. One from any number but Susan's in Settings, or while none is set,
+   * is not kept at all, and answers null.
    */
-  receiveReply(reply: IncomingReply): Promise<Reply>;
+  receiveReply(reply: IncomingReply): Promise<Reply | null>;
   /**
    * The text sender's report that Susan opted out of texts, so none reaches her until she undoes
    * it. Raises a calendar Alert, sent by the next scheduled run; the same report arriving again
@@ -698,6 +700,9 @@ export function createCalendarCore({
       if (same) return current;
       const changed: CalendarSettings = {
         ...next,
+        // Moves on with her number alone: a new contact leaves Replies still to be answered.
+        numberRevision:
+          current.numberRevision + (next.susansNumber === current.susansNumber ? 0 : 1),
         lastChanged: stamp(by, clock.now().toISOString()),
       };
       await store.keepSettings(changed);
@@ -746,7 +751,25 @@ export function createCalendarCore({
         .filter((text) => Date.parse(text.triedAt) <= now.getTime() - RETRY_AFTER)
         .sort((a, b) => a.dueAt.localeCompare(b.dueAt));
       for (const text of waiting) {
-        const retry = retrying(text, appointments, now, Boolean(susansNumber));
+        // An automatic answer goes only while her number is still the one its Reply came from,
+        // as Settings are read just before it is taken up.
+        let to = susansNumber;
+        if (text.kind === 'automaticAnswer') {
+          const current = await store.settings();
+          const reply = replies.find((each) => each.id === text.replyId);
+          to = reply?.numberRevision === current.numberRevision ? current.susansNumber : null;
+          if (!to) {
+            const next = alertMarked({
+              ...text,
+              status: 'failed',
+              reason: 'numberChanged',
+              triedAt: at,
+            });
+            if (await store.retakeText(next, text)) done.push(next);
+            continue;
+          }
+        }
+        const retry = retrying(text, appointments, now, Boolean(to));
         if (retry === 'hold') continue;
         // Taken up only if no other run has taken it up since it was read.
         const next: Text = alertMarked(
@@ -763,7 +786,7 @@ export function createCalendarCore({
           text.kind === 'reminder'
             ? (appointments.find((each) => each.id === text.appointmentId)?.startsAt ?? null)
             : null;
-        done.push(await attempt(next, susansNumber!, { startsAt, tried: text.attempts }));
+        done.push(await attempt(next, to!, { startsAt, tried: text.attempts }));
       }
 
       // Reminders that have come due.
@@ -800,50 +823,59 @@ export function createCalendarCore({
         done.push(await attempt(text, susansNumber, { startsAt: appointment.startsAt, tried: 0 }));
       }
 
-      // The automatic answer to each Reply that has had none decided, the oldest first: at most one
-      // in AUTOMATIC_ANSWER_GAP. Its text is claimed before the Reply is marked, so a run that
-      // stops between the two leaves the next run nothing to send twice.
-      const answers = texts.filter((text) => text.kind === 'automaticAnswer');
-      let lastAnswer =
-        answers
-          .map((text) => text.dueAt)
-          .sort()
-          .at(-1) ?? null;
+      // The automatic answer to each Reply that has had none decided, the oldest first. At most one
+      // goes in AUTOMATIC_ANSWER_GAP, counted from when the last was claimed for sending, so a
+      // backlog taken up together gets one. Each is claimed under the next number after the last
+      // answer this run can see (automaticAnswerTextId): a run that overlaps this one, or read
+      // before this one's answer, claims the same ID and is refused, and its Reply is decided
+      // afresh by the next run. Only while Susan's number is still the one the Reply came from, as
+      // Settings are read just before the claim. The text is claimed before the Reply is marked; a
+      // run that stops between the two leaves the next run to find the text by its Reply.
+      const answerTexts = texts.filter((text) => text.kind === 'automaticAnswer');
       const repliesNow = new Map(replies.map((reply) => [reply.id, reply]));
+      const mark = async (reply: Reply, answered: Pick<Reply, 'answer' | 'answerTextId'>) => {
+        const next: Reply = { ...reply, ...answered };
+        if (await store.changeReply(next, reply)) repliesNow.set(reply.id, next);
+      };
       const toAnswer = replies
         .filter((reply) => reply.answer === 'due')
         .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt) || a.id.localeCompare(b.id));
       for (const reply of toAnswer) {
-        const recent =
-          lastAnswer !== null &&
-          Date.parse(reply.receivedAt) - Date.parse(lastAnswer) < AUTOMATIC_ANSWER_GAP;
-        if (!recent) {
-          const id = automaticAnswerId(reply);
-          const text = newText({
-            id,
-            kind: 'automaticAnswer',
-            appointmentId: null,
-            reminderId: null,
-            words: automaticAnswerWords(settings),
-            dueAt: reply.receivedAt,
-          });
-          lastAnswer = reply.receivedAt;
-          if (!kept.has(id)) {
-            if (!susansNumber) {
-              const notSent = alertMarked({
-                ...text,
-                status: 'notSent',
-                reason: 'noNumber',
-                attempts: 0,
-              });
-              if (await store.claimText(notSent)) done.push(notSent);
-            } else if (await store.claimText(text)) {
-              done.push(await attempt(text, susansNumber, { startsAt: null, tried: 0 }));
-            }
-          }
+        const claimed = answerTexts.find((text) => text.replyId === reply.id);
+        if (claimed) {
+          await mark(reply, { answer: 'sent', answerTextId: claimed.id });
+          continue;
         }
-        const answered: Reply = { ...reply, answer: recent ? 'recent' : 'sent' };
-        if (await store.changeReply(answered, reply)) repliesNow.set(reply.id, answered);
+        const current = await store.settings();
+        if (reply.numberRevision !== current.numberRevision || !current.susansNumber) {
+          await mark(reply, { answer: 'numberChanged', answerTextId: null });
+          continue;
+        }
+        const last = answerTexts
+          .map((text) => text.dueAt)
+          .sort()
+          .at(-1);
+        const now = clock.now();
+        if (last && now.getTime() - Date.parse(last) < AUTOMATIC_ANSWER_GAP) {
+          await mark(reply, { answer: 'recent', answerTextId: null });
+          continue;
+        }
+        const numbers = answerTexts.map((text) => automaticAnswerNumber(text.id) ?? 0);
+        const text = newText({
+          id: automaticAnswerTextId(Math.max(0, ...numbers) + 1),
+          kind: 'automaticAnswer',
+          appointmentId: null,
+          reminderId: null,
+          replyId: reply.id,
+          words: automaticAnswerWords(current),
+          // When it was claimed for sending: what the gap is counted from.
+          dueAt: now.toISOString(),
+        });
+        // Another run took that number: the next run decides this Reply, seeing its answer.
+        if (!(await store.claimText(text))) continue;
+        answerTexts.push(text);
+        done.push(await attempt(text, current.susansNumber, { startsAt: null, tried: 0 }));
+        await mark(reply, { answer: 'sent', answerTextId: text.id });
       }
 
       // Texts sent and not yet settled: what became of each, as the text sender now says. Only
@@ -872,7 +904,12 @@ export function createCalendarCore({
       for (const reply of toPassOn)
         await tellEveryAdmin(
           reply.passOn,
-          replyPassedOn(reply, settings, timeZone, textsNow.get(automaticAnswerId(reply)) ?? null),
+          replyPassedOn(
+            reply,
+            settings,
+            timeZone,
+            reply.answerTextId ? (textsNow.get(reply.answerTextId) ?? null) : null,
+          ),
           (next, current) =>
             store.changeReply({ ...reply, passOn: next }, { ...reply, passOn: current }),
           'Reply',
@@ -917,16 +954,18 @@ export function createCalendarCore({
 
     async receiveReply({ key, words, from }) {
       const kept = typeof key === 'string' && /^[\w:-]{1,128}$/.test(key) ? key : null;
-      const { susansNumber } = await store.settings();
+      const { susansNumber, numberRevision } = await store.settings();
       const number = typeof from === 'string' ? usPhoneNumber(from) : null;
-      const fromSusan = susansNumber !== null && number === susansNumber;
+      // Only Susan's number, as Settings have it now: from any other, or while none is set, nothing
+      // is kept, passed on or answered. Which it was is never said.
+      if (susansNumber === null || number !== susansNumber) return null;
       const reply: Reply = {
         id: `reply:${kept ?? crypto.randomUUID()}`,
         words: replyWords(words),
         receivedAt: clock.now().toISOString(),
-        fromSusan,
-        // Texts go to nobody but Susan, so another number is answered by no text.
-        answer: fromSusan ? 'due' : 'notSusan',
+        numberRevision,
+        answer: 'due',
+        answerTextId: null,
         passOn: NEW_ALERT,
       };
       if (await store.claimReply(reply)) return reply;
@@ -953,7 +992,8 @@ export function createCalendarCore({
       const at = new Date(upTo).toISOString();
       const seen = await store.repliesSeen(by.person.id);
       if (seen !== null && seen >= at) return seen;
-      await store.keepRepliesSeen(by.person.id, at);
+      // Moved on only if still earlier when written: another device may have marked more.
+      await store.advanceRepliesSeen(by.person.id, at);
       return at;
     },
 
@@ -1143,9 +1183,11 @@ export function createCalendarCore({
 
   /** The record of a text about to be tried for the first time. */
   function newText(
-    about: Pick<Text, 'id' | 'kind' | 'appointmentId' | 'reminderId' | 'words' | 'dueAt'>,
+    about: Pick<Text, 'id' | 'kind' | 'appointmentId' | 'reminderId' | 'words' | 'dueAt'> &
+      Partial<Pick<Text, 'replyId'>>,
   ): Text {
     return {
+      replyId: null,
       ...about,
       status: 'waiting',
       reason: null,

@@ -185,21 +185,30 @@ one: no word in it changes, cancels or confirms anything. A person reads it.
 - **The reply address.** Every text the calendar sends names the `text-replies` function's public
   address (a Lambda function URL), and Textbelt posts each Reply there. It takes only a request
   Textbelt signed with the key (`X-textbelt-signature`, an HMAC-SHA256 of `X-textbelt-timestamp`
-  and the body), checked in constant time, whose timestamp is within 15 minutes of now; it refuses
-  everything else, and everything while no key is stored. It keeps the Reply and nothing more: it
-  may only read the settings and create a Reply in the data API. The same request arriving twice
-  is kept once. Requests at once are capped. `npm run synth` checks all of it.
+  and the body), checked in constant time, whose timestamp is within 15 minutes of now, and whose
+  body has the `textId`, `fromNumber` and `text` Textbelt documents, the number one the calendar
+  can read; it refuses everything else, and everything while no key is stored. A Reply from any
+  number but Susan's in Settings, or while hers is not set, is kept nowhere and answered just as
+  one that is kept, so the answer says nothing about which numbers are texted. It keeps the Reply
+  and nothing more: it may only read the settings and create a Reply in the data API. The same
+  request arriving twice is kept once. Requests at once are capped. `npm run synth` checks all of
+  it.
 - **Passed on.** Within a minute the scheduled run sends each Reply to every Admin by email and app
   notification, quoting what she wrote, once each, with the same retries as an Alert. Tapping the
   notification opens the Replies tab.
 - **The automatic answer.** The same run texts her: "Susan's Calendar: Texts to this number are not
   answered. If you need anything, please call" the contact name and number from **Settings →
-  Susan's phone and contact**. It goes at most once an hour, so a run of Replies gets one answer;
-  the Replies tab says which Replies had none. A Reply from a number that is not Susan's in
-  Settings is passed on but answered by no text. An answer that fails raises an Alert.
+  Susan's phone and contact**. It goes at most once an hour, counted from when the last was sent,
+  so a run of Replies, or a backlog of them taken up together, gets one answer, even from two runs
+  at once; the Replies tab says which Replies had none. It goes only while Susan's number is still
+  the one the Reply came from: once the number changes, a Reply not yet answered, or an answer
+  waiting to be tried again, sends nothing to the new number, though the Reply is still passed on.
+  A change to the contact alone changes nothing. An answer that fails raises an Alert.
 - **The Replies tab** lists her Replies newest first, with when each came, what she wrote, and what
   became of the automatic answer. The tab shows how many each person has not yet seen; opening it
-  counts them seen, on every device that person uses.
+  counts them seen, on every device that person uses. What each person has seen only ever moves
+  on, even when two of their devices mark it at once. On sample data (`npm run dev` with no
+  `amplify_outputs.json`) two invented Replies show, so the tab and its count can be seen.
 - **STOP and HELP.** Textbelt handles STOP and START itself. If either, or HELP, reaches the reply
   address, it is a Reply like any other. What Textbelt does with each has to be seen on a real
   phone: [`docs/text-message-setup.md`](docs/text-message-setup.md), "Checking STOP and HELP".

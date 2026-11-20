@@ -7,7 +7,13 @@
 // "What Textbelt's documentation says".
 
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import type { DeliveryReport, IncomingReply, SendResult, TextSender } from '../../src/lib/calendar';
+import {
+  usPhoneNumber,
+  type DeliveryReport,
+  type IncomingReply,
+  type SendResult,
+  type TextSender,
+} from '../../src/lib/calendar';
 import { failureKind } from '../../src/lib/failure';
 
 const TEXTBELT = 'https://textbelt.com';
@@ -202,14 +208,21 @@ export function readTextbeltReply(
   } catch {
     return { rejected: 'unreadable' };
   }
-  const { text, fromNumber } = (said ?? {}) as Record<string, unknown>;
-  if (typeof said !== 'object' || Array.isArray(said) || typeof text !== 'string')
+  if (typeof said !== 'object' || said === null || Array.isArray(said))
     return { rejected: 'unreadable' };
+  const { textId, text, fromNumber } = said as Record<string, unknown>;
+  // All three, in the form Textbelt documents: the text that began the conversation, the number
+  // the Reply came from, as one the calendar can read, and the words.
+  const identified =
+    (typeof textId === 'string' && /^[\w-]{1,64}$/.test(textId)) ||
+    (typeof textId === 'number' && Number.isSafeInteger(textId) && textId >= 0);
+  const from = typeof fromNumber === 'string' ? usPhoneNumber(fromNumber) : null;
+  if (!identified || !from || typeof text !== 'string') return { rejected: 'unreadable' };
   return {
     reply: {
       key: createHash('sha256').update(signature).digest('hex').slice(0, 40),
       words: text,
-      from: typeof fromNumber === 'string' ? fromNumber : null,
+      from,
     },
   };
 }

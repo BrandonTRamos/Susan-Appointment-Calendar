@@ -251,6 +251,7 @@ describe('when a command cannot be carried out', () => {
       triedAt: reminder.dueAt,
       sentAt: reminder.dueAt,
       reference: '12345',
+      replyId: null,
       creditLeft: 40,
       alert: null,
     });
