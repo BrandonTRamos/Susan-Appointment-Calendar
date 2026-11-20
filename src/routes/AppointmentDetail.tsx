@@ -151,7 +151,7 @@ function Detail({
       </dl>
 
       <ReminderList appointment={appointment} timeZone={timeZone} now={new Date()} texts={texts} />
-      <TextList appointment={appointment} texts={texts} timeZone={timeZone} />
+      <TextList appointment={appointment} texts={texts} timeZone={timeZone} now={new Date()} />
 
       {problem && (
         <p className="error" role="alert">

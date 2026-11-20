@@ -2,6 +2,13 @@
 // this one.
 
 export * from './appointment';
+export {
+  changeNoticeOwed,
+  lastTold,
+  MORNING,
+  SETTLING_PERIOD,
+  type ChangeNotice,
+} from './changeNotices';
 export { calendarFeed, FEED_NAME } from './feed';
 export {
   isSubscriptionSecret,

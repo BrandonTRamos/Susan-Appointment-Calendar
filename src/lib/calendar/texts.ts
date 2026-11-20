@@ -26,11 +26,27 @@ export const TEXT_REASONS = [
 ] as const;
 /**
  * Why a text failed or was not sent. noNumber: Susan's mobile number is not set. tooLate: the
- * Appointment had started. cancelled: the Appointment was cancelled while the text waited.
- * outdated: its Reminder was removed, or its time changed, while it waited to be tried again.
+ * Appointment had started; for a Change notice, its old and new times had both passed. cancelled:
+ * the Appointment was cancelled while the text waited. outdated: its Reminder was removed, or its
+ * time changed, while it waited to be tried again; for a Change notice, the Appointment changed
+ * again while it waited.
  * refused: the text sender would not take it. gaveUp: sending failed every time it was tried.
  */
 export type TextReason = (typeof TEXT_REASONS)[number];
+
+/**
+ * What a text told Susan of its Appointment: the date and time it gave, Susan's local time, and
+ * whether it said the Appointment is cancelled. A Change notice of a cancellation gives the time
+ * that is cancelled. Kept on the text's own record, so it stays what she was told whatever becomes
+ * of the Appointment afterwards.
+ */
+export interface Told {
+  /** 'YYYY-MM-DD'. */
+  date: string;
+  /** 'HH:MM'. */
+  time: string;
+  cancelled: boolean;
+}
 
 /** The calendar's record of one text to Susan. */
 export interface Text {
@@ -56,6 +72,12 @@ export interface Text {
   sentAt: string | null;
   /** The text sender's own name for it, for asking later what became of it. */
   reference: string | null;
+  /**
+   * What it told Susan of its Appointment, from which the calendar works out whether a Change
+   * notice is due (changeNotices.ts). Null for a test text, and for one recorded before the
+   * calendar kept this.
+   */
+  told: Told | null;
 }
 
 /** Where texts go, and who Susan is told to call. Changed only through the calendar core. */

@@ -1,7 +1,14 @@
 // How a text's status reads to a person: on the Appointment detail and in Settings. The calendar
 // core decides what becomes of each text (src/lib/calendar/texts.ts); this only puts it in words.
 
-import { SEND_ATTEMPTS, type ReminderPlan, type Text, type TextKind } from './calendar';
+import {
+  SEND_ATTEMPTS,
+  SETTLING_PERIOD,
+  type ChangeNotice,
+  type ReminderPlan,
+  type Text,
+  type TextKind,
+} from './calendar';
 import { formatMoment } from './localTime';
 
 /** A text's status in a word or two, and what more there is to say about it. */
@@ -53,6 +60,10 @@ export function textStatus(text: Text, timeZone: string): StatusWords {
 }
 
 function failedBecause(text: Text): string {
+  if (text.kind === 'changeNotice' && text.reason === 'outdated')
+    return 'The Appointment changed again before sending went through.';
+  if (text.kind === 'changeNotice' && text.reason === 'tooLate')
+    return "Sending did not go through before the Appointment's old and new times had passed.";
   switch (text.reason) {
     case 'refused':
       return 'The text was refused, so it did not go.';
@@ -70,6 +81,8 @@ function failedBecause(text: Text): string {
 }
 
 function notSentBecause(text: Text): string {
+  if (text.kind === 'changeNotice' && text.reason === 'tooLate')
+    return "The Appointment's old and new times had both passed before it could go.";
   switch (text.reason) {
     case 'noNumber':
       return "Susan's mobile number was not set in Settings.";
@@ -121,4 +134,25 @@ export function planStatus(plan: ReminderPlan): StatusWords {
     case 'cancelled':
       return { label: 'Not sent', detail: 'The Appointment is cancelled.', trouble: false };
   }
+}
+
+/** What will become of a Change notice that is owed and not yet recorded. */
+export function changeNoticeStatus(
+  notice: Pick<ChangeNotice, 'plan' | 'heldOvernight'>,
+): StatusWords {
+  if (notice.plan === 'send')
+    return { label: 'Waiting', detail: 'It goes out within a minute.', trouble: false };
+  if (notice.plan === 'tooLate')
+    return {
+      label: 'Not sent',
+      detail: "The Appointment's old and new times have both passed.",
+      trouble: true,
+    };
+  return {
+    label: 'Waiting',
+    detail: notice.heldOvernight
+      ? 'It came up overnight, so it waits until 7:00 am.'
+      : `It goes out once nobody has changed the Appointment for ${SETTLING_PERIOD / 60_000} minutes.`,
+    trouble: false,
+  };
 }

@@ -110,6 +110,14 @@ const schema = a
         allow.ownerDefinedIn('personId').identityClaim('sub').to(['read']),
       ]),
 
+    // What a text told Susan of its Appointment (Told in src/lib/calendar/texts.ts): its date and
+    // time, Susan's local time, and whether it said it is cancelled.
+    Told: a.customType({
+      date: a.date().required(),
+      time: a.string().required(), // 'HH:MM'
+      cancelled: a.boolean().required(),
+    }),
+
     // The record of each text to Susan (Text in src/lib/calendar/texts.ts). Its ID is made from
     // what it is about and when it was due; creating one fails when one with that ID exists, which
     // is how a text is claimed before it is sent (`npm run synth` checks it).
@@ -126,6 +134,9 @@ const schema = a
         triedAt: a.datetime().required(),
         sentAt: a.datetime(),
         reference: a.string(),
+        // What it told her, from which Change notices are worked out. Missing on a test text, and
+        // on a text recorded before ticket 14.
+        told: a.ref('Told'),
       })
       .secondaryIndexes((index) => [index('appointmentId').queryField('textsByAppointment')])
       .authorization((allow) => [allow.authenticated().to(['read'])]),

@@ -19,7 +19,8 @@ change it, cancel it, and delete one entered by mistake, and is warned when one 
 what one person changes shows for the others as it happens. Each Appointment carries its Reminders,
 showing when each goes out and the exact words Susan will read. The Month tab shows a month at a
 glance, and Past lists the Appointments that have already happened. Anyone signed in can also get
-their own [calendar subscription](#calendar-subscription) link. Reminders go out on schedule and
+their own [calendar subscription](#calendar-subscription) link. Reminders go out on schedule, a
+Change notice follows when an Appointment Susan has been texted about moves or is cancelled, and
 each Appointment shows every text about it with its status, but no text reaches a phone yet: until
 Textbelt is connected (ticket 13) a stand-in records each text instead (see
 [Texts to Susan](#texts-to-susan)). Replies arrive with a later ticket.
@@ -100,9 +101,11 @@ is the only thing that writes calendar data.
 ## Texts to Susan
 
 Every minute the `send-texts` backend function runs the calendar core's "run what is due", which
-sends each Reminder that has come due, once, and keeps a record of every text: its kind, the
-Appointment it is about, its words, when it was due, and whether it is waiting, sent, delivered,
-failed or not sent. The Appointment's screen shows each Reminder's status and every text about it.
+sends each Reminder and Change notice that has come due, once, and keeps a record of every text:
+its kind, the Appointment it is about, its words, when it was due, what it told Susan of the
+Appointment's date and time, and whether it is waiting, sent, delivered, failed or not sent. The
+Appointment's screen shows each Reminder's status and every text about it, with a Change notice
+still to go out at the top.
 
 - **Nothing reaches a phone yet.** Until ticket 13 connects Textbelt, texts go to a stand-in that
   records them and sends nothing, in the backend and on sample data alike; Settings says so.
@@ -118,6 +121,13 @@ failed or not sent. The Appointment's screen shows each Reminder's status and ev
   it up first, and only while its Reminder is still the same and its Appointment has not started.
 - An exact-time Reminder flagged for review because its Appointment moved is not sent until
   someone keeps it or changes it.
+- **Change notices.** Once a text about an Appointment may have reached Susan, a move or a
+  cancellation sends her a Change notice, giving the time she was last told and the new time or
+  that it is cancelled. It goes five minutes after the last edit, so a run of corrections makes one
+  notice about the net change and an edit put back makes none. One that comes up between 9:00 pm
+  and 7:00 am, Susan's time, waits until 7:00 am unless the old or new time comes before then.
+  Changes to the place, Driver, pickup time or notes send none; later Reminders carry them, and
+  Reminders follow a moved Appointment to its new time.
 - Logs never hold Susan's number or the words of a text: they say only how many texts ended up in
   each status, and, when something fails, which operation and what kind of failure.
 

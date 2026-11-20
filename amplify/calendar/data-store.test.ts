@@ -305,6 +305,7 @@ describe('the calendar kept in the data API', () => {
       triedAt: '2026-11-19T20:00:00.000Z',
       sentAt: null,
       reference: null,
+      told: null,
     };
     await store.claimText(waiting);
     const again = { ...waiting, attempts: 2, triedAt: '2026-11-19T20:02:00.000Z' };
@@ -333,6 +334,8 @@ describe('the calendar kept in the data API', () => {
       triedAt: reminder.dueAt,
       sentAt: reminder.dueAt,
       reference: null,
+      // What it told her goes in and comes back as it was.
+      told: { date: added.date, time: added.time, cancelled: false },
     };
     expect(await store.claimText(text)).toBe(true);
     expect(await store.textsAbout(added.id)).toEqual([text]);
