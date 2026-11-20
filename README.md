@@ -126,7 +126,10 @@ failed or not sent. The Appointment's screen shows each Reminder's status and ev
   name such as `example.de`, or an email address), of any kind: it is recorded as not sent, and
   says why. Nothing typed is refused or changed: a Reminder's preview, in the form and on the
   Appointment, warns that it will not be sent, and its status says "Will not be sent" until the
-  address is taken out. The Private notes go in no text, so they can hold one.
+  address is taken out. Such a Reminder is not among those still to be sent on the Upcoming card
+  or in the phone Month count, and saving an Appointment whose only Reminders in time are such
+  asks first, as saving one with no Reminder does, saying why. The Private notes go in no text, so
+  they can hold one.
 - **Settings → Susan's phone and contact** holds Susan's mobile number, and the name and number the
   automatic answer to a Reply will give her. With no number set, nothing is sent, and each Reminder
   that comes due is recorded as not sent. **Send a test text** sends one by the same path and shows

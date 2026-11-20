@@ -9,6 +9,7 @@ import {
   NO_ADMIN_MESSENGER,
   overlappingAppointments,
   pastAppointments,
+  reminderHoldsWebAddress,
   remindersStillToSend,
   reminderWords,
   upcomingAppointments,
@@ -1403,12 +1404,12 @@ describe('Reminders still to be sent', () => {
       reminders: [{ shape: 'daysBefore', days: 2, time: '18:00' }, thursdayAtEight, twoHoursBefore],
     });
     const now = new Date('2026-11-19T20:00:00.000Z');
-    expect(remindersStillToSend(added, now).map((r) => r.dueAt)).toEqual([
+    expect(remindersStillToSend(added, now, EASTERN).map((r) => r.dueAt)).toEqual([
       '2026-11-20T01:00:00.000Z',
       '2026-11-20T17:00:00.000Z',
     ]);
     const cancelled = await core.cancelAppointment(linda, added.id);
-    expect(remindersStillToSend(cancelled, now)).toEqual([]);
+    expect(remindersStillToSend(cancelled, now, EASTERN)).toEqual([]);
   });
 
   it('leave out one held for review since its Appointment moved: it is not sent as it stands', async () => {
@@ -1420,9 +1421,35 @@ describe('Reminders still to be sent', () => {
     const moved = await core.changeAppointment(mark, added.id, { time: '15:00' });
     const now = new Date('2026-11-19T20:00:00.000Z');
     expect(moved.reminders.map((r) => r.needsReview)).toEqual([true, false]);
-    expect(remindersStillToSend(moved, now).map((r) => r.dueAt)).toEqual([
+    expect(remindersStillToSend(moved, now, EASTERN).map((r) => r.dueAt)).toEqual([
       '2026-11-20T18:00:00.000Z',
     ]);
+  });
+
+  it('leave out one whose words hold a web address, which is never sent', async () => {
+    const { core, clock, sender, store } = calendar();
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      noteForSusan: 'Check in at example.de',
+      reminders: [thursdayAtEight, twoHoursBefore],
+    });
+    const now = new Date('2026-11-19T20:00:00.000Z');
+    expect(added.reminders.map((r) => reminderHoldsWebAddress(added, r, EASTERN))).toEqual([
+      true,
+      true,
+    ]);
+    expect(remindersStillToSend(added, now, EASTERN)).toEqual([]);
+    // The same check the run makes: when they come due, neither is sent.
+    for (const reminder of added.reminders) {
+      clock.set(reminder.dueAt);
+      await core.runDue();
+    }
+    expect(sender.taken()).toEqual([]);
+    expect(store.texts().map((text) => text.reason)).toEqual(['webAddress', 'webAddress']);
+    // Taking the address out puts them back.
+    const fixed = await core.changeAppointment(linda, added.id, { noteForSusan: 'Check in first' });
+    expect(remindersStillToSend(fixed, now, EASTERN)).toHaveLength(2);
   });
 });
 

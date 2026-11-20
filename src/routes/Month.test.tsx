@@ -97,6 +97,27 @@ describe('the Month tab, on a phone', () => {
     expect(listed()[1][1]).toBe('3:30 pmEye exam1 Reminder to send');
   });
 
+  it('does not count a Reminder whose words hold a web address as one to send', async () => {
+    const calendar = emptyCalendar();
+    await calendar.core.addAppointment(linda, {
+      what: 'Eye exam',
+      date: daysFromToday(2),
+      time: '15:30',
+      noteForSusan: 'Check in at example.de',
+    });
+    await calendar.core.addAppointment(linda, {
+      what: 'Hair',
+      date: daysFromToday(2),
+      time: '11:00',
+      noteForSusan: 'Ask for Mr.Li at the desk.',
+    });
+    renderApp('/month', { calendar });
+    await screen.findByRole('table');
+    const rows = listed().flatMap(([, ...words]) => words);
+    expect(rows).toContain('3:30 pmEye exam');
+    expect(rows).toContain('11:00 amHair1 Reminder to send');
+  });
+
   it('counts a cancelled Appointment apart from the ones still on', async () => {
     const calendar = emptyCalendar();
     const hair = await calendar.core.addAppointment(linda, {

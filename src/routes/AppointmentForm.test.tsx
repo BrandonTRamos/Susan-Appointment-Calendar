@@ -88,6 +88,8 @@ describe('adding an Appointment', () => {
     expect(screen.queryByText(/holds a web address/)).not.toBeInTheDocument();
     await userEvent.type(field('Note for Susan'), 'Check in at example.de first.');
     await save();
+    // Its one Reminder will not be sent, so the form asks first, as for an Appointment with none.
+    await userEvent.click(screen.getByRole('button', { name: 'Save with no Reminder' }));
     await screen.findByRole('heading', { level: 1, name: 'Cardiology check-up' });
     expect(calendar.store.appointments()).toMatchObject([
       { noteForSusan: 'Check in at example.de first.' },
