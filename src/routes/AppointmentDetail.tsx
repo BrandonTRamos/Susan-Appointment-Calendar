@@ -5,9 +5,11 @@ import { Page } from '../components/Page';
 import { useCalendar } from '../data/CalendarContext';
 import type { Appointment, Stamp } from '../lib/calendar';
 import { formatDate, formatMoment, formatTime } from '../lib/localTime';
+import { ReminderList } from './AppointmentReminders';
 
 /**
- * One Appointment: all its details, who added it and who last changed it, and Cancel and Delete.
+ * One Appointment: all its details, its Reminders and their words, who added it and who last
+ * changed it, and Cancel and Delete.
  * Plain on purpose; ticket 06 gives it the chosen design.
  */
 export function AppointmentDetail() {
@@ -131,6 +133,8 @@ function Detail({
           </>
         )}
       </dl>
+
+      <ReminderList appointment={appointment} timeZone={timeZone} now={new Date()} />
 
       <div className="stamps muted">
         <p>{stamp('Added', added)}</p>

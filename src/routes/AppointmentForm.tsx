@@ -1,6 +1,7 @@
-import { useId, useState, type FormEvent, type ReactNode } from 'react';
+import { useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { CalendarLoading, CalendarTrouble } from '../components/CalendarTrouble';
+import { Field } from '../components/Field';
 import { Page } from '../components/Page';
 import { useCalendar } from '../data/CalendarContext';
 import {
@@ -8,20 +9,39 @@ import {
   DETAILS,
   type Appointment,
   type AppointmentChanges,
-  type Detail,
+  type RefusalField,
+  type ReminderSetting,
 } from '../lib/calendar';
 import { timeZoneName } from '../lib/timeZone';
 import { NotInCalendar } from './AppointmentDetail';
+import {
+  noReminderToSend,
+  ReminderFields,
+  reminderSetting,
+  typedReminder,
+  type TypedReminder,
+} from './AppointmentReminders';
 
 // The form for adding and changing an Appointment. Plain on purpose; ticket 06 gives it the chosen
 // design. It checks nothing itself: the calendar core decides what makes an Appointment, and its
-// refusal is shown in its own words.
+// refusal is shown in its own words. It does warn, before saving, about Reminders that will not do
+// what the person may expect (AppointmentReminders.tsx).
 
-/** What is typed in the form: every detail as words, empty when there is none. */
-type Typed = Record<Detail, string>;
+/** What is typed in the form: every detail as words, empty when there is none, and the Reminders. */
+interface Typed {
+  details: Record<(typeof DETAILS)[number], string>;
+  reminders: TypedReminder[];
+}
 
-const typedFrom = (appointment?: Appointment): Typed =>
-  Object.fromEntries(DETAILS.map((detail) => [detail, appointment?.[detail] ?? ''])) as Typed;
+/** A saved Appointment as the form opens it, or a new one with the Reminder it starts with. */
+const typedFrom = (appointment?: Appointment): Typed => ({
+  details: Object.fromEntries(
+    DETAILS.map((detail) => [detail, appointment?.[detail] ?? '']),
+  ) as Typed['details'],
+  reminders: appointment ? appointment.reminders.map(typedReminder) : [typedReminder()],
+});
+
+const settings = (reminders: TypedReminder[]): ReminderSetting[] => reminders.map(reminderSetting);
 
 export function NewAppointment() {
   const { client } = useCalendar();
@@ -33,7 +53,9 @@ export function NewAppointment() {
       <Form
         start={typedFrom()}
         backTo="/"
-        save={async (typed) => (await client.addAppointment(typed, id)).id}
+        save={async ({ details, reminders }) =>
+          (await client.addAppointment({ ...details, reminders: settings(reminders) }, id)).id
+        }
       />
     </Page>
   );
@@ -68,7 +90,11 @@ export function EditAppointment() {
             // to another detail made while the form was open.
             const changes: AppointmentChanges = {};
             for (const detail of DETAILS)
-              if (typed[detail].trim() !== start[detail]) changes[detail] = typed[detail];
+              if (typed.details[detail].trim() !== start.details[detail])
+                changes[detail] = typed.details[detail];
+            const reminders = settings(typed.reminders);
+            if (JSON.stringify(reminders) !== JSON.stringify(settings(start.reminders)))
+              changes.reminders = reminders;
             if (Object.keys(changes).length > 0)
               await client.changeAppointment(appointment.id, changes);
             return appointment.id;
@@ -95,10 +121,21 @@ function Form({ start, backTo, save }: FormProps) {
   const [opened] = useState(start);
   const [typed, setTyped] = useState(start);
   const [busy, setBusy] = useState(false);
-  const [problem, setProblem] = useState<{ message: string; detail?: Detail } | null>(null);
+  const [problem, setProblem] = useState<{ message: string; detail?: RefusalField } | null>(null);
+  /** Asking whether to save an Appointment that will send Susan no Reminder. */
+  const [asking, setAsking] = useState(false);
+  const now = new Date();
 
-  async function submit(event: FormEvent) {
-    event.preventDefault();
+  async function submit(event?: FormEvent, noReminderConfirmed = false) {
+    event?.preventDefault();
+    if (
+      !noReminderConfirmed &&
+      noReminderToSend(typed.details, typed.reminders, timeZone, new Date())
+    ) {
+      setAsking(true);
+      return;
+    }
+    setAsking(false);
     setBusy(true);
     setProblem(null);
     try {
@@ -114,12 +151,12 @@ function Form({ start, backTo, save }: FormProps) {
   }
 
   /** What an input needs to show a detail and take what is typed. */
-  const input = (detail: Detail) => ({
+  const input = (detail: (typeof DETAILS)[number]) => ({
     name: detail,
-    value: typed[detail],
+    value: typed.details[detail],
     'aria-invalid': problem?.detail === detail || undefined,
     onChange: (event: { target: { value: string } }) =>
-      setTyped((now) => ({ ...now, [detail]: event.target.value })),
+      setTyped((was) => ({ ...was, details: { ...was.details, [detail]: event.target.value } })),
   });
   const susansTime = `Susan's local time (${timeZoneName(timeZone)}), wherever you are.`;
 
@@ -160,44 +197,53 @@ function Form({ start, backTo, save }: FormProps) {
         {(ids) => <textarea {...ids} {...input('privateNotes')} rows={4} />}
       </Field>
 
+      <ReminderFields
+        details={typed.details}
+        reminders={typed.reminders}
+        onChange={(reminders) => {
+          setTyped((was) => ({ ...was, reminders }));
+          setAsking(false);
+        }}
+        timeZone={timeZone}
+        now={now}
+      />
+
       {problem && (
         <p className="error" role="alert">
           {problem.message}
         </p>
       )}
-      <div className="actions">
-        <button type="submit" className="btn btn-primary" disabled={busy}>
-          Save
-        </button>
-        <Link className="btn" to={backTo}>
-          Back without saving
-        </Link>
-      </div>
-    </form>
-  );
-}
-
-/** A labelled control, with a line beneath it saying what it is for when that needs saying. */
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: (ids: { id: string; 'aria-describedby'?: string }) => ReactNode;
-}) {
-  const id = useId();
-  const hintId = `${id}-hint`;
-  return (
-    <div className="field">
-      <label htmlFor={id}>{label}</label>
-      {children({ id, 'aria-describedby': hint ? hintId : undefined })}
-      {hint && (
-        <p className="hint muted" id={hintId}>
-          {hint}
-        </p>
+      {asking && (
+        <div className="card confirm" role="group" aria-label="Save with no Reminder?">
+          <p>
+            <strong>No Reminder will be sent for this Appointment.</strong> Susan will not be texted
+            about it. Save it anyway?
+          </p>
+          <div className="actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy}
+              onClick={() => submit(undefined, true)}
+            >
+              Save with no Reminder
+            </button>
+            <button type="button" className="btn" onClick={() => setAsking(false)}>
+              Go back
+            </button>
+          </div>
+        </div>
       )}
-    </div>
+      {!asking && (
+        <div className="actions">
+          <button type="submit" className="btn btn-primary" disabled={busy}>
+            Save
+          </button>
+          <Link className="btn" to={backTo}>
+            Back without saving
+          </Link>
+        </div>
+      )}
+    </form>
   );
 }

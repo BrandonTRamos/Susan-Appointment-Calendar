@@ -34,6 +34,10 @@ const SAMPLES: [number, Actor, Omit<NewAppointment, 'date'>][] = [
       pickupTime: '13:15',
       noteForSusan: 'Bring your list of medicines.',
       privateNotes: 'Ask about the new prescription.',
+      reminders: [
+        { shape: 'daysBefore', days: 1, time: '18:00' },
+        { shape: 'before', amount: 2, unit: 'hours' },
+      ],
     },
   ],
   [5, MARK, { what: 'Blood draw', time: '09:00', placeName: 'Riverside Lab' }],
