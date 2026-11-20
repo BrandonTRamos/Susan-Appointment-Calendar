@@ -34,7 +34,11 @@ export function createMemoryStore(): MemoryStore {
       const found = appointments.get(id);
       return found ? structuredClone(found) : null;
     },
-    async saveAppointment(appointment) {
+    async addAppointment(appointment) {
+      appointments.set(appointment.id, structuredClone(appointment));
+      changed();
+    },
+    async replaceAppointment(appointment) {
       appointments.set(appointment.id, structuredClone(appointment));
       changed();
     },

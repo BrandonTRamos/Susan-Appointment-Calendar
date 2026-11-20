@@ -212,7 +212,7 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
         added: stamp(by, at),
         lastChanged: null,
       };
-      await store.saveAppointment(appointment);
+      await store.addAppointment(appointment);
       await record('added', appointment, by, at);
       return appointment;
     },
@@ -232,7 +232,7 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
         startsAt: startOf(details),
         lastChanged: stamp(by, at),
       };
-      await store.saveAppointment(appointment);
+      await store.replaceAppointment(appointment);
       await record('changed', appointment, by, at);
       return appointment;
     },
@@ -247,7 +247,7 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
         state: 'cancelled',
         lastChanged: stamp(by, at),
       };
-      await store.saveAppointment(appointment);
+      await store.replaceAppointment(appointment);
       await record('cancelled', appointment, by, at);
       return appointment;
     },

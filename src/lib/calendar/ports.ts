@@ -9,8 +9,10 @@ import type { ActivityRecord, Appointment } from './appointment';
 export interface Store {
   /** The Appointment with this ID, or null when the calendar has none. */
   appointment(id: string): Promise<Appointment | null>;
-  /** Adds the Appointment, or replaces the one with its ID. */
-  saveAppointment(appointment: Appointment): Promise<void>;
+  /** Keeps a new Appointment. */
+  addAppointment(appointment: Appointment): Promise<void>;
+  /** Replaces the Appointment that has this one's ID with this one. */
+  replaceAppointment(appointment: Appointment): Promise<void>;
   /** Removes the Appointment for good. */
   removeAppointment(id: string): Promise<void>;
   /** Whether any text about the Appointment has gone to Susan. */
@@ -22,3 +24,6 @@ export interface Store {
 export interface Clock {
   now(): Date;
 }
+
+/** The real time. */
+export const systemClock: Clock = { now: () => new Date() };
