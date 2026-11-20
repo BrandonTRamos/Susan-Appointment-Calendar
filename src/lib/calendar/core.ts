@@ -26,7 +26,14 @@ import {
   type Stamp,
 } from './appointment';
 import { calendarFeed } from './feed';
-import type { AdminMessenger, AppNotification, Clock, Store, TextSender } from './ports';
+import type {
+  AdminMessenger,
+  AppNotification,
+  Clock,
+  DeliveryReport,
+  Store,
+  TextSender,
+} from './ports';
 import { reminderDue, reminderWords, STARTING_REMINDER } from './reminders';
 import {
   isSubscriptionSecret,
@@ -35,6 +42,7 @@ import {
   type MadeSubscriptionLink,
 } from './subscription';
 import {
+  holdsWebAddress,
   mayHaveReachedSusan,
   reminderPlan,
   reminderTextId,
@@ -42,6 +50,7 @@ import {
   SEND_ATTEMPTS,
   TEST_TEXT_WORDS,
   testTextId,
+  UNCONFIRMED_AFTER,
   usPhoneNumber,
   type CalendarSettings,
   type Text,
@@ -142,7 +151,13 @@ export interface CalendarCore {
    * A due Reminder is sent; one found overdue is still sent while its Appointment has not started,
    * and recorded as not sent once it has. One whose time had already passed when it was set is never
    * sent and leaves no record. Nothing is sent for a cancelled Appointment, and while Susan's
-   * number is not set each text that comes due is recorded as not sent.
+   * number is not set each text that comes due is recorded as not sent. No text holding a web
+   * address is ever sent.
+   *
+   * It then asks the text sender what became of each text that is sent but not yet settled: one is
+   * marked delivered or failed as the sender says, and one with no confirmation of delivery by
+   * `unconfirmedAfter` after it was sent is marked failed as not confirmed delivered. A text the
+   * sender gave no name to cannot be asked about, and stays sent.
    */
   runDue(): Promise<Text[]>;
 }
@@ -155,7 +170,26 @@ export interface CalendarCoreOptions {
   textSender: TextSender;
   /** Susan's time zone, from resolveTimeZone (src/lib/timeZone.ts). */
   timeZone: string;
+  /**
+   * How long after it was sent a text with no confirmation of delivery is marked failed as not
+   * confirmed delivered, in milliseconds: UNCONFIRMED_AFTER unless the deploy sets another.
+   */
+  unconfirmedAfter?: number;
 }
+
+/** The details that go into the texts to Susan: none of them may hold a web address. */
+const CARRIED: ReadonlySet<Detail> = new Set<Detail>([
+  'what',
+  'withWhom',
+  'placeName',
+  'placeAddress',
+  'driverName',
+  'noteForSusan',
+]);
+
+/** The words of a refusal of a web address in something a text to Susan would carry. */
+const NO_WEB_ADDRESS = (what: string) =>
+  `Texts to Susan cannot carry a web address, and ${what} would go in them. Take the address out; the Private notes can hold one.`;
 
 /** The details that are words: how long each may be, and whether it may run over several lines. */
 const WORDS: Partial<Record<Detail, { limit: number; lines: boolean }>> = {
@@ -214,6 +248,7 @@ function tidied(detail: Detail, sent: unknown): string | null {
   ).trim();
   if (tidy.length > words.limit)
     invalid(`Keep ${NAMES[detail]} to ${words.limit} characters or fewer.`, detail);
+  if (CARRIED.has(detail) && holdsWebAddress(tidy)) invalid(NO_WEB_ADDRESS(NAMES[detail]), detail);
   return tidy || null;
 }
 
@@ -304,6 +339,7 @@ export function createCalendarCore({
   messenger,
   textSender,
   timeZone,
+  unconfirmedAfter = UNCONFIRMED_AFTER,
 }: CalendarCoreOptions): CalendarCore {
   /** The moment an Appointment starts, in Susan's time zone. */
   function startOf({ date, time }: AppointmentDetails): string {
@@ -579,6 +615,8 @@ export function createCalendarCore({
         const name = (value ?? '').replace(UNSEEN, '').replace(/\s+/g, ' ').trim();
         if (name.length > CONTACT_NAME_LIMIT)
           invalid(`Keep the name to ${CONTACT_NAME_LIMIT} characters or fewer.`, 'contactName');
+        // The automatic answer to a Reply names this person (ticket 17).
+        if (holdsWebAddress(name)) invalid(NO_WEB_ADDRESS('the name'), 'contactName');
         next.contactName = name || null;
       }
       const same =
@@ -685,6 +723,15 @@ export function createCalendarCore({
         if (!(await store.claimText(text))) continue;
         done.push(await attempt(text, susansNumber, { startsAt: appointment.startsAt, tried: 0 }));
       }
+
+      // Texts sent and not yet settled: what became of each, as the text sender now says.
+      for (const text of texts) {
+        if (text.status !== 'sent' || text.reference === null) continue;
+        const settled = await settle(text, text.reference);
+        if (!settled) continue;
+        await store.replaceText(settled);
+        done.push(settled);
+      }
       return done;
     },
   };
@@ -718,6 +765,26 @@ export function createCalendarCore({
     return { words: reminderWords(appointment, { dueAt: now }, timeZone) };
   }
 
+  /**
+   * What a sent text has become, as the text sender says, or null while it is still only sent.
+   * When the sender cannot be asked just now, it is asked again on the next run; either way a text
+   * with no confirmation by `unconfirmedAfter` after it was sent is failed, not confirmed delivered.
+   */
+  async function settle(text: Text, reference: string): Promise<Text | null> {
+    let report: DeliveryReport = 'pending';
+    try {
+      report = await textSender.delivery(reference);
+    } catch (error) {
+      // Fixed words only: the error is not repeated (src/lib/failure.ts).
+      console.error(`Delivery status could not be read (${failureKind(error)})`);
+    }
+    if (report === 'delivered') return { ...text, status: 'delivered', reason: null };
+    if (report === 'failed') return { ...text, status: 'failed', reason: 'undelivered' };
+    const sentAt = Date.parse(text.sentAt ?? text.triedAt);
+    if (clock.now().getTime() - sentAt < unconfirmedAfter) return null;
+    return { ...text, status: 'failed', reason: 'unconfirmed' };
+  }
+
   /** The record of a text about to be tried for the first time. */
   function newText(
     about: Pick<Text, 'id' | 'kind' | 'appointmentId' | 'reminderId' | 'words' | 'dueAt'>,
@@ -730,13 +797,14 @@ export function createCalendarCore({
       triedAt: clock.now().toISOString(),
       sentAt: null,
       reference: null,
+      creditLeft: null,
     };
   }
 
   /**
    * Tries to send a text whose record says it is being tried, and records what became of it. When
    * nobody can tell whether it went, it is left waiting to be tried again, until it has been tried
-   * SEND_ATTEMPTS times.
+   * SEND_ATTEMPTS times. Words that hold a web address are never sent.
    */
   async function attempt(
     text: Text,
@@ -754,16 +822,27 @@ export function createCalendarCore({
       await store.replaceText(next);
       return next;
     }
+    // Only details kept before web addresses were refused could bring one in.
+    if (holdsWebAddress(text.words)) {
+      next =
+        tried === 0
+          ? { ...text, status: 'notSent', reason: 'webAddress', attempts: 0 }
+          : { ...text, status: 'failed', reason: 'webAddress', attempts: tried };
+      await store.replaceText(next);
+      return next;
+    }
     try {
       const result = await textSender.send({ to, words: text.words });
+      const creditLeft = result.creditLeft ?? null;
       next = result.sent
         ? {
             ...text,
             status: 'sent',
             sentAt: clock.now().toISOString(),
             reference: result.reference,
+            creditLeft,
           }
-        : { ...text, status: 'failed', reason: 'refused' };
+        : { ...text, status: 'failed', reason: 'refused', creditLeft };
     } catch {
       if (text.attempts < SEND_ATTEMPTS) return text;
       next = { ...text, status: 'failed', reason: 'gaveUp' };

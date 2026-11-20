@@ -33,6 +33,7 @@ export function textStatus(text: Text, timeZone: string): StatusWords {
             : 'Being sent now.',
         trouble: text.attempts > 1,
       };
+    // Delivered means only that: the calendar never says she read it.
     case 'sent':
       return {
         label: 'Sent',
@@ -64,6 +65,12 @@ function failedBecause(text: Text): string {
       return 'The Appointment was cancelled before sending went through.';
     case 'outdated':
       return 'Its Reminder was changed or removed before sending went through.';
+    case 'undelivered':
+      return 'Her phone company reported that it was not delivered.';
+    case 'unconfirmed':
+      return 'Not confirmed delivered: no word came in time that her phone company accepted it.';
+    case 'webAddress':
+      return 'It held a web address, which texts to Susan cannot carry.';
     default:
       return `Sending did not go through after ${SEND_ATTEMPTS} tries.`;
   }
@@ -75,6 +82,8 @@ function notSentBecause(text: Text): string {
       return "Susan's mobile number was not set in Settings.";
     case 'cancelled':
       return 'The Appointment was cancelled.';
+    case 'webAddress':
+      return 'It held a web address, which texts to Susan cannot carry.';
     default:
       return 'Its time had passed and the Appointment had started before it could go.';
   }

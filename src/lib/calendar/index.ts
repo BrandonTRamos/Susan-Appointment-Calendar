@@ -33,11 +33,12 @@ export type {
   StandInSender,
   StandInText,
 } from './memory';
-export { NO_ADMIN_MESSENGER, NO_TEXT_SENDER, systemClock } from './ports';
+export { DELIVERY_REPORTS, NO_ADMIN_MESSENGER, NO_TEXT_SENDER, systemClock } from './ports';
 export type {
   AdminMessenger,
   AppNotification,
   Clock,
+  DeliveryReport,
   SendResult,
   Store,
   TextSender,

@@ -16,7 +16,10 @@ import {
   type Appointment,
   type NewAppointment,
   type ReminderSetting,
+  type TextKind,
+  holdsWebAddress,
   NO_TEXT_SENDER,
+  TEST_TEXT_WORDS,
 } from './index';
 
 const EASTERN = 'America/New_York';
@@ -1741,7 +1744,9 @@ describe('sending texts on schedule', () => {
         attempts: 1,
         triedAt: '2026-11-19T23:00:30.000Z',
         sentAt: '2026-11-19T23:00:30.000Z',
-        reference: expect.any(String),
+        // The stand-in names no text: nobody can be asked what became of it.
+        reference: null,
+        creditLeft: null,
       },
     ]);
     // The record holds neither Susan's number nor the Private notes.
@@ -1834,6 +1839,27 @@ describe('sending texts on schedule', () => {
     expect(sender.taken()).toEqual([]);
   });
 
+  it('counts a text refused when tried again as maybe sent: the first try may have gone', async () => {
+    const { core, clock, sender, store, added } = await ready();
+    sender.breakNext();
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    // Tried again, it is refused, as when the credit ran out in between.
+    sender.refuseNext();
+    clock.set('2026-11-19T23:02:00.000Z');
+    await core.runDue();
+    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'refused', attempts: 2 }]);
+    await refused(core.deleteAppointment(mark, added.id), 'texted');
+  });
+
+  it('can still delete an Appointment whose only text was refused on its only try', async () => {
+    const { core, clock, sender, added } = await ready();
+    sender.refuseNext();
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    await core.deleteAppointment(mark, added.id);
+  });
+
   it('takes up again a text a run claimed and then stopped on', async () => {
     const { core, clock, sender, store, added } = await ready();
     // What a run that stopped mid-send leaves: a claim, tried once, never answered.
@@ -1851,6 +1877,7 @@ describe('sending texts on schedule', () => {
       triedAt: reminder.dueAt,
       sentAt: null,
       reference: null,
+      creditLeft: null,
     });
     clock.set('2026-11-19T23:05:00.000Z');
     await core.runDue();
@@ -1907,6 +1934,7 @@ describe('sending texts on schedule', () => {
       clock,
       messenger: createMemoryMessenger(),
       textSender: {
+        delivery: sender.delivery,
         async send(text) {
           const result = await sender.send(text);
           clock.set('2026-11-20T19:05:00.000Z');
@@ -1959,6 +1987,7 @@ describe('sending texts on schedule', () => {
       clock,
       messenger: createMemoryMessenger(),
       textSender: {
+        delivery: sender.delivery,
         async send(text) {
           const result = await sender.send(text);
           clock.set('2026-11-20T19:01:00.000Z');
@@ -2513,5 +2542,308 @@ describe('the settings for texts', () => {
     clock.set('2026-11-19T21:00:00.000Z');
     expect(await core.changeSettings(mark, { susansNumber: '555 555 0123' })).toEqual(first);
     expect(store.activity()).toEqual([]);
+  });
+});
+
+describe('delivery status', () => {
+  /**
+   * A calendar whose text sender, like Textbelt, names each text it takes and can be asked later
+   * what became of it, with Susan's number set and a Reminder due at 6:00 pm the day before.
+   */
+  async function tracked(options: { unconfirmedAfter?: number } = {}) {
+    const store = createMemoryStore();
+    const clock = createFixedClock('2026-11-19T20:00:00.000Z');
+    const sender = createStandInSender({ reportsDelivery: true });
+    const core = createCalendarCore({
+      store,
+      clock,
+      messenger: createMemoryMessenger(ADMINS),
+      textSender: sender,
+      timeZone: EASTERN,
+      ...options,
+    });
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    const added = await core.addAppointment(linda, everyDetail);
+    /** Runs what is due at a time on Thursday evening, Susan's time ('18:00' is 23:00Z). */
+    const runAt = async (time: string) => {
+      const [hours, minutes] = time.split(':').map(Number);
+      clock.set(new Date(Date.UTC(2026, 10, 19, hours + 5, minutes)).toISOString());
+      return core.runDue();
+    };
+    await runAt('18:00');
+    const [text] = store.texts();
+    return { store, clock, sender, core, added, runAt, text };
+  }
+
+  it('asks what became of a sent text on each run, and leaves it sent until it is settled', async () => {
+    const { store, sender, runAt, text } = await tracked();
+    expect(text).toMatchObject({ status: 'sent', reference: 'stand-in-1' });
+    for (const report of ['pending', 'pending'] as const) {
+      sender.report('stand-in-1', report);
+      await runAt('18:05');
+    }
+    expect(sender.asked()).toEqual(['stand-in-1', 'stand-in-1']);
+    expect(store.texts()).toMatchObject([{ status: 'sent', reason: null }]);
+  });
+
+  it('marks a text delivered once the sender says so, and stops asking', async () => {
+    const { store, sender, runAt } = await tracked();
+    sender.report('stand-in-1', 'delivered');
+    const done = await runAt('18:03');
+    expect(done).toMatchObject([{ status: 'delivered', reason: null }]);
+    expect(store.texts()).toMatchObject([{ status: 'delivered', reason: null }]);
+    await runAt('18:04');
+    await runAt('19:00');
+    expect(sender.asked()).toEqual(['stand-in-1']);
+    expect(store.texts()).toMatchObject([{ status: 'delivered' }]);
+  });
+
+  it('marks a text failed when the sender reports it was not delivered, and stops asking', async () => {
+    const { store, sender, runAt } = await tracked();
+    sender.report('stand-in-1', 'failed');
+    await runAt('18:02');
+    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'undelivered' }]);
+    await runAt('18:03');
+    expect(sender.asked()).toEqual(['stand-in-1']);
+  });
+
+  it('marks a text not confirmed delivered after 30 minutes with no confirmation', async () => {
+    const { store, runAt } = await tracked();
+    await runAt('18:29');
+    expect(store.texts()).toMatchObject([{ status: 'sent' }]);
+    await runAt('18:30');
+    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'unconfirmed' }]);
+  });
+
+  it('tells "not confirmed delivered" apart from a reported failure', async () => {
+    const reported = await tracked();
+    reported.sender.report('stand-in-1', 'failed');
+    await reported.runAt('18:31');
+    const unconfirmed = await tracked();
+    await unconfirmed.runAt('18:31');
+    expect(reported.store.texts()[0].reason).toBe('undelivered');
+    expect(unconfirmed.store.texts()[0].reason).toBe('unconfirmed');
+  });
+
+  it('still takes a confirmation that comes in the run that would have given up on it', async () => {
+    const { store, sender, runAt } = await tracked();
+    sender.report('stand-in-1', 'delivered');
+    await runAt('18:45');
+    expect(store.texts()).toMatchObject([{ status: 'delivered' }]);
+  });
+
+  it('stops asking once a text is marked not confirmed delivered', async () => {
+    const { sender, runAt } = await tracked();
+    await runAt('18:30');
+    await runAt('18:31');
+    await runAt('19:30');
+    expect(sender.asked()).toHaveLength(1);
+  });
+
+  it('waits as long as it is told to before a text counts as not confirmed', async () => {
+    const { store, runAt } = await tracked({ unconfirmedAfter: 60 * 60_000 });
+    await runAt('18:59');
+    expect(store.texts()).toMatchObject([{ status: 'sent' }]);
+    await runAt('19:00');
+    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'unconfirmed' }]);
+  });
+
+  it('leaves a text sent when the sender cannot be asked, and asks again next run', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { store, sender, runAt } = await tracked();
+    sender.breakReports();
+    await runAt('18:05');
+    expect(store.texts()).toMatchObject([{ status: 'sent' }]);
+    expect(logged.mock.calls.flat().join(' ')).toBe('Delivery status could not be read (unknown)');
+    sender.report('stand-in-1', 'delivered');
+    await runAt('18:06');
+    expect(store.texts()).toMatchObject([{ status: 'delivered' }]);
+    logged.mockRestore();
+  });
+
+  it('still marks a text not confirmed when the sender cannot be asked by then', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { store, sender, runAt } = await tracked();
+    sender.breakReports(5);
+    await runAt('18:30');
+    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'unconfirmed' }]);
+    vi.restoreAllMocks();
+  });
+
+  it('asks about a test text too, so Settings shows it delivered', async () => {
+    const { core, store, sender, runAt } = await tracked();
+    const test = await core.sendTestText(mark);
+    sender.report(test.reference!, 'delivered');
+    await runAt('18:01');
+    expect(store.texts().find((text) => text.kind === 'test')).toMatchObject({
+      status: 'delivered',
+    });
+  });
+
+  it('never asks about a text the sender gave no name to: it stays sent', async () => {
+    // The stand-in that only records texts names none of them: nothing can confirm them.
+    const { core, clock, store } = calendar();
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    await core.addAppointment(linda, checkUp);
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    clock.set('2026-11-20T01:00:00.000Z');
+    await core.runDue();
+    expect(store.texts()).toMatchObject([{ status: 'sent', reference: null, reason: null }]);
+  });
+
+  it('counts a delivered or unconfirmed text as one that reached Susan', async () => {
+    const delivered = await tracked();
+    delivered.sender.report('stand-in-1', 'delivered');
+    await delivered.runAt('18:01');
+    await refused(delivered.core.deleteAppointment(mark, delivered.added.id), 'texted');
+    const unconfirmed = await tracked();
+    await unconfirmed.runAt('18:30');
+    await refused(unconfirmed.core.deleteAppointment(mark, unconfirmed.added.id), 'texted');
+  });
+});
+
+describe('the credit left for texts', () => {
+  it('is recorded on each text from what the sender says, so a low balance can be told', async () => {
+    const { core, clock, sender, store } = calendar();
+    sender.haveCredit(41);
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    await core.addAppointment(linda, checkUp);
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    await core.sendTestText(mark);
+    expect(store.texts().map((text) => [text.kind, text.creditLeft])).toEqual([
+      ['reminder', 40],
+      ['test', 39],
+    ]);
+  });
+
+  it('is recorded from a refused send too, as when the credit has run out', async () => {
+    const { core, sender } = calendar();
+    sender.haveCredit(0);
+    sender.refuseNext();
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    expect(await core.sendTestText(mark)).toMatchObject({
+      status: 'failed',
+      reason: 'refused',
+      creditLeft: 0,
+    });
+  });
+
+  it('is null when the sender does not say', async () => {
+    const { core } = calendar();
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    expect((await core.sendTestText(mark)).creditLeft).toBeNull();
+  });
+});
+
+describe('web addresses', () => {
+  const ADDRESSES = [
+    'https://portal.example.com/visit',
+    'http://example.org',
+    'www.example.com',
+    'example.com/checkin',
+    'clinic.example.health',
+    'front-desk@example.com',
+  ];
+
+  it('are found however they are written, and ordinary words are not taken for one', () => {
+    for (const address of ADDRESSES) expect(holdsWebAddress(`See ${address} first.`)).toBe(true);
+    for (const words of [
+      "Susan's Calendar: Cardiology check-up with Dr. Patel, tomorrow at 2:00 pm.",
+      'Smith & Co. Dental, 12 St. James St. Suite 4',
+      'Bring your list of medicines.Then wait.',
+      'Pickup at 1:15 p.m., e.g. by the door.',
+    ])
+      expect(holdsWebAddress(words)).toBe(false);
+  });
+
+  it('are refused in every detail a text carries, and allowed in the Private notes', async () => {
+    const { core, store } = calendar();
+    const carried = [
+      'what',
+      'withWhom',
+      'placeName',
+      'placeAddress',
+      'driverName',
+      'noteForSusan',
+    ] as const;
+    for (const detail of carried) {
+      const refusal = await refused(
+        core.addAppointment(linda, { ...checkUp, [detail]: 'See www.example.com' }),
+        'invalid',
+      );
+      expect(refusal.detail).toBe(detail);
+      expect(refusal.message).toMatch(/web address/);
+    }
+    expect(store.appointments()).toEqual([]);
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      privateNotes: 'Portal: https://portal.example.com',
+    });
+    await refused(
+      core.changeAppointment(linda, added.id, { noteForSusan: 'Check in at example.com' }),
+      'invalid',
+    );
+  });
+
+  it('are refused in the name the automatic answer tells Susan to call', async () => {
+    const { core } = calendar();
+    const refusal = await refused(
+      core.changeSettings(linda, { contactName: 'Linda, www.example.com' }),
+      'invalid',
+    );
+    expect(refusal.detail).toBe('contactName');
+  });
+
+  it('are never sent: a text that would hold one, from before the rule, is not sent', async () => {
+    const { core, clock, sender, store } = calendar();
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    const added = await core.addAppointment(linda, checkUp);
+    // Kept before the calendar refused web addresses.
+    await store.replaceAppointment({ ...added, noteForSusan: 'Check in at www.example.com.' });
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    expect(sender.taken()).toEqual([]);
+    expect(store.texts()).toMatchObject([{ status: 'notSent', reason: 'webAddress' }]);
+  });
+
+  it('are in no text of any kind the calendar sends', async () => {
+    const { core, clock, sender, store } = calendar();
+    await core.changeSettings(linda, {
+      susansNumber: SUSANS_NUMBER,
+      contactName: 'Linda',
+      contactPhone: '(555) 555-0187',
+    });
+    await core.addAppointment(linda, {
+      ...everyDetail,
+      reminders: [
+        { shape: 'before', amount: 2, unit: 'hours' },
+        { shape: 'daysBefore', days: 1, time: '18:00' },
+        { shape: 'at', date: '2026-11-20', time: '09:00' },
+      ],
+    });
+    await core.sendTestText(mark);
+    for (const at of [
+      '2026-11-19T23:00:00.000Z',
+      '2026-11-20T14:00:00.000Z',
+      '2026-11-20T17:00:00.000Z',
+    ]) {
+      clock.set(at);
+      await core.runDue();
+    }
+    // Every kind of text the calendar has words for. Change notices (ticket 14) and the automatic
+    // answer (ticket 17) join this list as they are built; each kind must appear here.
+    const sent: Record<TextKind, string[]> = {
+      reminder: [],
+      changeNotice: [],
+      automaticAnswer: [],
+      test: [],
+    };
+    for (const text of store.texts()) sent[text.kind].push(text.words);
+    expect(sent.reminder).toHaveLength(3);
+    expect(sent.test).toEqual([TEST_TEXT_WORDS]);
+    for (const words of [...Object.values(sent).flat(), ...sender.taken().map((t) => t.words)])
+      expect(holdsWebAddress(words)).toBe(false);
   });
 });

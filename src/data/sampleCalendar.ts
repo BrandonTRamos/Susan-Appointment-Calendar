@@ -104,7 +104,7 @@ export function createSampleCalendar(
     core,
     store,
     sender,
-    textsRecordedOnly: true,
+    textsRecordedOnly: async () => true,
     watchAppointments(listener, onError) {
       let stop: (() => void) | undefined;
       let stopped = false;

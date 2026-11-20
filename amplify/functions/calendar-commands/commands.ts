@@ -5,8 +5,9 @@ import { CalendarRefusal, type Actor, type CalendarCore } from '../../../src/lib
 import { COMMAND_FAILED, type CommandAnswer } from '../../../src/lib/calendarApi';
 import { logFailure } from '../../calendar/log';
 import type { FindName } from '../../calendar/people';
+import type { TextSenderName } from '../../calendar/text-sender';
 
-/** What the data API hands a function for one mutation. */
+/** What the data API hands a function for one mutation, or for the textSender query. */
 export interface CommandEvent {
   /** Amplify Gen 2 puts the mutation's name here; AppSync's own events put it under `info`. */
   fieldName?: string;
@@ -19,6 +20,8 @@ export interface CommandEvent {
 export interface CommandDependencies {
   core: () => Promise<CalendarCore>;
   nameOf: FindName;
+  /** Which text sender is in use (amplify/calendar/text-sender.ts). */
+  textSender: () => TextSenderName;
 }
 
 /** The commands, as the data API names them: the only names a log may repeat. */
@@ -56,9 +59,11 @@ function fromJson(sent: unknown): unknown {
   }
 }
 
-export function calendarCommandHandler({ core, nameOf }: CommandDependencies) {
-  return async (event: CommandEvent): Promise<CommandAnswer> => {
+export function calendarCommandHandler({ core, nameOf, textSender }: CommandDependencies) {
+  return async (event: CommandEvent): Promise<CommandAnswer | TextSenderName> => {
     const command = event.fieldName ?? event.info?.fieldName;
+    // Not a command: it changes nothing, and says nothing about the calendar.
+    if (command === 'textSender') return textSender();
     const { id, details, changes, settings } = event.arguments;
     try {
       const by = await actor(event.identity, nameOf);
