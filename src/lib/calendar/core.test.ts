@@ -1405,6 +1405,20 @@ describe('Reminders still to be sent', () => {
     const cancelled = await core.cancelAppointment(linda, added.id);
     expect(remindersStillToSend(cancelled, now)).toEqual([]);
   });
+
+  it('leave out one held for review since its Appointment moved: it is not sent as it stands', async () => {
+    const { core } = calendar();
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      reminders: [thursdayAtEight, twoHoursBefore],
+    });
+    const moved = await core.changeAppointment(mark, added.id, { time: '15:00' });
+    const now = new Date('2026-11-19T20:00:00.000Z');
+    expect(moved.reminders.map((r) => r.needsReview)).toEqual([true, false]);
+    expect(remindersStillToSend(moved, now).map((r) => r.dueAt)).toEqual([
+      '2026-11-20T18:00:00.000Z',
+    ]);
+  });
 });
 
 describe("a Reminder's words", () => {
@@ -1867,6 +1881,104 @@ describe('sending texts on schedule', () => {
     clock.set('2026-11-20T19:01:00.000Z');
     await core.runDue();
     expect(store.texts()).toHaveLength(1);
+  });
+
+  it("stops at each Appointment's start as the run reaches it, not as it was when the run began", async () => {
+    const { core, clock, sender, store } = calendar();
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    // Two overdue Reminders, found at 1:50 pm on Friday: one for an Appointment at 2:20 pm, due at
+    // 1:00 pm, and one for an Appointment at 2:00 pm, due at 1:10 pm.
+    const later = await core.addAppointment(linda, {
+      what: 'Eye exam',
+      date: '2026-11-20',
+      time: '14:20',
+      reminders: [{ shape: 'at', date: '2026-11-20', time: '13:00' }],
+    });
+    const sooner = await core.addAppointment(linda, {
+      what: 'Blood draw',
+      date: '2026-11-20',
+      time: '14:00',
+      reminders: [{ shape: 'at', date: '2026-11-20', time: '13:10' }],
+    });
+    clock.set('2026-11-20T18:50:00.000Z');
+    // The first send is slow: it takes until 2:05 pm, after the Blood draw has started.
+    const slow = createCalendarCore({
+      store,
+      clock,
+      messenger: createMemoryMessenger(),
+      textSender: {
+        async send(text) {
+          const result = await sender.send(text);
+          clock.set('2026-11-20T19:05:00.000Z');
+          return result;
+        },
+      },
+      timeZone: EASTERN,
+    });
+    await slow.runDue();
+    expect(sender.taken().map((text) => /Eye exam|Blood draw/.exec(text.words)?.[0])).toEqual([
+      'Eye exam',
+    ]);
+    expect(
+      store.texts().map((text) => [text.appointmentId, text.status, text.reason, text.attempts]),
+    ).toEqual([
+      [later.id, 'sent', null, 1],
+      [sooner.id, 'notSent', 'tooLate', 0],
+    ]);
+    // Never tried, so it did not reach her: the Blood draw can still be deleted.
+    await core.deleteAppointment(mark, sooner.id);
+  });
+
+  it('stops trying a text again at its start as the run reaches it, too', async () => {
+    const { core, clock, sender, store } = calendar();
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    await core.addAppointment(linda, {
+      what: 'Eye exam',
+      date: '2026-11-20',
+      time: '14:20',
+      reminders: [{ shape: 'at', date: '2026-11-20', time: '13:40' }],
+    });
+    const sooner = await core.addAppointment(linda, {
+      what: 'Blood draw',
+      date: '2026-11-20',
+      time: '14:00',
+      reminders: [{ shape: 'at', date: '2026-11-20', time: '13:45' }],
+    });
+    // At 1:45 pm neither send can tell whether it went.
+    sender.breakNext(2);
+    clock.set('2026-11-20T18:45:00.000Z');
+    await core.runDue();
+    expect(store.texts().map((text) => [text.status, text.attempts])).toEqual([
+      ['waiting', 1],
+      ['waiting', 1],
+    ]);
+    // At 1:50 pm both are tried again. The first try, the Eye exam's, is slow: it takes until
+    // 2:01 pm, after the Blood draw has started.
+    const slow = createCalendarCore({
+      store,
+      clock,
+      messenger: createMemoryMessenger(),
+      textSender: {
+        async send(text) {
+          const result = await sender.send(text);
+          clock.set('2026-11-20T19:01:00.000Z');
+          return result;
+        },
+      },
+      timeZone: EASTERN,
+    });
+    clock.set('2026-11-20T18:50:00.000Z');
+    await slow.runDue();
+    expect(sender.taken().map((text) => /Eye exam|Blood draw/.exec(text.words)?.[0])).toEqual([
+      'Eye exam',
+    ]);
+    // Failed, not "not sent": its first try may have reached her.
+    expect(store.texts().find((text) => text.appointmentId === sooner.id)).toMatchObject({
+      status: 'failed',
+      reason: 'tooLate',
+      attempts: 1,
+    });
+    await refused(core.deleteAppointment(mark, sooner.id), 'texted');
   });
 
   it('gives up trying a text again once the Appointment has started', async () => {

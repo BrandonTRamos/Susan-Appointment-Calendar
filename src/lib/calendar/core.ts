@@ -613,7 +613,7 @@ export function createCalendarCore({
       });
       if (!(await store.claimText(text)))
         throw new CalendarRefusal('invalid', 'A test text was sent just now. Wait a moment.');
-      return attempt(text, susansNumber);
+      return attempt(text, susansNumber, { startsAt: null, tried: 0 });
     },
 
     async runDue() {
@@ -641,7 +641,15 @@ export function createCalendarCore({
             ? { ...text, status: 'failed', reason: retry.reason, triedAt: at }
             : { ...text, words: retry.words, attempts: text.attempts + 1, triedAt: at };
         if (!(await store.retakeText(next, text))) continue;
-        done.push('reason' in retry ? next : await attempt(next, susansNumber!));
+        if ('reason' in retry) {
+          done.push(next);
+          continue;
+        }
+        const startsAt =
+          text.kind === 'reminder'
+            ? (appointments.find((each) => each.id === text.appointmentId)?.startsAt ?? null)
+            : null;
+        done.push(await attempt(next, susansNumber!, { startsAt, tried: text.attempts }));
       }
 
       // Reminders that have come due.
@@ -675,7 +683,7 @@ export function createCalendarCore({
           continue;
         }
         if (!(await store.claimText(text))) continue;
-        done.push(await attempt(text, susansNumber));
+        done.push(await attempt(text, susansNumber, { startsAt: appointment.startsAt, tried: 0 }));
       }
       return done;
     },
@@ -730,8 +738,22 @@ export function createCalendarCore({
    * nobody can tell whether it went, it is left waiting to be tried again, until it has been tried
    * SEND_ATTEMPTS times.
    */
-  async function attempt(text: Text, to: string): Promise<Text> {
+  async function attempt(
+    text: Text,
+    to: string,
+    { startsAt, tried }: { startsAt: string | null; tried: number },
+  ): Promise<Text> {
     let next: Text;
+    // The cutoff is the Appointment's start as it is at the moment of sending, not when the run
+    // began: an earlier slow send can carry the clock past it. Nothing goes once it has started.
+    if (startsAt && clock.now().toISOString() >= startsAt) {
+      next =
+        tried === 0
+          ? { ...text, status: 'notSent', reason: 'tooLate', attempts: 0 }
+          : { ...text, status: 'failed', reason: 'tooLate', attempts: tried };
+      await store.replaceText(next);
+      return next;
+    }
     try {
       const result = await textSender.send({ to, words: text.words });
       next = result.sent

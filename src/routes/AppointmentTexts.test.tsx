@@ -148,3 +148,59 @@ describe.each(['phone', 'desktop'] as const)(
     });
   },
 );
+
+describe('a Reminder held for review since its Appointment moved', () => {
+  /**
+   * An Appointment in two days at 2:00 pm, with an exact-time Reminder the evening before and one
+   * two hours before, then moved to 3:00 pm: the exact-time one is held for review.
+   */
+  async function moved() {
+    const calendar = createSampleCalendar(EASTERN, { empty: true });
+    const added = await calendar.core.addAppointment(linda, {
+      what: 'Cardiology check-up',
+      date: daysFromToday(2),
+      time: '14:00',
+      reminders: [
+        { shape: 'at', date: daysFromToday(1), time: '18:00' },
+        { shape: 'before', amount: 2, unit: 'hours' },
+      ],
+    });
+    const after = await calendar.core.changeAppointment(linda, added.id, { time: '15:00' });
+    expect(after.reminders.map((reminder) => reminder.needsReview)).toEqual([true, false]);
+    return { calendar, appointment: after };
+  }
+
+  it.each(['phone', 'desktop'] as const)(
+    'is not among the Reminders still to be sent on the Upcoming card, at %s width',
+    async (width) => {
+      atWidth(width);
+      const { calendar } = await moved();
+      renderApp('/', { calendar });
+      const card = within(await screen.findByRole('region', { name: 'Next up' }));
+      const list = within(card.getByRole('list', { name: 'Reminders still to be sent' }));
+      expect(list.getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+        expect.stringMatching(/ at 1:00 pm$/),
+      ]);
+    },
+  );
+
+  it('is not counted beneath the phone Month grid', async () => {
+    atWidth('phone');
+    const { calendar } = await moved();
+    renderApp('/month', { calendar });
+    const region = within(await screen.findByRole('region', { name: 'Picked day' }));
+    const row = region
+      .getAllByRole('listitem')
+      .find((each) => each.textContent?.includes('Cardiology check-up'));
+    expect(row?.textContent).toMatch(/1 Reminder to send$/);
+  });
+
+  it('is still shown on the Appointment, as waiting for review', async () => {
+    atWidth('phone');
+    const { calendar, appointment } = await moved();
+    renderApp(`/appointments/${appointment.id}`, { calendar });
+    const list = within(await screen.findByRole('list', { name: 'Reminders' }));
+    expect(list.getAllByRole('listitem')).toHaveLength(2);
+    expect(list.getByText('Waiting for review')).toBeTruthy();
+  });
+});
