@@ -28,5 +28,3 @@ Ticket 04 left a plain form and list. This ticket replaces their layout, not the
 - The place for the Reminders still to be sent is `RemindersToSend` (`src/components/RemindersToSend.tsx`), rendered inside the next-Appointment card. It shows nothing until ticket 07 fills it.
 - The overlap rule is `overlappingAppointments` in the calendar core: two active Appointments overlap when they start less than an hour apart, measured in real time. The warning is on the Appointment's detail, so it is the first thing seen after saving, and it stays while the overlap does.
 - At desktop width an Appointment's addresses (`/appointments/<id>`, `/edit`, `/new`) keep Upcoming in the middle column and fill the detail panel. Ticket 10 decides what the middle column shows when an Appointment is picked from Month.
-- The phone heading reads "Upcoming", as at desktop width and in the tab bar, where the phone mockup shows the app name.
-

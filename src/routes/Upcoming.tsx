@@ -26,7 +26,9 @@ export function Upcoming() {
 
   return (
     <Page
-      title="Upcoming"
+      // On a phone the first screen carries the app's name, as the chosen design has it; the tab
+      // bar already says this is Upcoming.
+      title={desktop ? 'Upcoming' : "Susan's Calendar"}
       // The desktop layout has this in its sidebar.
       action={
         !desktop && (
