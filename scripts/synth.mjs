@@ -1,8 +1,9 @@
 // Synthesizes the Amplify backend with CDK locally, without AWS credentials. It catches CDK and
 // bundling errors before a deploy, then checks the sign-in rules, the rules about who may read and
-// write calendar data and subscription links, the feed's public address, the scheduled run that
-// sends texts and raises Alerts, the Textbelt key's secret, the daily Series top-up's schedule
-// and access, and the cost tags in what was synthesized. Usage: npm run synth
+// write calendar data, subscription links and agent keys, the public addresses of the feed and the
+// MCP server and what each may reach, the scheduled run that sends texts and raises Alerts, the
+// Textbelt key's secret, the daily Series top-up's schedule and access, and the cost tags in what
+// was synthesized. Usage: npm run synth
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -138,7 +139,9 @@ const COMMANDS = [
   'changeSeries',
   'endSeries',
   'changeSettings',
+  'makeAgentKey',
   'makeSubscriptionLink',
+  'revokeAgentKey',
   'removeAppointment',
   'sendTestText',
   'switchOffSubscriptionLink',
@@ -149,7 +152,7 @@ const COMMANDS = [
  */
 const MODELS = ['Appointment', 'Series', 'ActivityRecord', 'Text', 'CalendarSettings'];
 /** Kept per person, and read only by that person. Only the commands function writes these. */
-const OWN_MODELS = ['SubscriptionLink'];
+const OWN_MODELS = ['SubscriptionLink', 'AgentKey'];
 /**
  * Turning app notifications on and off for a device, and keeping it up to date: the only other
  * mutations anyone may call.
@@ -170,15 +173,19 @@ const APP_NOTIFICATION_FIELDS = [
   'Query/getAppNotificationKey',
 ];
 
-/** All the Series top-up may call in the data API: SERIES_TOP_UP_FIELDS in its access.ts. */
-const SERIES_TOP_UP_FIELDS = (() => {
-  const words = readFileSync('amplify/functions/series-top-up/access.ts', 'utf8');
+/** The data API fields a function's access.ts lists, as 'Type/field', sorted. */
+function accessList(file) {
+  const words = readFileSync(file, 'utf8');
   const of = (type) =>
     [...(new RegExp(`${type}: \\[([^\\]]*)\\]`).exec(words)?.[1] ?? '').matchAll(/'(\w+)'/g)].map(
       ([, field]) => `${type}/${field}`,
     );
   return [...of('Query'), ...of('Mutation')].sort();
-})();
+}
+/** All the Series top-up may call in the data API: SERIES_TOP_UP_FIELDS in its access.ts. */
+const SERIES_TOP_UP_FIELDS = accessList('amplify/functions/series-top-up/access.ts');
+/** All the MCP server may call in the data API: MCP_SERVER_FIELDS in its access.ts. */
+const MCP_SERVER_FIELDS = accessList('amplify/functions/mcp-server/access.ts');
 /**
  * What a function's role may call in the data API, as 'Type/field', or 'Type/*' for a whole type.
  * Its role is the one its own policies name, found by the start of its ID.
@@ -209,13 +216,13 @@ function dataApiAccess(rolePrefix) {
  * (amplify/calendar/app-notification-devices.ts), so this step must put the caller's condition into
  * the one conditional write.
  */
-function deviceWriteWords(verb) {
+function deviceWriteWords(verb, model = 'AppNotificationDevice') {
   return stacks()
     .flatMap((stack) => Object.entries(stack))
     .filter(
       ([id, resource]) =>
         resource.Type === 'AWS::AppSync::FunctionConfiguration' &&
-        id.startsWith(`Mutation${verb}AppNotificationDeviceDataResolverFn`),
+        id.startsWith(`Mutation${verb}${model}DataResolverFn`),
     )
     .map(([, resource]) => stepWords(resource.Properties, 'Request'))
     .join('\n');
@@ -249,35 +256,44 @@ function appNotificationsFunction() {
   return { properties: lambda.Properties, statements, code };
 }
 
-/**
- * The subscription feed's function: the one its public address (a Lambda function URL) points at,
- * found by that address rather than by anything another function might share. Gives its
- * properties, what its role may do, the code it runs as bundled for the deploy, and how many public
- * addresses there are.
- */
-function feedFunction() {
-  const all = stacks();
-  const urls = all.flatMap((stack) =>
+/** Every public address (a Lambda function URL), across the stacks. */
+function publicAddresses() {
+  return stacks().flatMap((stack) =>
     Object.values(stack).filter((resource) => resource.Type === 'AWS::Lambda::Url'),
   );
-  const target = urls[0]?.Properties?.TargetFunctionArn?.['Fn::GetAtt']?.[0];
-  const lambda = all
-    .map((stack) => stack[target])
-    .find((resource) => resource?.Type === 'AWS::Lambda::Function');
-  if (urls.length !== 1 || !lambda) return { urls, properties: {}, actions: [], code: '' };
+}
+
+/**
+ * A function with a public address, found by the start of its ID: the subscription feed
+ * (`subscriptionfeedlambda`) or the MCP server (`mcpserverlambda`). Gives the public addresses that
+ * point at it, its properties, what its role may do outside the data API (`statements`, and their
+ * actions), and the code it runs as bundled for the deploy.
+ */
+function publicFunction(prefix) {
+  const all = stacks().flatMap((stack) => Object.entries(stack));
+  const [name, lambda] =
+    all.find(
+      ([id, resource]) =>
+        resource.Type === 'AWS::Lambda::Function' && new RegExp(`^${prefix}[0-9A-F]+$`).test(id),
+    ) ?? [];
+  const urls = publicAddresses().filter(
+    (url) => name && url.Properties?.TargetFunctionArn?.['Fn::GetAtt']?.[0] === name,
+  );
+  if (!lambda) return { urls, properties: {}, statements: [], actions: [], code: '' };
   const role = lambda.Properties.Role?.['Fn::GetAtt']?.[0];
-  const actions = all
-    .flatMap((stack) => Object.values(stack))
+  const every = all
     .filter(
-      (resource) =>
+      ([, resource]) =>
         resource.Type === 'AWS::IAM::Policy' &&
         resource.Properties.Roles?.some((each) => each.Ref === role),
     )
-    .flatMap((policy) => policy.Properties.PolicyDocument.Statement)
-    .flatMap((statement) => [statement.Action].flat());
+    .flatMap(([, policy]) => policy.Properties.PolicyDocument.Statement);
+  // Every action, the data API's included, so that reaching it at all is seen.
+  const actions = every.flatMap((statement) => [statement.Action].flat());
+  const statements = every.filter((statement) => !String(statement.Action).startsWith('appsync:'));
   const asset = /^([0-9a-f]{64})\.zip$/.exec(lambda.Properties.Code?.S3Key ?? '')?.[1];
   const code = asset ? readFileSync(join(out, `asset.${asset}`, 'index.mjs'), 'utf8') : '';
-  return { urls, properties: lambda.Properties, actions, code };
+  return { urls, properties: lambda.Properties, statements, actions, code };
 }
 
 /**
@@ -403,7 +419,9 @@ function checks() {
   const client = clients[0] ?? {};
   const queries = openToSignedIn('Query');
   const queryRules = ruleSteps('Query');
-  const feed = feedFunction();
+  const feed = publicFunction('subscriptionfeedlambda');
+  const mcp = publicFunction('mcpserverlambda');
+  const commandsFn = scheduledFunction('calendarcommandslambda');
   const run = scheduledFunction('sendtextslambda');
   const topUp = scheduledFunction('seriestopuplambda');
   const claim = writeStep('Mutation', 'createText');
@@ -579,11 +597,28 @@ function checks() {
     ],
     [
       "a signed-in person can read their own subscription link and nobody else's",
-      OWN_MODELS.every((model) =>
-        [`get${model}`, `list${model}s`, `${model[0].toLowerCase()}${model.slice(1)}ByHash`].every(
-          (query) => onlyOwn(queryRules.get(query) ?? []),
-        ),
+      ['getSubscriptionLink', 'listSubscriptionLinks', 'subscriptionLinkByHash'].every((query) =>
+        onlyOwn(queryRules.get(query) ?? []),
       ),
+    ],
+    [
+      "a signed-in person can read their own agent keys and nobody else's",
+      ['getAgentKey', 'listAgentKeys'].every((query) => onlyOwn(queryRules.get(query) ?? [])) &&
+        [...queryRules.keys()].filter((query) => /AgentKey/i.test(query)).length === 2,
+    ],
+    [
+      // revokeAgentKey (amplify/calendar/data-store.ts): no earlier read decides it, so a key
+      // revoked the moment it is made is still revoked, and nobody else's is.
+      "an agent key is revoked only by a delete on condition that it is the person's, decided as DynamoDB deletes it",
+      (() => {
+        const words = deviceWriteWords('Delete', 'AgentKey');
+        return (
+          words.includes('"operation": "DeleteItem"') &&
+          words.includes('$util.qr($ctx.stash.conditions.add($args.condition))') &&
+          words.includes('$util.qr($DeleteRequest.put("condition", $Conditions))') &&
+          commandsFn.code.includes('deleteAgentKey(input: { hash: $hash }, condition: $condition)')
+        );
+      })(),
     ],
     [
       'nobody signed in can write calendar data or a subscription link directly',
@@ -592,10 +627,11 @@ function checks() {
       ),
     ],
     [
-      "the commands, feed, scheduled run and Series top-up functions are told Susan's time zone",
+      "the commands, feed, scheduled run, Series top-up and MCP server functions are told Susan's time zone",
       resources('AWS::Lambda::Function').filter(
         (lambda) => lambda.Environment?.Variables?.SUSAN_TIME_ZONE,
-      ).length === 4 &&
+      ).length === 5 &&
+        Boolean(mcp.properties.Environment?.Variables?.SUSAN_TIME_ZONE) &&
         Boolean(run.properties.Environment?.Variables?.SUSAN_TIME_ZONE) &&
         Boolean(topUp.properties.Environment?.Variables?.SUSAN_TIME_ZONE),
     ],
@@ -733,11 +769,71 @@ function checks() {
         /\{\s*alertTriedAt:\s*\{\s*eq:/.test(run.code),
     ],
     [
-      // The feed has the only public address. Its link is checked inside the function.
-      'the subscription feed has the only public address, with a cap on requests at once',
-      feed.urls.length === 1 &&
-        feed.urls[0].Properties.AuthType === 'NONE' &&
-        feed.properties.ReservedConcurrentExecutions > 0,
+      // The feed and the MCP server have the only public addresses, one each. The feed's link and
+      // the MCP server's agent key are checked inside each function.
+      'the subscription feed and the MCP server have the only public addresses, each with a cap on requests at once',
+      publicAddresses().length === 2 &&
+        [feed, mcp].every(
+          (fn) =>
+            fn.urls.length === 1 &&
+            fn.urls[0].Properties.AuthType === 'NONE' &&
+            fn.properties.ReservedConcurrentExecutions > 0 &&
+            fn.properties.ReservedConcurrentExecutions <= 5,
+        ),
+    ],
+    [
+      // Its list in access.ts, which tests prove is what its code calls: Appointments, Series, the
+      // texts about an Appointment, activity records, and the devices Activity updates go to.
+      'the MCP server may call only the data API fields its access list names, and no settings, link, key or text write',
+      MCP_SERVER_FIELDS.length === 14 &&
+        dataApiAccess('mcpserverlambdaServiceRole').join() === MCP_SERVER_FIELDS.join() &&
+        !MCP_SERVER_FIELDS.some((field) =>
+          /Settings|SubscriptionLink|AgentKey|Mutation\/\w*Text$|Query\/(get|list)Texts?$/.test(
+            field,
+          ),
+        ),
+    ],
+    [
+      // Outside the data API: one consistent read of a key by its hash, its person's account and
+      // the Admins group, and what the data API client needs to start. No email, no Textbelt key.
+      'the MCP server may only get single agent keys from their table, consistently, and look up accounts',
+      (() => {
+        const dynamo = mcp.statements.filter((statement) =>
+          [statement.Action].flat().some((action) => String(action).startsWith('dynamodb:')),
+        );
+        const cognito = mcp.statements.filter((statement) =>
+          [statement.Action].flat().some((action) => String(action).startsWith('cognito-idp:')),
+        );
+        const tableArn = JSON.stringify(dynamo[0]?.Resource ?? '');
+        const variables = mcp.properties.Environment?.Variables ?? {};
+        return (
+          dynamo.length === 1 &&
+          JSON.stringify([dynamo[0].Action].flat()) === '["dynamodb:GetItem"]' &&
+          tableArn.includes('AgentKey') &&
+          !tableArn.includes('index') &&
+          JSON.stringify(variables.AGENT_KEY_TABLE ?? '').includes('AgentKey') &&
+          cognito.length === 1 &&
+          JSON.stringify([cognito[0].Action].flat().sort()) ===
+            '["cognito-idp:AdminGetUser","cognito-idp:ListUsersInGroup"]' &&
+          Boolean(variables.USER_POOL_ID) &&
+          mcp.statements.every(
+            (statement) =>
+              statement === dynamo[0] ||
+              statement === cognito[0] ||
+              [statement.Action]
+                .flat()
+                .every(
+                  (action) =>
+                    action === 'ssm:GetParameters' ||
+                    (action === 's3:GetObject' &&
+                      JSON.stringify(statement.Resource).includes('modelIntrospectionSchema')),
+                ),
+          ) &&
+          Object.keys(variables).every((name) => !/TEXTBELT|ALERT/.test(name)) &&
+          /ConsistentRead:\s*(?:!0|true)\b/.test(mcp.code) &&
+          !/ConsistentRead:\s*(?:!1|false)\b/.test(mcp.code)
+        );
+      })(),
     ],
     [
       // Its environment names the two tables it reads, from the tables' own stacks.

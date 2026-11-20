@@ -1,6 +1,13 @@
 // The calendar core, as the rest of the code sees it. Import from here, not from the files beside
 // this one.
 
+export {
+  AGENT_KEY_NAME_LIMIT,
+  AGENT_KEY_PREFIX,
+  isAgentKey,
+  type AgentKey,
+  type MadeAgentKey,
+} from './agentKeys';
 export * from './alerts';
 export * from './appointment';
 export {

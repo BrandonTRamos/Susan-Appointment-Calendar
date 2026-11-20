@@ -11,6 +11,8 @@ import { configureProjectTags } from './cost-tags';
 import { data } from './data/resource';
 import { appNotifications } from './functions/app-notifications/resource';
 import { calendarCommands } from './functions/calendar-commands/resource';
+import { MCP_SERVER_FIELDS } from './functions/mcp-server/access';
+import { mcpServer } from './functions/mcp-server/resource';
 import { sendTexts } from './functions/send-texts/resource';
 import { SERIES_TOP_UP_FIELDS } from './functions/series-top-up/access';
 import { seriesTopUp } from './functions/series-top-up/resource';
@@ -24,6 +26,7 @@ const backend = defineBackend({
   subscriptionFeed,
   appNotifications,
   sendTexts,
+  mcpServer,
 });
 
 // COST_TAG keeps separate deployments apart in billing; main also tags its own Hosting app.
@@ -164,6 +167,33 @@ backend.appNotifications.resources.lambda.addToRolePolicy(
   new PolicyStatement({ actions: ['dynamodb:GetItem'], resources: [deviceTable.tableArn] }),
 );
 
+// The MCP server, at a public address, for a person's AI agent (amplify/functions/mcp-server). Its
+// agent key is checked in the function. The address is public, so concurrent requests are capped:
+// plenty for a few agents, and a ceiling on cost if something floods it, as in the sibling apps.
+// Requests over the cap get 429 Too Many Requests. `npm run synth` checks all of this.
+const mcpLambda = backend.mcpServer.resources.lambda;
+const mcpUrl = mcpLambda.addFunctionUrl({ authType: FunctionUrlAuthType.NONE });
+backend.mcpServer.resources.cfnResources.cfnFunction.reservedConcurrentExecutions = 3;
+
+// It changes the calendar through the core, which writes through the data API like the commands
+// function, and may call only the fields its code needs (MCP_SERVER_FIELDS in
+// amplify/functions/mcp-server/access.ts): no settings, subscription links, agent keys or texts.
+onlyDataApiFields(mcpLambda, 'MCP server', MCP_SERVER_FIELDS);
+
+// It finds an agent key by its hash straight from the AgentKey table, with a strongly consistent
+// read, so that a revoked key stops at once (amplify/calendar/agent-key-table.ts). It may get one
+// item from that table and nothing more.
+const agentKeyTable = backend.data.resources.tables['AgentKey'];
+backend.mcpServer.addEnvironment('AGENT_KEY_TABLE', agentKeyTable.tableName);
+mcpLambda.addToRolePolicy(
+  new PolicyStatement({ actions: ['dynamodb:GetItem'], resources: [agentKeyTable.tableArn] }),
+);
+
+// It acts as the key's person: it looks their account up by its ID for their name, and to refuse a
+// key whose account is disabled or gone, and lists the Admins group for the Activity updates.
+userPool.grant(mcpLambda, 'cognito-idp:AdminGetUser', 'cognito-idp:ListUsersInGroup');
+backend.mcpServer.addEnvironment('USER_POOL_ID', userPool.userPoolId);
+
 // The calendar subscription's feed, at a public address. Each person's secret link is checked in
 // the function (amplify/functions/subscription-feed/feed.ts). The address is public, so concurrent
 // requests are capped: plenty for a handful of calendar apps refreshing, and a ceiling on cost if
@@ -205,7 +235,8 @@ for (const schedule of sendTextsLambda.node.findAll())
     });
 
 // For the app (src/config.ts): Susan's time zone; the contact address and owner's name shown on the
-// public pages; and the feed's address, which each person's link is made from. A value that isn't a
+// public pages; the feed's address, which each person's link is made from; and the MCP server's
+// address, which Settings shows beside a new agent key. A value that isn't a
 // time zone or an email address fails the deploy. A value that isn't set is left out. Which text
 // sender is in use is not here: the Textbelt key is a secret that can be stored after a deploy, so
 // the app asks (the textSender query in amplify/data/resource.ts).
@@ -215,5 +246,6 @@ backend.addOutput({
     contactEmail: resolveContactEmail(process.env.CONTACT_EMAIL) ?? undefined,
     ownerName: resolveOwnerName(process.env.OWNER_NAME) ?? undefined,
     subscriptionFeedUrl: feedUrl.url,
+    mcpEndpoint: `${mcpUrl.url}mcp`,
   },
 });

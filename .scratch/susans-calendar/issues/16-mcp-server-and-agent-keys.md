@@ -8,16 +8,18 @@
 
 **Parallel:** Yes, with 13, 14 and 15. It fills the "Agent keys" section of Settings and nothing else there.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A public endpoint serves the Model Context Protocol, with limited concurrency, as in the sibling apps.
-- [ ] In the "Agent keys" section of Settings, a person can create a key, see it once, and revoke it. Only a hash of each key is stored.
-- [ ] A call with a missing, wrong or revoked key is refused and learns nothing about the calendar.
-- [ ] Tools let an agent list and read Appointments and Series, and read the status of texts sent for an Appointment.
-- [ ] Tools let an agent add, change and cancel Appointments and Series and set their Reminders.
-- [ ] Every tool call goes through the calendar core as the key's owner, marked "via agent". The Appointment's history reads accordingly.
-- [ ] An agent's change follows the same rules as a person's, including Change notices to Susan and Activity updates to the other Admins.
-- [ ] Tools do not expose Settings, keys, subscription links or accounts.
-- [ ] Each tool's description tells an agent that all times are Susan's local time, and warns that changing an Appointment she has been reminded of sends her a text.
-- [ ] Tests cover a refused key, attribution of a change, and that a change through a tool produces the same outcome as the same change through the app.
-- [ ] The README explains how to connect an agent.
+- [x] A public endpoint serves the Model Context Protocol, with limited concurrency, as in the sibling apps.
+- [x] In the "Agent keys" section of Settings, a person can create a key, see it once, and revoke it. Only a hash of each key is stored.
+- [x] A call with a missing, wrong or revoked key is refused and learns nothing about the calendar.
+- [x] Tools let an agent list and read Appointments and Series, and read the status of texts sent for an Appointment.
+- [x] Tools let an agent add, change and cancel Appointments and Series and set their Reminders.
+- [x] Every tool call goes through the calendar core as the key's owner, marked "via agent". The Appointment's history reads accordingly.
+- [x] An agent's change follows the same rules as a person's, including Change notices to Susan and Activity updates to the other Admins.
+- [x] Tools do not expose Settings, keys, subscription links or accounts.
+- [x] Each tool's description tells an agent that all times are Susan's local time, and warns that changing an Appointment she has been reminded of sends her a text.
+- [x] Tests cover a refused key, attribution of a change, and that a change through a tool produces the same outcome as the same change through the app.
+- [x] The README explains how to connect an agent.
+
+**As built:** see the spec's "MCP server" section. A person can have several named keys. Revoking deletes the key by a delete conditioned on it being the person's. The cap is three requests at once (reserved concurrency), as for the feed; Wellbeing's extra per-address request counter was not added. Change notices are ticket 14's: agent changes go through the same core commands, so they follow once 14 lands.

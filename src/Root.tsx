@@ -19,6 +19,8 @@ export interface RootProps {
   ownerName: string | null;
   /** The calendar subscription feed's address, or null when the backend has none. */
   subscriptionFeedUrl?: string | null;
+  /** The MCP server's address, for agent keys, or null when the backend has none. */
+  mcpEndpoint?: string | null;
 }
 
 /**
@@ -34,6 +36,7 @@ export function Root({
   contactEmail,
   ownerName,
   subscriptionFeedUrl = null,
+  mcpEndpoint = null,
 }: RootProps) {
   const publicPage = publicPageAt(window.location.pathname);
   if (publicPage)
@@ -53,6 +56,7 @@ export function Root({
           displayName={person.displayName}
           timeZone={timeZone}
           subscriptionFeedUrl={subscriptionFeedUrl}
+          mcpEndpoint={mcpEndpoint}
         />
       )}
     </SignedIn>
@@ -73,12 +77,14 @@ function SignedInApp({
   displayName,
   timeZone,
   subscriptionFeedUrl,
+  mcpEndpoint,
 }: {
   displayName: string | null;
   timeZone: string;
   subscriptionFeedUrl: string | null;
+  mcpEndpoint: string | null;
 }) {
-  const [calendar] = useState(() => createAmplifyCalendar(subscriptionFeedUrl));
+  const [calendar] = useState(() => createAmplifyCalendar(subscriptionFeedUrl, mcpEndpoint));
   const [devices] = useState(createAppNotificationDevices);
   return (
     <App

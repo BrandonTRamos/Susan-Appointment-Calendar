@@ -3,6 +3,7 @@
 //
 // The ports are the store, the clock, the text sender and the Admin messenger.
 
+import type { AgentKey } from './agentKeys';
 import type { ActivityRecord, Appointment } from './appointment';
 import type { Series } from './series';
 import type { SubscriptionLink } from './subscription';
@@ -64,6 +65,16 @@ export interface Store {
   keepSubscriptionLink(link: SubscriptionLink): Promise<void>;
   /** Removes the person's subscription link, if they have one. */
   removeSubscriptionLink(personId: string): Promise<void>;
+  /** The agent key with this hash, as it is kept now, or null when there is none. */
+  agentKeyByHash(hash: string): Promise<AgentKey | null>;
+  /** Keeps a new agent key. */
+  keepAgentKey(key: AgentKey): Promise<void>;
+  /**
+   * Removes the agent key with this hash only if it is there and is this person's: in one step,
+   * decided as it is removed, never by an earlier read that could lag behind the key being made.
+   * Answers whether it was removed.
+   */
+  removeAgentKey(hash: string, personId: string): Promise<boolean>;
 }
 
 /** What time it is. */
