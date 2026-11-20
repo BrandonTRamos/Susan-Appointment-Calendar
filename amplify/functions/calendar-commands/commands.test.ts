@@ -87,6 +87,32 @@ describe('the commands, as the data API calls them', () => {
     ]);
   });
 
+  it('add a Series, change it from one Appointment on, and end it, answering with that one', async () => {
+    const { store, call } = commands();
+    const dialysis = {
+      what: 'Dialysis',
+      date: '2026-11-23',
+      time: '09:00',
+      repeat: { every: 'week', weekdays: [0, 3] },
+      ends: '2026-12-31',
+    };
+    const id = '6a1f7c3e-2b4d-4e8f-9a0b-1c2d3e4f5a6b';
+    const added = await call('addSeries', { id, details: JSON.stringify(dialysis) });
+    expect(added).toMatchObject({ appointment: { date: '2026-11-23', series: { id } } });
+    const [, , third, fourth] = store.appointments();
+    expect(
+      await call('changeSeries', { id: third.id, changes: JSON.stringify({ time: '10:00' }) }),
+    ).toMatchObject({ appointment: { id: third.id, time: '10:00' } });
+    expect(await call('endSeries', { id: fourth.id })).toMatchObject({
+      appointment: { id: fourth.id, state: 'cancelled' },
+    });
+    expect(store.activity().map(({ action, seriesId }) => [action, Boolean(seriesId)])).toEqual([
+      ['added', true],
+      ['changed', true],
+      ['cancelled', true],
+    ]);
+  });
+
   it('carry out once an add that the app sends twice with the same ID', async () => {
     const { store, call } = commands();
     const sent = { id: '3f0c8a52-9d1e-4b7a-8c11-5e2f6a7b8c9d', details: JSON.stringify(checkUp) };

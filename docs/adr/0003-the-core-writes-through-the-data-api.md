@@ -6,7 +6,7 @@ status: accepted
 
 The calendar core's commands run in a backend function, and that function writes calendar data by calling the data API with its own role, not by writing to the tables. We chose this in November 2026, when the first commands were built, because the spec asks for two things at once: only the core may write, and a change made by one person must appear for everyone else without a reload. The data API announces a change to the people subscribed to it only when the change is made through it. A write straight to a table is announced to nobody.
 
-So the models are read-only to anyone signed in, the core's commands are custom mutations run by the function, and the function is the one caller allowed to use the models' own mutations. `npm run synth` checks all three.
+So the models are read-only to anyone signed in, the core's commands are custom mutations run by the function, and only the backend functions that run the core may use the models' own mutations: the commands function, the scheduled run that sends texts, and the daily Series top-up, which may use only the few it needs (see Updates). `npm run synth` checks all of this.
 
 ## Considered options
 
@@ -16,9 +16,15 @@ So the models are read-only to anyone signed in, the core's commands are custom 
 
 ## Consequences
 
-- **Every writer gets live updates for free.** Whatever runs the core in the backend, its changes reach every open app, because they go through the same data API.
+- **Every writer gets live updates for free.** Whatever runs the core in the backend, its changes reach every open app, because they go through the same data API. The Series top-up is one such writer: the Appointments it makes appear like anyone's.
+- **Writers can overlap.** With no transactions, a Series can be ended or split from one of its Appointments while the top-up is making its later ones. The command therefore writes the Series' new end before it reads the Appointments it ends or replaces (and a change writes its new Series, under an ID the same change always gives, before either, so that one cut off partway is carried out in full when sent again), and the top-up reads the Series again after making Appointments and removes any it made past the end, so that none is left in the calendar past a Series' end.
 - **No transactions.** A command that writes an Appointment and then its activity record makes two calls. If the second fails, the change stands without its record and the command reports a failure. An add carries the new Appointment's ID, so sending it again adds nothing twice.
 - **No "only if unchanged" writes.** The data API's typed client cannot say "write this only if nobody has written since I read it". The store therefore writes only what a command changed, so that two commands on one Appointment in the same instant do not undo each other's details or a cancellation. Two that change the same detail at once still end with the later one. If that ever matters, the store port is where a stricter write would go.
 - **Reads are not strictly consistent.** A command reads the Appointment through the data API, which may lag a write by a moment. A person cannot act that fast; an agent might.
 - **The function needs the person's name.** The data API tells a function who is calling but not what they are called, so the function looks the name up in the user pool and remembers it for a few minutes.
 - **The core stays free of all this.** It sees a store port. The sample data and the tests give it a store kept in memory, and the same core runs unchanged in all three places.
+
+## Updates
+
+- **20 November 2026, ticket 11 (Sending texts on schedule), on main before ticket 12.** This record first said the commands function was the one caller allowed to use the models' own mutations. The scheduled run that sends texts, `send-texts`, became a second backend function that runs the core and writes through the data API: it records each text, claimed by creating its record. It keeps to the same decision. Its one conditional write, taking a waiting text up again, also goes through the data API.
+- **20 November 2026, ticket 12 (Series).** A third backend function now writes calendar data: the daily Series top-up, which runs the same core to make the Appointments a Series still needs. It may call only the data API fields its code needs, listed in `amplify/functions/series-top-up/access.ts`: reading Appointments and Series, adding an Appointment and noting how far a Series is made, and, to take out again what it made past an end set while it ran, reading the texts about one Appointment and then removing it, or cancelling it when Susan may have been texted about it. `amplify/backend.ts` narrows its role to that list, `npm run synth` checks the role against it, and a test runs the top-up over a data API that refuses any other field. The decision itself is unchanged: every calendar write, the top-up's included, goes through the calendar core and the data API, never straight to a table.

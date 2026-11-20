@@ -6,7 +6,10 @@ import {
   type Actor,
   type Appointment,
   createStandInSender,
+  NO_ADMIN_MESSENGER,
+  NO_TEXT_SENDER,
 } from '../../src/lib/calendar';
+import { SERIES_TOP_UP_FIELDS } from '../functions/series-top-up/access';
 import { dataStore, type DataClient } from './data-store';
 
 type Row = Record<string, unknown> & { id: string };
@@ -18,6 +21,7 @@ type Row = Record<string, unknown> & { id: string };
 function dataApi() {
   const tables = {
     Appointment: new Map<string, Row>(),
+    Series: new Map<string, Row>(),
     ActivityRecord: new Map<string, Row>(),
     Text: new Map<string, Row>(),
     CalendarSettings: new Map<string, Row>(),
@@ -100,6 +104,7 @@ function dataApi() {
   const client = {
     models: {
       Appointment: model(tables.Appointment),
+      Series: model(tables.Series),
       ActivityRecord: model(tables.ActivityRecord),
       SubscriptionLink,
       Text: {
@@ -140,6 +145,7 @@ function dataApi() {
   return {
     client,
     appointments: () => [...tables.Appointment.values()],
+    series: () => [...tables.Series.values()],
     activity: () => [...tables.ActivityRecord.values()],
     links: () => [...links.values()],
     texts: () => [...tables.Text.values()],
@@ -155,6 +161,46 @@ function dataApi() {
 
 const linda: Actor = { person: { id: 'person-linda', name: 'Linda' }, viaAgent: false };
 const checkUp = { what: 'Cardiology check-up', date: '2026-11-20', time: '14:00' };
+
+type Fields = Record<'Query' | 'Mutation', string[]>;
+
+/**
+ * The data API as a function whose role may call only these fields sees it: any other answers as
+ * AppSync does, not authorized. Each model call is named by the field it is in the data API.
+ */
+function limitedTo(client: DataClient, allowed: Fields): DataClient {
+  const may = new Set([...allowed.Query, ...allowed.Mutation]);
+  const fieldOf = (model: string, call: string) =>
+    ({
+      get: `get${model}`,
+      list: model.endsWith('s') ? `list${model}` : `list${model}s`,
+      create: `create${model}`,
+      update: `update${model}`,
+      delete: `delete${model}`,
+    })[call] ?? call;
+  const refused = (field: string) => ({
+    data: null,
+    errors: [{ errorType: 'Unauthorized', message: `Not Authorized to access ${field}` }],
+  });
+  type Calls = Record<string, (...args: unknown[]) => unknown>;
+  const all = client.models as unknown as Record<string, Calls>;
+  const models = Object.fromEntries(
+    Object.entries(all).map(([model, calls]) => [
+      model,
+      Object.fromEntries(
+        Object.entries(calls).map(([call, run]) => [
+          call,
+          async (...args: unknown[]) =>
+            may.has(fieldOf(model, call)) ? run(...args) : refused(fieldOf(model, call)),
+        ]),
+      ),
+    ]),
+  );
+  const graphql = async () => {
+    throw refused('a custom operation');
+  };
+  return { ...client, models, graphql } as unknown as DataClient;
+}
 
 function calendar() {
   const api = dataApi();
@@ -228,6 +274,147 @@ describe('the calendar kept in the data API', () => {
       { action: 'added', appointmentId: id, personName: 'Linda', viaAgent: false },
       { action: 'deleted', appointmentId: id, what: 'Cardiology check-up' },
     ]);
+  });
+
+  it('holds a Series and its Appointments, and hands them back as they were', async () => {
+    const { api, store, core } = calendar();
+    const { series, appointments } = await core.addSeries(linda, {
+      what: 'Dialysis',
+      date: '2026-11-23',
+      time: '09:00',
+      repeat: { every: 'week', weekdays: [0, 3] },
+      ends: '2026-12-31',
+      reminders: [{ shape: 'before', amount: 2, unit: 'hours' }],
+    });
+    expect(api.series()).toHaveLength(1);
+    expect(await store.series(series.id)).toEqual(series);
+    expect(await store.everySeries()).toEqual([series]);
+    expect(await store.appointment(appointments[3].id)).toEqual(appointments[3]);
+    expect(api.activity()).toMatchObject([{ action: 'added', seriesId: series.id }]);
+  });
+
+  it('carries a change to this and all later ones, and ending a Series', async () => {
+    const { api, store, core } = calendar();
+    const { series, appointments } = await core.addSeries(linda, {
+      what: 'Dialysis',
+      date: '2026-11-23',
+      time: '09:00',
+      repeat: { every: 'week', weekdays: [0, 3] },
+      ends: '2026-12-31',
+    });
+    const changed = await core.changeSeries(linda, appointments[2].id, { time: '10:00' });
+    expect(api.series()).toHaveLength(2);
+    expect(await store.series(series.id)).toMatchObject({ ends: '2026-11-29' });
+    const rows = api
+      .appointments()
+      .filter((row) => (row.series as { id: string }).id === changed.series!.id);
+    expect(rows.every((row) => row.time === '10:00')).toBe(true);
+    await core.endSeries(linda, appointments[4].id);
+    expect(await store.series(changed.series!.id)).toMatchObject({ ends: '2026-12-06' });
+    expect(api.appointments().find((row) => row.id === appointments[4].id)).toMatchObject({
+      state: 'cancelled',
+    });
+  });
+
+  it('lets the Series top-up, with only its own fields, undo what it made past an end set as it ran', async () => {
+    const api = dataApi();
+    const clock = createFixedClock('2026-11-19T20:00:00.000Z');
+    const timeZone = 'America/New_York';
+    const commands = createCalendarCore({
+      store: dataStore(api.client),
+      clock,
+      messenger: createMemoryMessenger(),
+      textSender: createStandInSender(),
+      timeZone,
+    });
+    // The top-up's own data API, as its role sees it, paused at its first new Appointment while
+    // the Series is ended from the Appointment before.
+    let pause: (() => Promise<unknown>) | null = null;
+    const limited = limitedTo(api.client, SERIES_TOP_UP_FIELDS);
+    const appointmentCalls = limited.models.Appointment as unknown as Record<
+      string,
+      (...args: unknown[]) => Promise<unknown>
+    >;
+    const create = appointmentCalls.create;
+    appointmentCalls.create = async (...args) => {
+      const waiting = pause;
+      pause = null;
+      await waiting?.();
+      return create(...args);
+    };
+    const topUp = createCalendarCore({
+      store: dataStore(limited),
+      clock,
+      messenger: NO_ADMIN_MESSENGER,
+      textSender: NO_TEXT_SENDER,
+      timeZone,
+    });
+
+    const { series, appointments } = await commands.addSeries(linda, {
+      what: 'Dialysis',
+      date: '2026-11-23',
+      time: '09:00',
+      repeat: { every: 'week', weekdays: [0, 3] },
+    });
+    // Say a text about the first Appointment the top-up will make has reached Susan: that one
+    // must be kept, cancelled, and never deleted.
+    const texted = `${series.id}-2027-05-27`;
+    api.client.models.Text.create({
+      id: `reminder:${texted}`,
+      kind: 'reminder',
+      appointmentId: texted,
+      reminderId: 'reminder-1',
+      words: "Susan's Calendar: Dialysis.",
+      dueAt: '2027-05-26T22:00:00.000Z',
+      status: 'sent',
+      attempts: 1,
+      triedAt: '2027-05-26T22:00:00.000Z',
+    } as never);
+
+    clock.set('2027-02-01T20:00:00.000Z');
+    pause = () => commands.endSeries(linda, appointments[3].id);
+    await topUp.topUpSeries();
+
+    expect(api.series()[0]).toMatchObject({ ends: '2026-12-02' });
+    const mine = api
+      .appointments()
+      .filter((row) => (row.series as { id: string } | null)?.id === series.id);
+    const past = mine.filter((row) => (row.date as string) > '2026-12-02');
+    expect(past.filter((row) => row.state === 'active')).toEqual([]);
+    // Only the texted one is left of what the top-up made, cancelled; the rest were removed.
+    expect(past.filter((row) => (row.date as string) > '2027-05-24')).toMatchObject([
+      { id: texted, state: 'cancelled' },
+    ]);
+  });
+
+  it('hands back an Appointment the clocks moved on, and its held Reminder, as they were', async () => {
+    const { store, core } = calendar();
+    const { appointments } = await core.addSeries(linda, {
+      what: 'Night check',
+      date: '2027-03-07',
+      time: '03:30',
+      repeat: { every: 'week', weekdays: [6] },
+      reminders: [{ shape: 'daysBefore', days: 0, time: '02:30' }],
+    });
+    const held = appointments.find(({ date }) => date === '2027-03-14')!;
+    expect(held.reminders[0].needsReview).toBe(true);
+    expect(await store.appointment(held.id)).toEqual(held);
+    const { appointments: moved } = await core.addSeries(linda, {
+      what: 'Night check',
+      date: '2027-03-07',
+      time: '02:30',
+      repeat: { every: 'week', weekdays: [6] },
+    });
+    const shifted = moved.find(({ date }) => date === '2027-03-14')!;
+    expect(shifted.series?.shiftedFrom).toBe('02:30');
+    expect(await store.appointment(shifted.id)).toEqual(shifted);
+  });
+
+  it('reads an Appointment kept before Series existed as in none', async () => {
+    const { api, store, core } = calendar();
+    const added = await core.addAppointment(linda, checkUp);
+    delete api.appointments()[0].series;
+    expect(await store.appointment(added.id)).toEqual(added);
   });
 
   it('reads an Appointment kept before a detail existed', async () => {

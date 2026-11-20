@@ -12,12 +12,15 @@ import { data } from './data/resource';
 import { appNotifications } from './functions/app-notifications/resource';
 import { calendarCommands } from './functions/calendar-commands/resource';
 import { sendTexts } from './functions/send-texts/resource';
+import { SERIES_TOP_UP_FIELDS } from './functions/series-top-up/access';
+import { seriesTopUp } from './functions/series-top-up/resource';
 import { subscriptionFeed } from './functions/subscription-feed/resource';
 
 const backend = defineBackend({
   auth,
   data,
   calendarCommands,
+  seriesTopUp,
   subscriptionFeed,
   appNotifications,
   sendTexts,
@@ -85,25 +88,38 @@ if (alertsFrom) {
   );
 }
 
-// The app-notifications function may reach the devices app notifications go to and the key that
-// signs them, and nothing else in the data API: Amplify would let it call every query and mutation,
-// the calendar's included. `npm run synth` checks it.
-const APP_NOTIFICATION_FIELDS = {
-  Query: ['getAppNotificationKey'],
-  Mutation: [
-    'createAppNotificationDevice',
-    'updateAppNotificationDevice',
-    'deleteAppNotificationDevice',
-    'createAppNotificationKey',
-  ],
-};
-{
+// The daily Series top-up runs one at a time, so that two runs never try to make the same
+// Appointments at once. A run that fails is not tried again by Lambda, and the schedule tries to
+// start one for at most an hour: the horizon is months ahead, so the next day's run catches up.
+// `npm run synth` checks all of this.
+const seriesTopUpLambda = backend.seriesTopUp.resources.lambda;
+backend.seriesTopUp.resources.cfnResources.cfnFunction.reservedConcurrentExecutions = 1;
+seriesTopUpLambda.configureAsyncInvoke({ maxEventAge: Duration.hours(1), retryAttempts: 0 });
+for (const schedule of seriesTopUpLambda.node.findAll())
+  if (schedule instanceof CfnSchedule)
+    schedule.addPropertyOverride('Target.RetryPolicy', {
+      MaximumEventAgeInSeconds: 3600,
+      MaximumRetryAttempts: 2,
+    });
+
+/** Fields of the data API, by type: 'Query' or 'Mutation'. */
+type Fields = Record<'Query' | 'Mutation', string[]>;
+
+/**
+ * Lets a function call these fields of the data API and no others. Amplify would let a function the
+ * data schema names call every query and mutation; this narrows its one policy that does.
+ */
+function onlyDataApiFields(
+  lambda: { role?: { node: { defaultChild?: unknown } } },
+  name: string,
+  allowed: Fields,
+) {
   const api = backend.data.resources.graphqlApi;
   const dataStack = Stack.of(api);
-  const role = backend.appNotifications.resources.lambda.role?.node.defaultChild as CfnRole;
+  const role = lambda.role?.node.defaultChild as CfnRole;
   const roleRef = JSON.stringify(dataStack.resolve(role.ref));
-  const fields = Object.entries(APP_NOTIFICATION_FIELDS).flatMap(([type, names]) =>
-    names.map((name) => dataStack.resolve(`${api.arn}/types/${type}/fields/${name}`)),
+  const fields = Object.entries(allowed).flatMap(([type, names]) =>
+    names.map((field) => dataStack.resolve(`${api.arn}/types/${type}/fields/${field}`)),
   );
   const access = dataStack.node
     .findAll()
@@ -112,7 +128,7 @@ const APP_NOTIFICATION_FIELDS = {
     .filter((policy) =>
       JSON.stringify(dataStack.resolve(policy.policyDocument)).includes('appsync:GraphQL'),
     );
-  if (access.length !== 1) throw new Error('Could not find the app-notifications data API access.');
+  if (access.length !== 1) throw new Error(`Could not find the ${name} data API access.`);
   const document = dataStack.resolve(access[0].policyDocument) as {
     Statement: { Action: unknown; Resource: unknown }[];
   };
@@ -120,6 +136,23 @@ const APP_NOTIFICATION_FIELDS = {
     if (statement.Action === 'appsync:GraphQL') statement.Resource = fields;
   access[0].addPropertyOverride('PolicyDocument', document);
 }
+
+// The app-notifications function may reach the devices app notifications go to and the key that
+// signs them, and nothing else in the data API: Amplify would let it call every query and mutation,
+// the calendar's included. `npm run synth` checks it.
+onlyDataApiFields(backend.appNotifications.resources.lambda, 'app-notifications', {
+  Query: ['getAppNotificationKey'],
+  Mutation: [
+    'createAppNotificationDevice',
+    'updateAppNotificationDevice',
+    'deleteAppNotificationDevice',
+    'createAppNotificationKey',
+  ],
+});
+
+// The Series top-up may call only the data API fields its code needs (SERIES_TOP_UP_FIELDS in
+// amplify/functions/series-top-up/access.ts). `npm run synth` checks it.
+onlyDataApiFields(backend.seriesTopUp.resources.lambda, 'Series top-up', SERIES_TOP_UP_FIELDS);
 
 // When a write about a device is refused, the function reads whose the device is now straight from
 // its table, with a strongly consistent read, which the data API's reads are not

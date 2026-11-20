@@ -4,7 +4,12 @@ import { CalendarLoading, CalendarTrouble } from '../components/CalendarTrouble'
 import { usePickedFrom } from '../components/Navigation';
 import { Page } from '../components/Page';
 import { useCalendar } from '../data/CalendarContext';
-import { overlappingAppointments, type Appointment, type Stamp } from '../lib/calendar';
+import {
+  describeRepeat,
+  overlappingAppointments,
+  type Appointment,
+  type Stamp,
+} from '../lib/calendar';
 import { formatDate, formatMoment, formatTime } from '../lib/localTime';
 import { ReminderList } from './AppointmentReminders';
 import { TextList } from './AppointmentTexts';
@@ -34,6 +39,13 @@ export function AppointmentDetail({ id: given }: { id?: string }) {
     );
   return <Detail key={appointment.id} appointment={appointment} onDeleting={setDeleting} />;
 }
+
+/**
+ * Why an Appointment a Series made starts later than the Series' time: the clocks skipped that
+ * time the night they went forward.
+ */
+export const shiftWords = (from: string, to: string, nextDay: boolean) =>
+  `Moved from ${formatTime(from)} to ${formatTime(to)}${nextDay ? ' the next day' : ''}: the clocks go forward that night, so there is no ${formatTime(from)}.`;
 
 /** For an address whose Appointment the calendar does not have: deleted, or never there. */
 export function NotInCalendar() {
@@ -104,7 +116,27 @@ function Detail({
 
       <dl className="details">
         <dt>When</dt>
-        <dd>{`${formatDate(date)} at ${formatTime(time)}`}</dd>
+        <dd>
+          <span>{`${formatDate(date)} at ${formatTime(time)}`}</span>
+          {appointment.series?.shiftedFrom && (
+            <span className="muted">
+              {shiftWords(appointment.series.shiftedFrom, time, appointment.series.date !== date)}
+            </span>
+          )}
+        </dd>
+        {appointment.series && (
+          <>
+            <dt>Repeats</dt>
+            <dd>
+              <span>{describeRepeat(appointment.series.repeat)}</span>
+              {appointment.series.individuallyChanged && (
+                <span className="muted">
+                  Changed on its own, apart from the rest of the Series.
+                </span>
+              )}
+            </dd>
+          </>
+        )}
         {withWhom && (
           <>
             <dt>With</dt>
@@ -159,7 +191,36 @@ function Detail({
         </p>
       )}
 
-      {asking === 'cancel' && (
+      {asking === 'cancel' && appointment.series && (
+        <div className="card confirm" role="group" aria-label="Cancel which Appointments?">
+          <p>
+            <strong>Cancel only this one, or this and all later ones?</strong> This Appointment
+            repeats. Whatever is cancelled stays in the calendar, marked cancelled.
+          </p>
+          <div className="actions">
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={busy}
+              onClick={() => carryOut(() => client.cancelAppointment(id))}
+            >
+              Cancel only this one
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={busy}
+              onClick={() => carryOut(() => client.endSeries(id))}
+            >
+              Cancel this and all later ones
+            </button>
+            <button type="button" className="btn" disabled={busy} onClick={() => setAsking(null)}>
+              No, keep them
+            </button>
+          </div>
+        </div>
+      )}
+      {asking === 'cancel' && !appointment.series && (
         <div className="card confirm" role="group" aria-label="Cancel this Appointment?">
           <p>
             <strong>Cancel this Appointment?</strong> It stays in the calendar, marked cancelled.
