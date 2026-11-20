@@ -32,6 +32,10 @@ _Avoid_: Update, cancellation text, correction
 The first text message Susan gets, sent once, saying that she agreed to be texted and how to stop the texts. It is the only one that carries opt-out wording. It is not a Reminder.
 _Avoid_: Welcome message, opt-in message, first Reminder
 
+**Test text**:
+A text message sent to Susan's mobile number from Settings, on request, by the same path as a Reminder, to prove that texts reach her phone. It concerns no Appointment and is not a Reminder.
+_Avoid_: Test message, ping, trial text
+
 **Reply**:
 A text message Susan sends back to the number her Reminders come from. A Reply is passed on to every Admin for a person to read; the calendar never acts on what it says.
 _Avoid_: Response, confirmation, inbound message

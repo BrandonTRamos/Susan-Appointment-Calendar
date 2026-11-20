@@ -8,6 +8,8 @@ import {
   createMemoryStore,
   type Actor,
   type Appointment,
+  createStandInSender,
+  NO_TEXT_SENDER,
 } from '../../src/lib/calendar';
 import { feedStore, type TableReader } from './feed-store';
 
@@ -25,6 +27,7 @@ async function tables() {
     store: memory,
     clock: createFixedClock('2026-11-19T20:00:00.000Z'),
     messenger: createMemoryMessenger(),
+    textSender: createStandInSender(),
     timeZone: 'America/New_York',
   });
   const sent: { kind: string; input: Record<string, unknown> }[] = [];
@@ -60,6 +63,7 @@ async function tables() {
     store: feedStore(reader, TABLES),
     clock: createFixedClock('2026-11-19T20:00:00.000Z'),
     messenger: NO_ADMIN_MESSENGER,
+    textSender: NO_TEXT_SENDER,
     timeZone: 'America/New_York',
   });
   return { core, feed, sent, freezeIndex: () => (index = memory.subscriptionLinks()) };

@@ -6,6 +6,7 @@ import {
   createMemoryMessenger,
   createMemoryStore,
   type Actor,
+  createStandInSender,
 } from '../../../src/lib/calendar';
 import { subscriptionFeedHandler } from './feed';
 
@@ -18,6 +19,7 @@ async function feed() {
     store,
     clock: createFixedClock('2026-11-19T20:00:00.000Z'),
     messenger: createMemoryMessenger(),
+    textSender: createStandInSender(),
     timeZone: 'America/New_York',
   });
   await core.addAppointment(linda, {

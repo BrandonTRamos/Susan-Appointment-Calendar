@@ -5,11 +5,13 @@ import {
   createCalendarCore,
   createMemoryMessenger,
   createMemoryStore,
+  createStandInSender,
   systemClock,
   type Actor,
   type CalendarCore,
   type Clock,
   type MemoryStore,
+  type StandInSender,
   subscriptionAddress,
   type NewAppointment,
 } from '../lib/calendar';
@@ -23,6 +25,12 @@ const MARK: Actor = { person: { id: 'sample-mark', name: 'Mark' }, viaAgent: fal
 
 /** Where a sample link points. Nothing answers there: a sample link is only for seeing. */
 export const SAMPLE_FEED_URL = 'https://feed.example.com/';
+
+/** Susan's number on sample data: invented, as 555-01xx numbers belong to nobody. */
+export const SAMPLE_NUMBER = '+15555550123';
+
+/** How often sample data runs what is due, as the backend's scheduled run does. */
+const RUN_EVERY = 60_000;
 
 /** Invented Appointments, as [days from today, who added it, its details]. */
 const SAMPLES: [number, Actor, Omit<NewAppointment, 'date'>][] = [
@@ -55,34 +63,48 @@ export interface SampleCalendar extends CalendarClient {
   /** The core and store behind it, so that a test can act as someone else or look at what is kept. */
   core: CalendarCore;
   store: MemoryStore;
+  /** The stand-in sender: on sample data, texts are recorded here and never sent. */
+  sender: StandInSender;
 }
 
 export interface SampleCalendarOptions {
   /** Start with no Appointments. */
   empty?: boolean;
   clock?: Clock;
+  /** Susan's number to start with; null for none. An invented one unless told otherwise. */
+  susansNumber?: string | null;
 }
 
 export function createSampleCalendar(
   timeZone: string,
-  { empty = false, clock = systemClock }: SampleCalendarOptions = {},
+  { empty = false, clock = systemClock, susansNumber = SAMPLE_NUMBER }: SampleCalendarOptions = {},
 ): SampleCalendar {
   const store = createMemoryStore();
   // Nobody is signed in on sample data, so no device has notifications on: Activity updates are
   // worked out and go nowhere.
   const messenger = createMemoryMessenger([LINDA, MARK].map((admin) => admin.person.id));
-  const core = createCalendarCore({ store, clock, messenger, timeZone });
+  const sender = createStandInSender();
+  const core = createCalendarCore({ store, clock, messenger, textSender: sender, timeZone });
 
   const day = today(timeZone, clock.now());
   const ready = (async () => {
+    if (susansNumber) await core.changeSettings(YOU, { susansNumber });
     if (empty) return;
     for (const [days, by, details] of SAMPLES)
       await core.addAppointment(by, { ...details, date: addDays(day, days) });
   })();
 
+  // While anyone is watching the texts, what is due is run every minute, as the backend's
+  // scheduled run does.
+  let watchingTexts = 0;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const run = () => void core.runDue().catch(() => {});
+
   return {
     core,
     store,
+    sender,
+    textsRecordedOnly: true,
     watchAppointments(listener, onError) {
       let stop: (() => void) | undefined;
       let stopped = false;
@@ -109,5 +131,31 @@ export function createSampleCalendar(
       return { address: subscriptionAddress(SAMPLE_FEED_URL, secret), madeAt };
     },
     switchOffSubscriptionLink: () => core.switchOffSubscriptionLink(YOU),
+    watchTexts(listener, onError) {
+      let stop: (() => void) | undefined;
+      let stopped = false;
+      watchingTexts += 1;
+      ready.then(() => {
+        if (stopped) return;
+        listener(store.texts());
+        stop = store.subscribe(() => listener(store.texts()));
+        run();
+        timer ??= setInterval(run, RUN_EVERY);
+      }, onError);
+      return () => {
+        stopped = true;
+        stop?.();
+        watchingTexts -= 1;
+        if (watchingTexts > 0 || !timer) return;
+        clearInterval(timer);
+        timer = undefined;
+      };
+    },
+    async settings() {
+      await ready;
+      return store.settings();
+    },
+    changeSettings: (changes) => core.changeSettings(YOU, changes),
+    sendTestText: () => core.sendTestText(YOU),
   };
 }

@@ -34,11 +34,18 @@ function changed(detail: Detail, before: Appointment): string {
   return name;
 }
 
+/**
+ * What the core works out about a Reminder, not what a person sets: when it goes out, whether it is
+ * flagged, and when its time was last worked out (`setAt`, which a move or the core's own upkeep
+ * changes without anyone touching the Reminder).
+ */
+const WORKED_OUT = new Set(['dueAt', 'needsReview', 'setAt']);
+
 /** A Reminder as a person sets it: which one, and when it goes out. Not when that works out to. */
 const setting = (reminder: Reminder) =>
   JSON.stringify(
     Object.entries(reminder)
-      .filter(([field, value]) => field !== 'dueAt' && field !== 'needsReview' && value != null)
+      .filter(([field, value]) => !WORKED_OUT.has(field) && value != null)
       // Read back from the data API, the same Reminder may hold its fields in another order.
       .sort(([a], [b]) => a.localeCompare(b)),
   );

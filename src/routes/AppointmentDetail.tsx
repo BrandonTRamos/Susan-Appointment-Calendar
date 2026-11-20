@@ -7,6 +7,7 @@ import { useCalendar } from '../data/CalendarContext';
 import { overlappingAppointments, type Appointment, type Stamp } from '../lib/calendar';
 import { formatDate, formatMoment, formatTime } from '../lib/localTime';
 import { ReminderList } from './AppointmentReminders';
+import { TextList } from './AppointmentTexts';
 
 /**
  * One Appointment: all its details, a warning when it overlaps another, its Reminders and their
@@ -53,7 +54,7 @@ function Detail({
   appointment: Appointment;
   onDeleting: (deleting: boolean) => void;
 }) {
-  const { client, timeZone, appointments } = useCalendar();
+  const { client, timeZone, appointments, texts } = useCalendar();
   const navigate = useNavigate();
   const back = usePickedFrom();
   const [asking, setAsking] = useState<'cancel' | 'delete' | null>(null);
@@ -149,7 +150,8 @@ function Detail({
         )}
       </dl>
 
-      <ReminderList appointment={appointment} timeZone={timeZone} now={new Date()} />
+      <ReminderList appointment={appointment} timeZone={timeZone} now={new Date()} texts={texts} />
+      <TextList appointment={appointment} texts={texts} timeZone={timeZone} />
 
       {problem && (
         <p className="error" role="alert">

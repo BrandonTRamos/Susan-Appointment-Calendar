@@ -5,7 +5,10 @@ import {
   createMemoryMessenger,
   createMemoryStore,
   type Appointment,
+  createStandInSender,
+  type CalendarCore,
 } from '../../../src/lib/calendar';
+import { COMMAND_FAILED } from '../../../src/lib/calendarApi';
 import { calendarCommandHandler, type CommandEvent } from './commands';
 
 const checkUp = { what: 'Cardiology check-up', date: '2026-11-20', time: '14:00' };
@@ -19,6 +22,7 @@ function commands(names: Record<string, string | null> = { 'account-linda': 'Lin
     store,
     clock: createFixedClock('2026-11-19T20:00:00.000Z'),
     messenger,
+    textSender: createStandInSender(),
     timeZone: 'America/New_York',
   });
   const nameOf = vi.fn(async (username: string) => names[username] ?? null);
@@ -77,6 +81,25 @@ describe('the commands, as the data API calls them', () => {
     expect(await call('addAppointment', sent)).toEqual(first);
     expect(store.appointments()).toMatchObject([{ id: sent.id, ...checkUp }]);
     expect(store.activity()).toHaveLength(1);
+  });
+
+  it('change the settings and send a test text, answering with each as it now is', async () => {
+    const { store, call } = commands();
+    expect(await call('sendTestText', {})).toMatchObject({ refusal: { reason: 'noNumber' } });
+    const changed = await call('changeSettings', {
+      settings: JSON.stringify({ susansNumber: '(555) 555-0123', contactName: 'Linda' }),
+    });
+    expect(changed).toMatchObject({
+      settings: {
+        susansNumber: '+15555550123',
+        contactName: 'Linda',
+        lastChanged: { personId: 'person-linda', personName: 'Linda' },
+      },
+    });
+    const sent = await call('sendTestText', {});
+    expect(sent).toMatchObject({ text: { kind: 'test', status: 'sent' } });
+    expect(store.texts()).toHaveLength(1);
+    expect(store.activity()).toEqual([]);
   });
 
   it("make and switch off the caller's own subscription link", async () => {
@@ -185,8 +208,24 @@ describe('when a command cannot be carried out', () => {
     expect(await call('cancelAppointment', { id: 'no-such-appointment' })).toMatchObject({
       refusal: { reason: 'missing' },
     });
-    const { id } = await add();
-    store.noteTextSentAbout(id);
+    const added = await add();
+    const { id } = added;
+    // The record the scheduled run keeps once a Reminder has gone to Susan.
+    const [reminder] = added.reminders;
+    await store.claimText({
+      id: `reminder:${id}:${reminder.id}:${reminder.dueAt}`,
+      kind: 'reminder',
+      appointmentId: id,
+      reminderId: reminder.id,
+      words: "Susan's Calendar: Cardiology check-up.",
+      dueAt: reminder.dueAt,
+      status: 'sent',
+      reason: null,
+      attempts: 1,
+      triedAt: reminder.dueAt,
+      sentAt: reminder.dueAt,
+      reference: 'stand-in-1',
+    });
     expect(await call('removeAppointment', { id })).toMatchObject({
       refusal: { reason: 'texted', message: expect.stringMatching(/Cancel it instead/) },
     });
@@ -210,9 +249,44 @@ describe('when a command cannot be carried out', () => {
       }),
     ).rejects.toThrow('Could not save the change. Check your connection and try again.');
     const words = logged.mock.calls.flat().join(' ');
-    expect(words).toContain('The data API is not answering');
+    expect(words).toBe('Calendar command addAppointment failed (data)');
     expect(words).not.toContain('Cardiology');
     expect(words).not.toContain('12345');
+  });
+
+  it("never lets a number or a text's words out, in the log or in the error the data API gets", async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const leak =
+      "Could not send Susan's Calendar: Eye exam with Dr. Chen, tomorrow at 3:30 pm to 555 555 0123";
+    const handler = calendarCommandHandler({
+      core: async () =>
+        ({
+          sendTestText: async () => {
+            throw new Error(leak);
+          },
+        }) as unknown as CalendarCore,
+      nameOf: async () => 'Linda',
+    });
+    const thrown = await handler({
+      fieldName: 'sendTestText',
+      arguments: {},
+      identity: linda,
+    }).then(
+      () => null,
+      (error: unknown) => error as Error,
+    );
+    expect(thrown?.message).toBe(COMMAND_FAILED);
+    expect(thrown?.cause).toBeUndefined();
+    expect(thrown?.stack).not.toMatch(/555|Eye exam/);
+    const words = logged.mock.calls.flat().join(' ');
+    expect(words).toBe('Calendar command sendTestText failed (unknown)');
+  });
+
+  it('names no command in the log that the calendar does not have', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { call } = commands();
+    await expect(call('call 555 555 0123', {})).rejects.toThrow(/Could not save/);
+    expect(logged.mock.calls.flat().join(' ')).toBe('Calendar command (unknown) failed (unknown)');
   });
 
   it('a command the calendar does not have is a failure', async () => {

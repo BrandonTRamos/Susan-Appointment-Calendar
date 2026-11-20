@@ -1,14 +1,17 @@
 import { defineBackend } from '@aws-amplify/backend';
-import { Stack } from 'aws-cdk-lib';
+import { Duration, Stack } from 'aws-cdk-lib';
 import { CfnPolicy, CfnRole, PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { FunctionUrlAuthType } from 'aws-cdk-lib/aws-lambda';
+import { CfnSchedule } from 'aws-cdk-lib/aws-scheduler';
 import { resolveContactEmail, resolveOwnerName } from '../src/lib/publicPage';
 import { resolveTimeZone } from '../src/lib/timeZone';
 import { auth } from './auth/resource';
+import { textSenderName } from './calendar/text-sender';
 import { configureProjectTags } from './cost-tags';
 import { data } from './data/resource';
 import { appNotifications } from './functions/app-notifications/resource';
 import { calendarCommands } from './functions/calendar-commands/resource';
+import { sendTexts } from './functions/send-texts/resource';
 import { subscriptionFeed } from './functions/subscription-feed/resource';
 
 const backend = defineBackend({
@@ -17,6 +20,7 @@ const backend = defineBackend({
   calendarCommands,
   subscriptionFeed,
   appNotifications,
+  sendTexts,
 });
 
 // COST_TAG keeps separate deployments apart in billing; main also tags its own Hosting app.
@@ -128,8 +132,22 @@ for (const [variable, table] of Object.entries(feedTables)) {
   );
 }
 
+// The scheduled run never overlaps itself: only one may run at a time, and a run that cannot start
+// because the last is still going is dropped rather than queued or retried, since the next one is a
+// minute away. Each text is also claimed before it is sent (src/lib/calendar/core.ts), so that even
+// two runs at once could not send it twice. `npm run synth` checks all of this.
+const sendTextsLambda = backend.sendTexts.resources.lambda;
+backend.sendTexts.resources.cfnResources.cfnFunction.reservedConcurrentExecutions = 1;
+sendTextsLambda.configureAsyncInvoke({ maxEventAge: Duration.minutes(1), retryAttempts: 0 });
+for (const schedule of sendTextsLambda.node.findAll())
+  if (schedule instanceof CfnSchedule)
+    schedule.addPropertyOverride('Target.RetryPolicy', {
+      MaximumEventAgeInSeconds: 60,
+      MaximumRetryAttempts: 0,
+    });
+
 // For the app (src/config.ts): Susan's time zone; the contact address and owner's name shown on the
-// public pages; and the feed's address, which each person's link is made from. A value that isn't a
+// public pages; the feed's address, which each person's link is made from; and the text sender. A value that isn't a
 // time zone or an email address fails the deploy. A value that isn't set is left out.
 backend.addOutput({
   custom: {
@@ -137,5 +155,7 @@ backend.addOutput({
     contactEmail: resolveContactEmail(process.env.CONTACT_EMAIL) ?? undefined,
     ownerName: resolveOwnerName(process.env.OWNER_NAME) ?? undefined,
     subscriptionFeedUrl: feedUrl.url,
+    // Which text sender the backend uses: the app says so while texts are only being recorded.
+    textSender: textSenderName(),
   },
 });
