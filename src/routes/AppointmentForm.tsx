@@ -25,12 +25,15 @@ const typedFrom = (appointment?: Appointment): Typed =>
 
 export function NewAppointment() {
   const { client } = useCalendar();
+  // The new Appointment's ID, chosen once for this form: if a save has to be sent again, because
+  // its answer was lost or the person pressed Save twice, the core adds one Appointment, not two.
+  const [id] = useState(() => crypto.randomUUID());
   return (
     <Page title="New Appointment">
       <Form
         start={typedFrom()}
         backTo="/"
-        save={async (typed) => (await client.addAppointment(typed)).id}
+        save={async (typed) => (await client.addAppointment(typed, id)).id}
       />
     </Page>
   );

@@ -98,7 +98,10 @@ export function createAmplifyCalendar(): CalendarClient {
     }
   }
 
-  /** Hears every change as it happens, and reads again after the connection has dropped. */
+  /**
+   * Hears every change as it happens. Changes made while the connection was opening, or while it
+   * had dropped, are not heard, so the calendar is read again each time it connects.
+   */
   function listen() {
     const next = (row: AppointmentRow) => put(toAppointment(row));
     const heard = [
@@ -106,14 +109,10 @@ export function createAmplifyCalendar(): CalendarClient {
       model.onUpdate().subscribe({ next, error: fail }),
       model.onDelete().subscribe({ next: (row) => drop(row.id), error: fail }),
     ];
-    let connected = false;
     const stopHub = Hub.listen('api', ({ payload }) => {
       if (payload.event !== CONNECTION_STATE_CHANGE) return;
       const { connectionState } = payload.data as { connectionState: ConnectionState };
-      if (connectionState !== ConnectionState.Connected) return;
-      // The first time is the connection opening. After that, changes may have been missed.
-      if (connected) void readAll();
-      connected = true;
+      if (connectionState === ConnectionState.Connected) void readAll();
     });
     return () => {
       for (const subscription of heard) subscription.unsubscribe();
@@ -153,8 +152,8 @@ export function createAmplifyCalendar(): CalendarClient {
         stopListening = null;
       };
     },
-    addAppointment: (details) =>
-      changed(() => client.mutations.addAppointment({ details: JSON.stringify(details) })),
+    addAppointment: (details, id) =>
+      changed(() => client.mutations.addAppointment({ id, details: JSON.stringify(details) })),
     changeAppointment: (id, changes) =>
       changed(() => client.mutations.changeAppointment({ id, changes: JSON.stringify(changes) })),
     cancelAppointment: (id) => changed(() => client.mutations.cancelAppointment({ id })),

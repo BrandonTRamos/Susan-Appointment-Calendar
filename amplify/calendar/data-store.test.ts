@@ -105,6 +105,26 @@ describe('the calendar kept in the data API', () => {
     expect(await store.appointment(id)).toEqual(cancelled);
   });
 
+  it('does not undo a cancellation that lands while a change is being made', async () => {
+    const { api, store, core } = calendar();
+    const added = await core.addAppointment(linda, { ...checkUp, driverName: 'Mark' });
+    // Linda's change has read the Appointment. Before it writes, Mark cancels it and names
+    // another Driver, from his own phone.
+    const read = (await store.appointment(added.id))!;
+    Object.assign(api.appointments()[0], { state: 'cancelled', driverName: 'Linda' });
+    await store.replaceAppointment({
+      ...read,
+      time: '15:30',
+      startsAt: '2026-11-20T20:30:00.000Z',
+    });
+    expect(api.appointments()[0]).toMatchObject({
+      time: '15:30',
+      startsAt: '2026-11-20T20:30:00.000Z',
+      state: 'cancelled',
+      driverName: 'Linda',
+    });
+  });
+
   it('removes a deleted Appointment and keeps the record of it', async () => {
     const { api, core } = calendar();
     const { id } = await core.addAppointment(linda, checkUp);

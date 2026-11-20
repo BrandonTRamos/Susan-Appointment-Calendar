@@ -68,7 +68,8 @@ const schema = a
     // Appointment as it now is, or the core's refusal. `removeAppointment` is the core's "delete":
     // the name deleteAppointment belongs to the model's own mutation, which only the function may
     // call.
-    addAppointment: command().arguments({ details: a.json().required() }),
+    // The app gives a new Appointment its ID, so that an add sent twice is carried out once.
+    addAppointment: command().arguments({ id: a.id(), details: a.json().required() }),
     changeAppointment: command().arguments({
       id: a.id().required(),
       changes: a.json().required(),

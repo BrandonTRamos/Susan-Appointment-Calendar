@@ -101,6 +101,22 @@ describe('adding an Appointment', () => {
     });
   });
 
+  it('drops characters nobody can see, and does not take them for a name', async () => {
+    const { core, store } = calendar();
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      what: 'Eye\u200b exam\u0000',
+      noteForSusan: 'Bring your glasses.\r\nAnd the\tletter.',
+    });
+    expect(added.what).toBe('Eye exam');
+    expect(added.noteForSusan).toBe('Bring your glasses.\nAnd the letter.');
+    await refused(
+      core.addAppointment(linda, { ...checkUp, what: '\u200b\u0000 \ufeff' }),
+      'invalid',
+    );
+    expect(store.appointments()).toEqual([added]);
+  });
+
   it.each([
     ['what it is', { ...checkUp, what: '   ' }, 'what'],
     ['what it is at all', { date: '2026-11-20', time: '14:00' }, 'what'],
@@ -127,6 +143,43 @@ describe('adding an Appointment', () => {
     const { core } = calendar();
     await refused(core.addAppointment(linda, 'Dentist' as unknown as NewAppointment), 'invalid');
     await refused(core.addAppointment(linda, null as unknown as NewAppointment), 'invalid');
+  });
+});
+
+describe('an add that arrives twice', () => {
+  // A phone that loses the answer sends the command again. Whoever sends an add can give the new
+  // Appointment its ID, so that the second arrival is known for what it is.
+  const id = '3f0c8a52-9d1e-4b7a-8c11-5e2f6a7b8c9d';
+
+  it('is carried out once', async () => {
+    const { core, store, clock } = calendar();
+    const first = await core.addAppointment(linda, everyDetail, id);
+    clock.set('2026-11-19T20:00:05.000Z');
+    const second = await core.addAppointment(linda, everyDetail, id);
+    expect(first.id).toBe(id);
+    expect(second).toEqual(first);
+    expect(store.appointments()).toEqual([first]);
+    expect(store.activity()).toHaveLength(1);
+  });
+
+  it('is refused when it is not the same add: other details, or another person', async () => {
+    const { core, store } = calendar();
+    const first = await core.addAppointment(linda, checkUp, id);
+    const refusal = await refused(
+      core.addAppointment(linda, { ...checkUp, time: '15:30' }, id),
+      'invalid',
+    );
+    expect(refusal.message).toMatch(/already been saved/);
+    await refused(core.addAppointment(mark, checkUp, id), 'invalid');
+    expect(store.appointments()).toEqual([first]);
+    expect(store.activity()).toHaveLength(1);
+  });
+
+  it('is refused with an ID that is not one', async () => {
+    const { core, store } = calendar();
+    await refused(core.addAppointment(linda, checkUp, 'dentist'), 'invalid');
+    await refused(core.addAppointment(linda, checkUp, 42 as unknown as string), 'invalid');
+    expect(store.appointments()).toEqual([]);
   });
 });
 
@@ -163,6 +216,18 @@ describe('changing an Appointment', () => {
     const { id } = await core.addAppointment(linda, everyDetail);
     const changed = await core.changeAppointment(linda, id, { driverName: null, pickupTime: '' });
     expect(changed).toMatchObject({ driverName: null, pickupTime: null, withWhom: 'Dr. Patel' });
+  });
+
+  it('does nothing when it would leave the Appointment as it is: nobody changed it', async () => {
+    const { core, store, clock } = calendar();
+    const added = await core.addAppointment(linda, everyDetail);
+    clock.set('2026-11-19T21:00:00.000Z');
+    expect(await core.changeAppointment(mark, added.id, {})).toEqual(added);
+    expect(
+      await core.changeAppointment(mark, added.id, { time: '14:00', withWhom: ' Dr. Patel ' }),
+    ).toEqual(added);
+    expect(store.appointments()).toEqual([added]);
+    expect(store.activity()).toHaveLength(1);
   });
 
   it('is refused when it would leave no what, date or start time', async () => {

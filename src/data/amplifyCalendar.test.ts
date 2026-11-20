@@ -166,17 +166,42 @@ describe("another person's change", () => {
     expect(seen).toEqual([['Cardiology check-up', 'Blood draw']]);
   });
 
-  it('is caught up on after the connection drops and comes back', async () => {
+  it('is caught up on once the connection is open, and each time it drops and comes back', async () => {
     const { seen } = watch();
     await settled();
-    connection('Connected');
-    expect(api.list).toHaveBeenCalledTimes(1);
-    connection('ConnectionDisrupted');
-    api.pages = [[row(checkUp), row(bloodDraw)]];
+    // Mark's change landed after the calendar was read and before changes could be heard.
+    api.pages = [[row(eyeExam), row(checkUp), row(bloodDraw)]];
+    connection('Connecting');
     connection('Connected');
     await settled();
+    expect(seen.at(-1)).toEqual(['Cardiology check-up', 'Blood draw', 'Eye exam']);
+
+    connection('ConnectionDisrupted');
+    api.pages = [[row(checkUp), row(bloodDraw)]];
+    connection('Connecting');
     expect(api.list).toHaveBeenCalledTimes(2);
+    connection('Connected');
+    await settled();
+    expect(api.list).toHaveBeenCalledTimes(3);
     expect(seen.at(-1)).toEqual(['Cardiology check-up', 'Blood draw']);
+  });
+
+  it('is caught up on after a drop even when the app had been away and come back first', async () => {
+    const first = watch();
+    await settled();
+    connection('Connected');
+    await settled();
+    // Returning to the app watches again; the connection is still open, so nothing is announced.
+    first.stop();
+    const again = watch(first.calendar);
+    await settled();
+    const reads = api.list.mock.calls.length;
+    connection('ConnectionDisrupted');
+    api.pages = [[row(checkUp)]];
+    connection('Connected');
+    await settled();
+    expect(api.list).toHaveBeenCalledTimes(reads + 1);
+    expect(again.seen.at(-1)).toEqual(['Cardiology check-up']);
   });
 
   it('is caught up on when the calendar is watched again, as on returning to the app', async () => {
@@ -217,8 +242,11 @@ describe('the commands', () => {
       data: JSON.stringify({ appointment: bloodDraw }),
     });
     const details = { what: 'Blood draw', date: '2026-11-23', time: '14:00' };
-    expect(await calendar.addAppointment(details)).toEqual(bloodDraw);
-    expect(api.mutations.addAppointment).toHaveBeenCalledWith({ details: JSON.stringify(details) });
+    expect(await calendar.addAppointment(details, bloodDraw.id)).toEqual(bloodDraw);
+    expect(api.mutations.addAppointment).toHaveBeenCalledWith({
+      id: bloodDraw.id,
+      details: JSON.stringify(details),
+    });
     expect(seen.at(-1)).toEqual(['Cardiology check-up', 'Blood draw', 'Eye exam']);
 
     const moved = { ...bloodDraw, date: '2026-12-02', startsAt: '2026-12-02T19:00:00.000Z' };

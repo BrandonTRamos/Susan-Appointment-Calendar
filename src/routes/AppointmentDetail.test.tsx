@@ -171,6 +171,24 @@ describe('deleting an Appointment entered by mistake', () => {
     expect(calendar.store.appointments()).toEqual([]);
   });
 
+  it('does not call it missing while the delete is still on its way back', async () => {
+    const { calendar, appointment } = await withAppointment();
+    const { deleteAppointment } = calendar;
+    let answer!: () => void;
+    // Over the data API the Appointment is seen to go a moment before the command answers.
+    calendar.deleteAppointment = async (id) => {
+      await deleteAppointment(id);
+      await new Promise<void>((resolve) => (answer = resolve));
+    };
+    renderApp(`/appointments/${appointment.id}`, { calendar });
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete Appointment' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Yes, delete it' }));
+    await screen.findByRole('heading', { level: 1, name: 'Appointment' });
+    expect(screen.queryByText(/not in the calendar/)).not.toBeInTheDocument();
+    await act(async () => answer());
+    expect(await screen.findByRole('heading', { level: 1, name: 'Upcoming' })).toBeInTheDocument();
+  });
+
   it('is refused once Susan has been texted about it, and says to cancel instead', async () => {
     const { calendar, appointment } = await withAppointment();
     calendar.store.noteTextSentAbout(appointment.id);

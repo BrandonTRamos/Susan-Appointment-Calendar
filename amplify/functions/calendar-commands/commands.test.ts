@@ -67,6 +67,15 @@ describe('the commands, as the data API calls them', () => {
     ]);
   });
 
+  it('carry out once an add that the app sends twice with the same ID', async () => {
+    const { store, call } = commands();
+    const sent = { id: '3f0c8a52-9d1e-4b7a-8c11-5e2f6a7b8c9d', details: JSON.stringify(checkUp) };
+    const first = await call('addAppointment', sent);
+    expect(await call('addAppointment', sent)).toEqual(first);
+    expect(store.appointments()).toMatchObject([{ id: sent.id, ...checkUp }]);
+    expect(store.activity()).toHaveLength(1);
+  });
+
   it('also take a mutation named the way AppSync names it, with arguments not as text', async () => {
     const { store, handler } = commands();
     await handler({

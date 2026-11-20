@@ -84,7 +84,7 @@ export function createSampleCalendar(
         stop?.();
       };
     },
-    addAppointment: (details) => core.addAppointment(YOU, details),
+    addAppointment: (details, id) => core.addAppointment(YOU, details, id),
     changeAppointment: (id, changes) => core.changeAppointment(YOU, id, changes),
     cancelAppointment: (id) => core.cancelAppointment(YOU, id),
     deleteAppointment: (id) => core.deleteAppointment(YOU, id),

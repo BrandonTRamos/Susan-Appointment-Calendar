@@ -6,7 +6,7 @@
 import { getAmplifyDataClientConfig } from '@aws-amplify/backend/function/runtime';
 import { Amplify } from 'aws-amplify';
 import { generateClient } from 'aws-amplify/data';
-import type { Store } from '../../src/lib/calendar';
+import type { Appointment, Store } from '../../src/lib/calendar';
 import { toAppointment } from '../../src/lib/calendarApi';
 import type { Schema } from '../data/resource';
 
@@ -27,18 +27,32 @@ function check<T>(result: { data: T; errors?: readonly { message: string }[] }):
 
 export function dataStore(client: DataClient): Store {
   const { Appointment, ActivityRecord } = client.models;
+  /** Each Appointment as the core last read it here, until it is written. */
+  const read = new Map<string, Appointment>();
   return {
     async appointment(id) {
       const row = check(await Appointment.get({ id }));
-      return row ? toAppointment(row) : null;
+      const found = row ? toAppointment(row) : null;
+      if (found) read.set(id, found);
+      else read.delete(id);
+      return found;
     },
     async addAppointment(appointment) {
       check(await Appointment.create(appointment));
     },
+    // Only what differs from what the core read is written. The data API has no way to say "only
+    // if nobody else has written since", so this is what keeps two commands that overlap from
+    // undoing each other: a change does not write back a state or a detail it never touched.
     async replaceAppointment(appointment) {
-      check(await Appointment.update(appointment));
+      const was = read.get(appointment.id);
+      read.delete(appointment.id);
+      const differs = ([key, value]: [string, unknown]) =>
+        !was || JSON.stringify(value) !== JSON.stringify(was[key as keyof Appointment]);
+      const changed = Object.fromEntries(Object.entries(appointment).filter(differs));
+      check(await Appointment.update({ ...changed, id: appointment.id }));
     },
     async removeAppointment(id) {
+      read.delete(id);
       check(await Appointment.delete({ id }));
     },
     // Nothing sends texts yet. The ticket that does (11) answers this from the texts it records.

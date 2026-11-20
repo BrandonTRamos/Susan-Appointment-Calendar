@@ -89,6 +89,11 @@ function checks() {
   const mutations = openToSignedIn('Mutation');
   const subscriptions = openToSignedIn('Subscription');
   const tables = resources('Custom::AmplifyDynamoDBTable');
+  const apis = resources('AWS::AppSync::GraphQLApi');
+  const rules = resources('AWS::AppSync::FunctionConfiguration').flatMap((step) => [
+    stepWords(step, 'Request'),
+    stepWords(step, 'Response'),
+  ]);
   const tagged = (properties) => {
     const tags = properties.UserPoolTags ?? properties.Tags;
     return Array.isArray(tags)
@@ -114,6 +119,20 @@ function checks() {
     [
       'a session lasts ten years',
       client.RefreshTokenValidity === 3650 && client.TokenValidityUnits?.RefreshToken === 'days',
+    ],
+    [
+      // The rules below are read for a signed-in person and for the backend's own functions.
+      // Another way in (a key, a guest, a custom authorizer) would need rules of its own.
+      'the only ways into the data API are signing in and being one of the backend functions',
+      apis.length === 1 &&
+        apis[0].AuthenticationType === 'AMAZON_COGNITO_USER_POOLS' &&
+        JSON.stringify(apis[0].AdditionalAuthenticationProviders) ===
+          '[{"AuthenticationType":"AWS_IAM"}]' &&
+        resources('AWS::AppSync::ApiKey').length === 0,
+    ],
+    [
+      'no rule in the data API tells Susan from an Admin',
+      rules.length > 0 && rules.every((words) => !words.includes('cognito:groups')),
     ],
     [
       'anyone signed in can read everything in the calendar',

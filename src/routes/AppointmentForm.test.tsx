@@ -124,6 +124,29 @@ describe('adding an Appointment', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Hair' })).toBeInTheDocument();
   });
 
+  it('adds one Appointment when a save that worked is sent again', async () => {
+    const calendar = emptyCalendar();
+    const { addAppointment } = calendar;
+    let answerLost = true;
+    // The first save reaches the calendar, but its answer never comes back.
+    calendar.addAppointment = async (details, id) => {
+      const added = await addAppointment(details, id);
+      if (!answerLost) return added;
+      answerLost = false;
+      throw new Error('Could not save the change. Check your connection and try again.');
+    };
+    renderApp('/appointments/new', { calendar });
+    await userEvent.type(field('What it is'), 'Hair');
+    await userEvent.type(field('Date'), daysFromToday(2));
+    await userEvent.type(field('Start time'), '11:00');
+    await save();
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Could not save/);
+    await save();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Hair' })).toBeInTheDocument();
+    expect(calendar.store.appointments()).toHaveLength(1);
+    expect(calendar.store.activity()).toHaveLength(1);
+  });
+
   it('goes back without saving', async () => {
     const { calendar } = renderApp('/appointments/new');
     await userEvent.type(field('What it is'), 'Hair');

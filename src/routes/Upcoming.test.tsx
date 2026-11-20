@@ -169,4 +169,29 @@ describe('when the calendar cannot be read', () => {
     expect((await rows())[0]).toContain('Hair');
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
+
+  it('keeps saying the list may be out of date until it is read again', async () => {
+    const calendar = emptyCalendar();
+    const { watchAppointments } = calendar;
+    let fail: (error: Error) => void = () => {};
+    calendar.watchAppointments = (listener, onError) => {
+      fail = onError;
+      return watchAppointments(listener, onError);
+    };
+    renderApp('/', { calendar });
+    await screen.findByText('No upcoming Appointments.');
+    await act(async () => fail(new Error('Connection closed')));
+    expect(screen.getByRole('alert')).toHaveTextContent('This may be out of date');
+
+    // One more change is heard of, but that does not mean changes are being heard again.
+    await act(() =>
+      calendar.core.addAppointment(mark, { what: 'Hair', date: daysFromToday(3), time: '11:00' }),
+    );
+    expect((await rows())[0]).toContain('Hair');
+    expect(screen.getByRole('alert')).toHaveTextContent('This may be out of date');
+
+    await act(async () => screen.getByRole('button', { name: 'Try again' }).click());
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect((await rows())[0]).toContain('Hair');
+  });
 });

@@ -14,16 +14,19 @@ export function AppointmentDetail() {
   const { id } = useParams();
   const { appointments, failed } = useCalendar();
   const appointment = appointments?.find((each) => each.id === id);
+  // Set while this person's own delete is being carried out: the Appointment can be gone from the
+  // calendar a moment before the command answers, and that is not news to them.
+  const [deleting, setDeleting] = useState(false);
 
   if (!appointment)
     return (
       <Page title="Appointment">
         <CalendarTrouble />
         {!appointments && !failed && <CalendarLoading />}
-        {appointments && <NotInCalendar />}
+        {appointments && !deleting && <NotInCalendar />}
       </Page>
     );
-  return <Detail key={appointment.id} appointment={appointment} />;
+  return <Detail key={appointment.id} appointment={appointment} onDeleting={setDeleting} />;
 }
 
 /** For an address whose Appointment the calendar does not have: deleted, or never there. */
@@ -38,7 +41,13 @@ export function NotInCalendar() {
   );
 }
 
-function Detail({ appointment }: { appointment: Appointment }) {
+function Detail({
+  appointment,
+  onDeleting,
+}: {
+  appointment: Appointment;
+  onDeleting: (deleting: boolean) => void;
+}) {
   const { client, timeZone } = useCalendar();
   const navigate = useNavigate();
   const [asking, setAsking] = useState<'cancel' | 'delete' | null>(null);
@@ -167,8 +176,13 @@ function Detail({ appointment }: { appointment: Appointment }) {
               disabled={busy}
               onClick={() =>
                 carryOut(async () => {
-                  await client.deleteAppointment(id);
-                  navigate('/', { replace: true });
+                  onDeleting(true);
+                  try {
+                    await client.deleteAppointment(id);
+                    navigate('/', { replace: true });
+                  } finally {
+                    onDeleting(false);
+                  }
                 })
               }
             >

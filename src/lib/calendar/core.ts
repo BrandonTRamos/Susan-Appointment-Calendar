@@ -49,9 +49,17 @@ export class CalendarRefusal extends Error {
 }
 
 export interface CalendarCore {
-  /** Adds an Appointment. It needs what it is, its date and its start time. */
-  addAppointment(by: Actor, details: NewAppointment): Promise<Appointment>;
-  /** Changes the details given; the rest stay as they were. Refused for a cancelled Appointment. */
+  /**
+   * Adds an Appointment. It needs what it is, its date and its start time.
+   *
+   * Whoever sends the command can give the new Appointment its ID, a UUID. Then the same add
+   * arriving twice, as when the answer to the first was lost on the way back, is carried out once.
+   */
+  addAppointment(by: Actor, details: NewAppointment, id?: string | null): Promise<Appointment>;
+  /**
+   * Changes the details given; the rest stay as they were. Refused for a cancelled Appointment.
+   * Changes that leave the Appointment as it is do nothing: nobody changed it.
+   */
   changeAppointment(by: Actor, id: string, changes: AppointmentChanges): Promise<Appointment>;
   /** Marks the Appointment cancelled. It stays in the calendar. */
   cancelAppointment(by: Actor, id: string): Promise<Appointment>;
@@ -118,14 +126,26 @@ function invalid(message: string, detail?: Detail): never {
   throw new CalendarRefusal('invalid', message, detail);
 }
 
-/** One detail as it was sent, tidied: no stray spaces, and null when it is empty. */
+/** Characters nobody can see: controls other than line breaks and tabs, and zero-width marks. */
+const UNSEEN = /(?![\n\r\t])[\p{Cc}\u200b-\u200d\u2060\ufeff]/gu;
+
+/** An ID the sender of an add may choose: a UUID, as `crypto.randomUUID()` makes them. */
+const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * One detail as it was sent, tidied: nothing unseen, no stray spaces, and null when it is empty.
+ * Notes keep their line breaks.
+ */
 function tidied(detail: Detail, sent: unknown): string | null {
   if (sent === null || sent === undefined) return null;
   if (typeof sent !== 'string') invalid(`Write ${NAMES[detail]} in words.`, detail);
   const words = WORDS[detail];
   // A date or a time: checked once the whole Appointment is known.
   if (!words) return sent.trim() || null;
-  const tidy = (words.lines ? sent.replace(/\r\n?/g, '\n') : sent.replace(/\s+/g, ' ')).trim();
+  const seen = sent.replace(UNSEEN, '');
+  const tidy = (
+    words.lines ? seen.replace(/\r\n?/g, '\n').replace(/[^\S\n]+/g, ' ') : seen.replace(/\s+/g, ' ')
+  ).trim();
   if (tidy.length > words.limit)
     invalid(`Keep ${NAMES[detail]} to ${words.limit} characters or fewer.`, detail);
   return tidy || null;
@@ -142,6 +162,10 @@ function given(sent: unknown): Partial<Record<Detail, string | null>> {
   }
   return details;
 }
+
+/** Whether an Appointment already has exactly these details. */
+const hasDetails = (appointment: Appointment, details: AppointmentDetails) =>
+  DETAILS.every((detail) => appointment[detail] === details[detail]);
 
 /** The details of a real Appointment, or a refusal saying what is wrong with them. */
 function checked(details: Record<Detail, string | null>): AppointmentDetails {
@@ -176,7 +200,7 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
     at,
   });
 
-  /** The one activity record a command leaves. */
+  /** The one activity record a command leaves when it changes the calendar. */
   function record(action: ActivityAction, appointment: Appointment, by: Actor, at: string) {
     const activity: ActivityRecord = {
       id: crypto.randomUUID(),
@@ -201,13 +225,24 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
   }
 
   return {
-    async addAppointment(by, sent) {
+    async addAppointment(by, sent, id) {
       const details = checked({ ...NO_DETAILS, ...given(sent) });
+      const startsAt = startOf(details);
+      if (id !== undefined && id !== null) {
+        if (typeof id !== 'string' || !ID.test(id))
+          invalid("The Appointment's ID could not be read.");
+        const already = await store.appointment(id);
+        // The same add, arriving again: it has been carried out, so there is nothing left to do.
+        if (already && already.added.personId === by.person.id && hasDetails(already, details))
+          return already;
+        if (already)
+          invalid('That Appointment has already been saved. Open it from the list to change it.');
+      }
       const at = clock.now().toISOString();
       const appointment: Appointment = {
-        id: crypto.randomUUID(),
+        id: id ?? crypto.randomUUID(),
         ...details,
-        startsAt: startOf(details),
+        startsAt,
         state: 'active',
         added: stamp(by, at),
         lastChanged: null,
@@ -225,6 +260,7 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
           'This Appointment is cancelled, so it cannot be changed. Add a new one if it is happening after all.',
         );
       const details = checked({ ...detailsOf(current), ...given(sent) });
+      if (hasDetails(current, details)) return current;
       const at = clock.now().toISOString();
       const appointment: Appointment = {
         ...current,

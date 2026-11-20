@@ -52,7 +52,13 @@ export function calendarCommandHandler({ core, nameOf }: CommandDependencies) {
       const calendar = await core();
       switch (command) {
         case 'addAppointment':
-          return { appointment: await calendar.addAppointment(by, fromJson(details) as never) };
+          return {
+            appointment: await calendar.addAppointment(
+              by,
+              fromJson(details) as never,
+              id as string | null | undefined,
+            ),
+          };
         case 'changeAppointment':
           return {
             appointment: await calendar.changeAppointment(

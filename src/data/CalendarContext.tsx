@@ -33,25 +33,28 @@ export function CalendarProvider({
   children: ReactNode;
 }) {
   const [appointments, setAppointments] = useState<Appointment[] | null>(null);
-  const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const resumed = useResumeCount();
+  // Each new value reads the calendar and listens for changes afresh.
+  const watching = `${resumed}:${attempt}`;
+  // A failure stands until the calendar is read afresh. Hearing of one more change, such as the
+  // answer to this person's own command, does not mean changes are being heard again.
+  const [failedWhile, setFailedWhile] = useState<string | null>(null);
 
   useEffect(
-    () =>
-      client.watchAppointments(
-        (all) => {
-          setAppointments(all);
-          setFailed(false);
-        },
-        () => setFailed(true),
-      ),
-    [client, resumed, attempt],
+    () => client.watchAppointments(setAppointments, () => setFailedWhile(watching)),
+    [client, watching],
   );
 
   return (
     <CalendarContext.Provider
-      value={{ client, timeZone, appointments, failed, retry: () => setAttempt((n) => n + 1) }}
+      value={{
+        client,
+        timeZone,
+        appointments,
+        failed: failedWhile === watching,
+        retry: () => setAttempt((n) => n + 1),
+      }}
     >
       {children}
     </CalendarContext.Provider>
