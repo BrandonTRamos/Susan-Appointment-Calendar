@@ -87,8 +87,9 @@ export function dataStore(client: DataClient): Store {
       const row = check(await SubscriptionLink.get({ personId }));
       return row ? toLink(row) : null;
     },
-    // Found through an index, which can lag a moment behind a link being switched off or replaced,
-    // so the person's link is read again to be sure it is still this one.
+    // The feed does not read through here: the data API's reads are not strongly consistent, so it
+    // reads the tables itself (feed-store.ts). Found through an index, then checked against the
+    // person's link.
     async subscriptionLinkByHash(hash) {
       const [found] = check(await SubscriptionLink.subscriptionLinkByHash({ hash }, { limit: 1 }));
       if (!found) return null;

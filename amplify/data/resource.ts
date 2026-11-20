@@ -1,7 +1,6 @@
 import { a, defineData, type ClientSchema } from '@aws-amplify/backend';
 import { ACTIVITY_ACTIONS, APPOINTMENT_STATES } from '../../src/lib/calendar';
 import { calendarCommands } from '../functions/calendar-commands/resource';
-import { subscriptionFeed } from '../functions/subscription-feed/resource';
 
 // Calendar data, and the only way to change it.
 //
@@ -67,8 +66,8 @@ const schema = a
 
     // Each person's calendar subscription link (SubscriptionLink in
     // src/lib/calendar/subscription.ts): a hash of it, never the link itself. A signed-in person can
-    // read only their own, and nobody signed in can write one directly. The feed finds a link by
-    // its hash.
+    // read only their own, and nobody signed in can write one directly. The feed reads this table
+    // itself, finding a link through the hash index (amplify/calendar/feed-store.ts).
     SubscriptionLink: a
       .model({
         personId: a.string().required(),
@@ -99,11 +98,7 @@ const schema = a
   })
   // Lets the function write through the data API, so that every change reaches everyone looking at
   // the calendar (docs/adr/0003-the-core-writes-through-the-data-api.md).
-  // The feed only reads.
-  .authorization((allow) => [
-    allow.resource(calendarCommands).to(['query', 'mutate']),
-    allow.resource(subscriptionFeed).to(['query']),
-  ]);
+  .authorization((allow) => [allow.resource(calendarCommands).to(['query', 'mutate'])]);
 
 export type Schema = ClientSchema<typeof schema>;
 

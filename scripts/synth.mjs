@@ -109,6 +109,35 @@ const MODELS = ['Appointment', 'ActivityRecord'];
 /** Kept per person, and read only by that person. Only the commands function writes these. */
 const OWN_MODELS = ['SubscriptionLink'];
 
+/**
+ * The subscription feed's function, the one with a cap on requests at once: what its role may do,
+ * and the code it runs, as bundled for the deploy.
+ */
+function feedFunction() {
+  const all = stacks();
+  const lambda = all
+    .flatMap((stack) => Object.values(stack))
+    .find(
+      (resource) =>
+        resource.Type === 'AWS::Lambda::Function' &&
+        resource.Properties?.ReservedConcurrentExecutions > 0,
+    );
+  if (!lambda) return { actions: [], code: '' };
+  const role = lambda.Properties.Role?.['Fn::GetAtt']?.[0];
+  const actions = all
+    .flatMap((stack) => Object.values(stack))
+    .filter(
+      (resource) =>
+        resource.Type === 'AWS::IAM::Policy' &&
+        resource.Properties.Roles?.some((each) => each.Ref === role),
+    )
+    .flatMap((policy) => policy.Properties.PolicyDocument.Statement)
+    .flatMap((statement) => [statement.Action].flat());
+  const asset = /^([0-9a-f]{64})\.zip$/.exec(lambda.Properties.Code?.S3Key ?? '')?.[1];
+  const code = asset ? readFileSync(join(out, `asset.${asset}`, 'index.mjs'), 'utf8') : '';
+  return { actions, code };
+}
+
 /** What the synthesized backend must say. Each entry is [what is being checked, whether it holds]. */
 function checks() {
   const pools = resources('AWS::Cognito::UserPool');
@@ -118,6 +147,7 @@ function checks() {
   const client = clients[0] ?? {};
   const queries = openToSignedIn('Query');
   const queryRules = ruleSteps('Query');
+  const feed = feedFunction();
   const mutations = openToSignedIn('Mutation');
   const subscriptions = openToSignedIn('Subscription');
   const tables = resources('Custom::AmplifyDynamoDBTable');
@@ -212,6 +242,22 @@ function checks() {
             lambda.ReservedConcurrentExecutions > 0 &&
             lambda.Environment?.Variables?.SUSAN_TIME_ZONE,
         ).length === 1,
+    ],
+    [
+      // Its link and the Appointments are read from the tables, because the data API's own reads
+      // are not strongly consistent (amplify/calendar/feed-store.ts).
+      'the subscription feed may only read the tables, and not through the data API',
+      feed.actions.length > 0 &&
+        feed.actions.every((action) =>
+          ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:Scan'].includes(action),
+        ),
+    ],
+    [
+      // Its three table reads (the person's link, an Appointment, every Appointment) are each
+      // written with ConsistentRead true, which the bundler writes as `!0`.
+      'the subscription feed reads its link and the Appointments with strongly consistent reads',
+      (feed.code.match(/ConsistentRead:\s*(?:!0|true)\b/g) ?? []).length >= 3 &&
+        !/ConsistentRead:\s*(?:!1|false)\b/.test(feed.code),
     ],
     [
       'every table can be restored to a point in time',

@@ -86,7 +86,7 @@ describe('the Calendar subscription section of Settings', () => {
 
     await user.click(here.getByRole('button', { name: 'Get a new link' }));
     const asking = here.getByRole('group', { name: 'Get a new link?' });
-    expect(asking.textContent).toMatch(/old link will stop working/);
+    expect(asking.textContent).toMatch(/old link stops working at once/);
     await user.click(within(asking).getByRole('button', { name: 'Yes, get a new link' }));
 
     const replaced = ((await here.findByRole('textbox', { name: 'Your link' })) as HTMLInputElement)
@@ -107,6 +107,11 @@ describe('the Calendar subscription section of Settings', () => {
 
     await user.click(here.getByRole('button', { name: 'Switch off link' }));
     const asking = here.getByRole('group', { name: 'Switch off your link?' });
+    // It promises only what the calendar controls: the feed stops being served. A calendar app
+    // can keep its last copy.
+    expect(asking.textContent).toMatch(/stops working at once: the calendar is no longer served/);
+    expect(asking.textContent).toMatch(/may keep showing the Appointments it last read/);
+    expect(asking.textContent).not.toMatch(/will stop showing/);
     await user.click(within(asking).getByRole('button', { name: 'No, keep it' }));
     expect(await calendar.core.subscriptionFeed(secretOf(address))).not.toBeNull();
 

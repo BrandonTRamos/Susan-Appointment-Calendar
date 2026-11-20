@@ -93,14 +93,18 @@ It is view-only.
 
 - The link is the feed's address with a secret on the end. Only a hash of the secret is kept, so the
   link is shown in full only when it is made. Getting a new link switches off the old one; a person
-  can also switch theirs off. Each person's link is their own.
+  can also switch theirs off. Each person's link is their own. A link switched off stops being
+  served at once, but a calendar app it was added to may keep showing the copy it last read until
+  the calendar is removed there.
 - The feed is served by the `subscription-feed` backend function at its own public address (a
   Lambda function URL, passed to the app as `subscriptionFeedUrl` in `amplify_outputs.json`), with
   at most three requests at once. A link that is unknown or switched off gets the same "not found".
 - The feed holds active Appointments: what, who with, where, the Driver and pickup time, and the
   Note for Susan. It leaves out Private notes and cancelled Appointments. Each is shown an hour
   long, and times are written in UTC, so they are right in any time zone.
-- The feed is read afresh on every request and never cached. How soon a change shows is up to the
+- The feed is read afresh on every request and never cached. It reads the tables itself, with
+  strongly consistent reads, because the data API's reads are not; it may only read them, and
+  `npm run synth` checks both. Writing still goes only through the calendar core and the data API. How soon a change shows is up to the
   calendar app: Apple Calendar and Outlook can be set to check often; Google Calendar checks on its
   own schedule, which can be several hours.
 - Removing a person's account does not switch off their link. Before removing one, delete their row

@@ -132,8 +132,9 @@ export function CalendarSubscription() {
       {asking === 'replace' && (
         <div className="card confirm" role="group" aria-label="Get a new link?">
           <p>
-            <strong>Get a new link?</strong> Your old link will stop working, in every calendar it
-            was added to.
+            <strong>Get a new link?</strong> Your old link stops working at once. A calendar app it
+            was added to may keep showing the Appointments it last read until you remove the
+            calendar there.
           </p>
           <div className="actions">
             <button type="button" className="btn btn-primary" disabled={busy} onClick={make}>
@@ -148,8 +149,9 @@ export function CalendarSubscription() {
       {asking === 'off' && (
         <div className="card confirm" role="group" aria-label="Switch off your link?">
           <p>
-            <strong>Switch off your link?</strong> Susan's Appointments will stop showing in every
-            calendar it was added to.
+            <strong>Switch off your link?</strong> It stops working at once: the calendar is no
+            longer served at it. A calendar app it was added to may keep showing the Appointments it
+            last read until you remove the calendar there.
           </p>
           <div className="actions">
             <button type="button" className="btn btn-danger" disabled={busy} onClick={switchOff}>

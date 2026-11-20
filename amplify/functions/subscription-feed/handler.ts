@@ -1,15 +1,16 @@
 import { createCalendarCore, systemClock, type CalendarCore } from '../../../src/lib/calendar';
 import { resolveTimeZone } from '../../../src/lib/timeZone';
-import { createDataStore } from '../../calendar/data-store';
+import { createFeedStore } from '../../calendar/feed-store';
 import { subscriptionFeedHandler } from './feed';
 
 let core: Promise<CalendarCore> | undefined;
 
 function getCore() {
-  core ??= createDataStore()
-    .then((store) =>
+  // Read straight from the tables, consistently (amplify/calendar/feed-store.ts).
+  core ??= Promise.resolve()
+    .then(() =>
       createCalendarCore({
-        store,
+        store: createFeedStore(),
         clock: systemClock,
         timeZone: resolveTimeZone(process.env.SUSAN_TIME_ZONE),
       }),

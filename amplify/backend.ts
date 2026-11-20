@@ -1,4 +1,5 @@
 import { defineBackend } from '@aws-amplify/backend';
+import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { FunctionUrlAuthType } from 'aws-cdk-lib/aws-lambda';
 import { resolveContactEmail, resolveOwnerName } from '../src/lib/publicPage';
 import { resolveTimeZone } from '../src/lib/timeZone';
@@ -50,6 +51,23 @@ const feedUrl = backend.subscriptionFeed.resources.lambda.addFunctionUrl({
   authType: FunctionUrlAuthType.NONE,
 });
 backend.subscriptionFeed.resources.cfnResources.cfnFunction.reservedConcurrentExecutions = 3;
+
+// The feed reads the Appointment and SubscriptionLink tables itself, with strongly consistent reads,
+// which the data API's reads are not (amplify/calendar/feed-store.ts). It may read them and nothing
+// more. Writing still goes only through the calendar core and the data API.
+const feedTables = {
+  APPOINTMENT_TABLE: backend.data.resources.tables['Appointment'],
+  SUBSCRIPTION_LINK_TABLE: backend.data.resources.tables['SubscriptionLink'],
+};
+for (const [variable, table] of Object.entries(feedTables)) {
+  backend.subscriptionFeed.addEnvironment(variable, table.tableName);
+  backend.subscriptionFeed.resources.lambda.addToRolePolicy(
+    new PolicyStatement({
+      actions: ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:Scan'],
+      resources: [table.tableArn, `${table.tableArn}/index/*`],
+    }),
+  );
+}
 
 // For the app (src/config.ts): Susan's time zone; the contact address and owner's name shown on the
 // public pages; and the feed's address, which each person's link is made from. A value that isn't a
