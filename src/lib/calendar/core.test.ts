@@ -1061,3 +1061,201 @@ describe("a Reminder's words", () => {
     );
   });
 });
+
+/** A feed read back: each event's properties, unfolded and unescaped. */
+function events(feed: string) {
+  const lines = feed.replace(/\r\n[ \t]/g, '').split('\r\n');
+  const found: Record<string, string>[] = [];
+  let current: Record<string, string> | null = null;
+  for (const line of lines) {
+    if (line === 'BEGIN:VEVENT') current = {};
+    else if (line === 'END:VEVENT' && current) {
+      found.push(current);
+      current = null;
+    } else if (current) {
+      const colon = line.indexOf(':');
+      current[line.slice(0, colon)] = line
+        .slice(colon + 1)
+        .replace(/\\n/g, '\n')
+        .replace(/\\([;,])/g, '$1');
+    }
+  }
+  return found;
+}
+
+/** What a subscriber's calendar shows for each event: what it is, and when, in their own zone. */
+function seenIn(zone: string, feed: string) {
+  const at = (value: string) =>
+    new Intl.DateTimeFormat('en-GB', {
+      timeZone: zone,
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }).format(
+      new Date(
+        value.replace(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/, '$1-$2-$3T$4:$5:$6Z'),
+      ),
+    );
+  return events(feed).map((each) => `${each.SUMMARY}: ${at(each.DTSTART)} to ${at(each.DTEND)}`);
+}
+
+describe('calendar subscription', () => {
+  it('a link shows every active Appointment, with what, who with, where, Driver and Note', async () => {
+    const { core } = calendar();
+    await core.addAppointment(linda, everyDetail);
+    await core.addAppointment(mark, { what: 'Blood draw', date: '2026-11-25', time: '09:00' });
+    const { secret } = await core.makeSubscriptionLink(linda);
+
+    const feed = await core.subscriptionFeed(secret);
+    expect(feed).toMatch(/^BEGIN:VCALENDAR\r\nVERSION:2.0\r\n/);
+    expect(feed).toMatch(/END:VCALENDAR\r\n$/);
+    expect(feed).toContain("X-WR-CALNAME:Susan's Calendar");
+    expect(events(feed!)).toEqual([
+      expect.objectContaining({
+        SUMMARY: 'Cardiology check-up',
+        LOCATION: 'Heart Clinic, 400 Main St',
+        DESCRIPTION:
+          'With Dr. Patel\nDriver: Linda, picking Susan up at 1:15 pm\nNote for Susan: Bring your list of medicines.',
+        DTSTART: '20261120T190000Z',
+      }),
+      expect.objectContaining({ SUMMARY: 'Blood draw', DTSTART: '20261125T140000Z' }),
+    ]);
+    expect(events(feed!)[1]).not.toHaveProperty('LOCATION');
+    expect(events(feed!)[1]).not.toHaveProperty('DESCRIPTION');
+  });
+
+  it('shows each Appointment as one hour long, since it has no end time', async () => {
+    const { core } = calendar();
+    await core.addAppointment(linda, { ...checkUp, time: '23:30' });
+    const feed = await core.subscriptionFeed((await core.makeSubscriptionLink(linda)).secret);
+    expect(events(feed!)[0]).toMatchObject({
+      DTSTART: '20261121T043000Z',
+      DTEND: '20261121T053000Z',
+    });
+  });
+
+  it('leaves out Private notes and cancelled Appointments', async () => {
+    const { core } = calendar();
+    await core.addAppointment(linda, everyDetail);
+    const off = await core.addAppointment(linda, { ...checkUp, what: 'Hair', date: '2026-11-21' });
+    await core.cancelAppointment(mark, off.id);
+    const feed = await core.subscriptionFeed((await core.makeSubscriptionLink(linda)).secret);
+    expect(events(feed!).map((each) => each.SUMMARY)).toEqual(['Cardiology check-up']);
+    expect(feed).not.toContain('prescription');
+    expect(feed).not.toContain('Hair');
+  });
+
+  it("shows the right time whatever the subscriber's time zone, across a clock change", async () => {
+    const { core } = calendar();
+    // The clocks go back in US Eastern early on Sunday 1 November 2026.
+    await core.addAppointment(linda, { what: 'Before', date: '2026-10-31', time: '14:00' });
+    await core.addAppointment(linda, { what: 'After', date: '2026-11-01', time: '14:00' });
+    const feed = (await core.subscriptionFeed((await core.makeSubscriptionLink(linda)).secret))!;
+    expect(seenIn(EASTERN, feed)).toEqual([
+      'Before: 31 Oct 2026, 14:00 to 31 Oct 2026, 15:00',
+      'After: 1 Nov 2026, 14:00 to 1 Nov 2026, 15:00',
+    ]);
+    // The same moments, for someone in London, whose clocks went back a week earlier.
+    expect(seenIn('Europe/London', feed)).toEqual([
+      'Before: 31 Oct 2026, 18:00 to 31 Oct 2026, 19:00',
+      'After: 1 Nov 2026, 19:00 to 1 Nov 2026, 20:00',
+    ]);
+  });
+
+  it('shows changes made in the calendar the next time it is read', async () => {
+    const { core } = calendar();
+    const { secret } = await core.makeSubscriptionLink(linda);
+    expect(events((await core.subscriptionFeed(secret))!)).toEqual([]);
+    const added = await core.addAppointment(mark, checkUp);
+    expect(events((await core.subscriptionFeed(secret))!)).toMatchObject([
+      { DTSTART: '20261120T190000Z' },
+    ]);
+    await core.changeAppointment(mark, added.id, { time: '15:30', placeName: 'Main St Clinic' });
+    expect(events((await core.subscriptionFeed(secret))!)).toMatchObject([
+      { DTSTART: '20261120T203000Z', LOCATION: 'Main St Clinic' },
+    ]);
+    await core.cancelAppointment(mark, added.id);
+    expect(events((await core.subscriptionFeed(secret))!)).toEqual([]);
+  });
+
+  it("keeps each Appointment's identity, so a calendar app updates it rather than adding another", async () => {
+    const { core } = calendar();
+    const added = await core.addAppointment(mark, checkUp);
+    const { secret } = await core.makeSubscriptionLink(linda);
+    const before = events((await core.subscriptionFeed(secret))!)[0];
+    await core.changeAppointment(mark, added.id, { time: '15:30' });
+    const after = events((await core.subscriptionFeed(secret))!)[0];
+    expect(after.UID).toBe(before.UID);
+    expect(after['LAST-MODIFIED']).not.toBe('');
+  });
+
+  it('writes words a calendar app reads back as they were, however long', async () => {
+    const { core } = calendar();
+    const note =
+      'Fasting: no food, no coffee; water is fine.\nTake the 8:15 bus — Café Ñandú stop. '.repeat(
+        3,
+      );
+    await core.addAppointment(linda, { ...checkUp, noteForSusan: note });
+    const feed = (await core.subscriptionFeed((await core.makeSubscriptionLink(linda)).secret))!;
+    for (const line of feed.split('\r\n'))
+      expect(new TextEncoder().encode(line).length).toBeLessThanOrEqual(75);
+    expect(events(feed)[0].DESCRIPTION).toBe(
+      `Note for Susan: ${note.trim().replace(/[^\S\n]+/g, ' ')}`,
+    );
+  });
+
+  it('keeps only a hash of the link, so it is seen in full only when made', async () => {
+    const { core, store } = calendar();
+    const made = await core.makeSubscriptionLink(linda);
+    expect(made.secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(made.madeAt).toBe('2026-11-19T20:00:00.000Z');
+    const kept = await store.subscriptionLinkOf(linda.person.id);
+    expect(kept).toEqual({
+      personId: linda.person.id,
+      hash: expect.any(String),
+      madeAt: made.madeAt,
+    });
+    expect(JSON.stringify(store.subscriptionLinks())).not.toContain(made.secret);
+  });
+
+  it('gives nothing for a link that is unknown or switched off, and the same nothing for both', async () => {
+    const { core } = calendar();
+    await core.addAppointment(linda, everyDetail);
+    const { secret } = await core.makeSubscriptionLink(linda);
+    await core.switchOffSubscriptionLink(linda);
+    expect(await core.subscriptionFeed(secret)).toBeNull();
+    expect(
+      await core.subscriptionFeed(secret.replace(/^./, (c) => (c === 'A' ? 'B' : 'A'))),
+    ).toBeNull();
+    for (const notOne of ['', 'not-a-link', null, 42, { secret }, `${secret}x`])
+      expect(await core.subscriptionFeed(notOne)).toBeNull();
+  });
+
+  it('a new link switches off the old one', async () => {
+    const { core, store } = calendar();
+    const old = await core.makeSubscriptionLink(linda);
+    const replacement = await core.makeSubscriptionLink(linda);
+    expect(replacement.secret).not.toBe(old.secret);
+    expect(await core.subscriptionFeed(old.secret)).toBeNull();
+    expect(await core.subscriptionFeed(replacement.secret)).toContain('BEGIN:VCALENDAR');
+    expect(store.subscriptionLinks()).toHaveLength(1);
+  });
+
+  it("is each person's own: switching off one link leaves everyone else's working", async () => {
+    const { core } = calendar();
+    const lindas = await core.makeSubscriptionLink(linda);
+    const marks = await core.makeSubscriptionLink(mark);
+    await core.switchOffSubscriptionLink(linda);
+    expect(await core.subscriptionFeed(lindas.secret)).toBeNull();
+    expect(await core.subscriptionFeed(marks.secret)).toContain('BEGIN:VCALENDAR');
+    // Switching off a link that is already off changes nothing.
+    await core.switchOffSubscriptionLink(linda);
+    expect(await core.subscriptionFeed(marks.secret)).toContain('BEGIN:VCALENDAR');
+  });
+
+  it('is no Activity record: the Appointments did not change', async () => {
+    const { core, store } = calendar();
+    await core.makeSubscriptionLink(susan);
+    await core.switchOffSubscriptionLink(susan);
+    expect(store.activity()).toEqual([]);
+  });
+});

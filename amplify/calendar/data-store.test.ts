@@ -22,6 +22,13 @@ function dataApi() {
     async get({ id }: { id: string }) {
       return answer(rows.get(id) ?? null);
     },
+    // Two rows to a page, so that reading every row takes more than one.
+    async list({ nextToken }: { nextToken?: string | null } = {}) {
+      const from = Number(nextToken ?? 0);
+      const page = [...rows.values()].slice(from, from + 2);
+      const more = from + 2 < rows.size;
+      return { ...answer(page), nextToken: more ? String(from + 2) : null };
+    },
     async create(input: Row) {
       if (failure) return answer(null);
       const row = {
@@ -45,16 +52,49 @@ function dataApi() {
       return answer(row);
     },
   });
+  // Kept by person, and found by hash through an index that can lag behind the table.
+  const links = new Map<string, Row>();
+  let index: Row[] | null = null;
+  const SubscriptionLink = {
+    async get({ personId }: { personId: string }) {
+      return answer(links.get(personId) ?? null);
+    },
+    async create(input: Row) {
+      if (failure || links.has(input.personId as string)) return answer(null);
+      links.set(input.personId as string, { ...input, createdAt: 'x', updatedAt: 'x' });
+      return answer(links.get(input.personId as string));
+    },
+    async update(input: Row) {
+      if (failure || !links.has(input.personId as string)) return answer(null);
+      links.set(input.personId as string, { ...links.get(input.personId as string), ...input });
+      return answer(links.get(input.personId as string));
+    },
+    async delete({ personId }: { personId: string }) {
+      if (failure) return answer(null);
+      const row = links.get(personId) ?? null;
+      links.delete(personId);
+      return answer(row);
+    },
+    async subscriptionLinkByHash({ hash }: { hash: string }) {
+      return answer((index ?? [...links.values()]).filter((row) => row.hash === hash));
+    },
+  };
   const client = {
     models: {
       Appointment: model(tables.Appointment),
       ActivityRecord: model(tables.ActivityRecord),
+      SubscriptionLink,
     },
   } as unknown as DataClient;
   return {
     client,
     appointments: () => [...tables.Appointment.values()],
     activity: () => [...tables.ActivityRecord.values()],
+    links: () => [...links.values()],
+    /** The index stops hearing of changes until it is told to catch up. */
+    freezeIndex() {
+      index = structuredClone([...links.values()]);
+    },
     failWith(message: string | null) {
       failure = message;
     },
@@ -195,5 +235,37 @@ describe('the calendar kept in the data API', () => {
     await expect(core.deleteAppointment(linda, id)).rejects.toThrow('Unauthorized');
     api.failWith(null);
     expect(api.appointments()).toMatchObject([{ id, time: '14:00' }]);
+  });
+});
+
+describe('subscription links kept in the data API', () => {
+  it('keep a hash for each person, and replace it when they make another', async () => {
+    const { api, core } = calendar();
+    const first = await core.makeSubscriptionLink(linda);
+    const second = await core.makeSubscriptionLink(linda);
+    expect(api.links()).toMatchObject([{ personId: 'person-linda', madeAt: second.madeAt }]);
+    expect(JSON.stringify(api.links())).not.toContain(second.secret);
+    expect(await core.subscriptionFeed(first.secret)).toBeNull();
+    expect(await core.subscriptionFeed(second.secret)).toContain('BEGIN:VCALENDAR');
+    await core.switchOffSubscriptionLink(linda);
+    expect(api.links()).toEqual([]);
+  });
+
+  it('stop working at once when switched off, even before the index has caught up', async () => {
+    const { api, core } = calendar();
+    const old = await core.makeSubscriptionLink(linda);
+    api.freezeIndex();
+    await core.switchOffSubscriptionLink(linda);
+    expect(await core.subscriptionFeed(old.secret)).toBeNull();
+    await core.makeSubscriptionLink(linda);
+    expect(await core.subscriptionFeed(old.secret)).toBeNull();
+  });
+
+  it('give a feed of every Appointment, however many pages they take to read', async () => {
+    const { core } = calendar();
+    for (const day of ['20', '21', '22', '23', '24'])
+      await core.addAppointment(linda, { ...checkUp, date: `2026-11-${day}` });
+    const feed = await core.subscriptionFeed((await core.makeSubscriptionLink(linda)).secret);
+    expect(feed?.match(/BEGIN:VEVENT/g)).toHaveLength(5);
   });
 });

@@ -26,7 +26,10 @@ const api = vi.hoisted(() => {
       changeAppointment: vi.fn(),
       cancelAppointment: vi.fn(),
       removeAppointment: vi.fn(),
+      makeSubscriptionLink: vi.fn(),
+      switchOffSubscriptionLink: vi.fn(),
     },
+    links: vi.fn(),
     hub: undefined as undefined | ((event: { payload: { event: string; data: unknown } }) => void),
     model: {
       onCreate: subscription(listening.onCreate),
@@ -38,7 +41,10 @@ const api = vi.hoisted(() => {
 vi.mock('aws-amplify/data', async (original) => ({
   ...(await original<typeof import('aws-amplify/data')>()),
   generateClient: () => ({
-    models: { Appointment: { ...api.model, list: api.list } },
+    models: {
+      Appointment: { ...api.model, list: api.list },
+      SubscriptionLink: { list: api.links },
+    },
     mutations: api.mutations,
   }),
 }));
@@ -97,7 +103,9 @@ const connection = (connectionState: string) =>
 const settled = () => new Promise((resolve) => setTimeout(resolve));
 
 /** Watches the calendar; `seen` is each list the watcher was told, as what the Appointments are. */
-function watch(calendar = createAmplifyCalendar()) {
+const FEED = 'https://abc123.lambda-url.us-east-1.on.aws/';
+
+function watch(calendar = createAmplifyCalendar(FEED)) {
   const seen: string[][] = [];
   const latest: { appointments: Appointment[] } = { appointments: [] };
   const onError = vi.fn();
@@ -118,6 +126,7 @@ beforeEach(() => {
     return { data, nextToken: page < api.pages.length ? `page-${page}` : null };
   });
   for (const mutation of Object.values(api.mutations)) mutation.mockReset();
+  api.links.mockReset();
 });
 
 describe('reading the calendar', () => {
@@ -335,5 +344,49 @@ describe('the commands', () => {
       'Could not save the change. Check your connection and try again.',
     );
     expect(seen).toHaveLength(1);
+  });
+});
+
+describe("the signed-in person's subscription link", () => {
+  const secret = 'Zm9vYmFyYmF6cXV4cXV1eGNvcmdlZ3JhdWx0Z2FycGx5';
+
+  it('is read from the data API, which hands a person only their own', async () => {
+    const calendar = createAmplifyCalendar(FEED);
+    api.links.mockResolvedValueOnce({ data: [] });
+    expect(await calendar.subscriptionLink()).toBeNull();
+    api.links.mockResolvedValueOnce({ data: [], nextToken: 'more' }).mockResolvedValueOnce({
+      data: [{ personId: 'person-linda', hash: 'ab', madeAt: '2026-11-19T20:00:00.000Z' }],
+    });
+    expect(await calendar.subscriptionLink()).toEqual({ madeAt: '2026-11-19T20:00:00.000Z' });
+  });
+
+  it("is made by the core's command, and its address is the feed's with the secret", async () => {
+    const calendar = createAmplifyCalendar(FEED);
+    api.mutations.makeSubscriptionLink.mockResolvedValue({
+      data: JSON.stringify({ subscriptionLink: { secret, madeAt: '2026-11-19T20:00:00.000Z' } }),
+    });
+    expect(await calendar.makeSubscriptionLink()).toEqual({
+      address: `${FEED}${secret}`,
+      madeAt: '2026-11-19T20:00:00.000Z',
+    });
+    api.mutations.switchOffSubscriptionLink.mockResolvedValue({
+      data: { subscriptionLink: null },
+    });
+    await calendar.switchOffSubscriptionLink();
+    expect(api.mutations.switchOffSubscriptionLink).toHaveBeenCalled();
+  });
+
+  it('cannot be made when the backend has no feed, and says so', async () => {
+    await expect(createAmplifyCalendar(null).makeSubscriptionLink()).rejects.toThrow(
+      'Calendar subscription is not set up yet.',
+    );
+    expect(api.mutations.makeSubscriptionLink).not.toHaveBeenCalled();
+  });
+
+  it('says to try again when the command fails', async () => {
+    api.mutations.switchOffSubscriptionLink.mockRejectedValue(new Error('Network Error'));
+    await expect(createAmplifyCalendar(FEED).switchOffSubscriptionLink()).rejects.toThrow(
+      'Could not save the change. Check your connection and try again.',
+    );
   });
 });
