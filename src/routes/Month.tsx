@@ -42,8 +42,9 @@ const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frida
 const CELL_LIMIT = 2;
 
 /**
- * A month at a glance, to find a free day or jump to a date. Cancelled Appointments are not shown:
- * a day with only those is free. Days of the months either side fill out the first and last weeks.
+ * A month at a glance, to find a free day or jump to a date. Cancelled Appointments are shown,
+ * marked as cancelled, so that nobody takes one for a booking still to be kept. Days of the months
+ * either side fill out the first and last weeks.
  *
  * On a phone, each day with an Appointment has a mark, and the picked day's Appointments are listed
  * beneath the grid, then the ones after it. On a desktop each Appointment is in its day's cell, by
@@ -60,9 +61,8 @@ export function Month() {
   const picked = view.day ?? (month === monthOf(today) ? today : `${month}-01`);
   const show = (to: string) => setView({ month: to, day: null });
 
-  const active = (appointments ?? []).filter((appointment) => appointment.state === 'active');
   const onDay = new Map<string, Appointment[]>();
-  for (const appointment of active)
+  for (const appointment of appointments ?? [])
     onDay.set(appointment.date, [...(onDay.get(appointment.date) ?? []), appointment]);
 
   const controls = (
@@ -121,7 +121,7 @@ export function Month() {
               onDay={onDay}
               pick={(day) => setView({ month: monthOf(day), day })}
             />
-            <DayList picked={picked} today={today} active={active} />
+            <DayList picked={picked} today={today} appointments={appointments} />
           </>
         ))}
     </Page>
@@ -131,7 +131,7 @@ export function Month() {
 interface GridProps {
   month: string;
   today: string;
-  /** The Appointments on each day, in date order. */
+  /** The Appointments on each day, cancelled ones included, in date order. */
   onDay: Map<string, Appointment[]>;
 }
 
@@ -165,11 +165,23 @@ function Grid({
   );
 }
 
+const isCancelled = (appointment: Appointment) => appointment.state === 'cancelled';
+
+/** What a phone's day button says it holds: "2 Appointments, 1 cancelled", or nothing. */
+function dayCounts(count: number, cancelled: number): string[] {
+  const appointments = (n: number, kind = '') => `${n} ${kind}Appointment${n > 1 ? 's' : ''}`;
+  if (count === 0) return cancelled > 0 ? [appointments(cancelled, 'cancelled ')] : [];
+  return cancelled > 0 ? [appointments(count), `${cancelled} cancelled`] : [appointments(count)];
+}
+
 const dayOfMonth = (date: string) => Number(date.slice(8));
 const cellClass = (date: string, month: string) =>
   monthOf(date) === month ? undefined : 'other-month';
 
-/** On a phone: a button for each day, with a mark when it has an Appointment. */
+/**
+ * On a phone: a button for each day, with a mark when it has an Appointment: filled when one is
+ * still on, hollow when every one there was cancelled.
+ */
 function PhoneGrid({
   month,
   today,
@@ -182,7 +194,9 @@ function PhoneGrid({
       month={month}
       long={false}
       day={(date) => {
-        const count = onDay.get(date)?.length ?? 0;
+        const all = onDay.get(date) ?? [];
+        const cancelled = all.filter(isCancelled).length;
+        const count = all.length - cancelled;
         return (
           <td key={date} className={cellClass(date, month)}>
             <button
@@ -190,15 +204,14 @@ function PhoneGrid({
               className="day"
               aria-pressed={date === picked}
               aria-current={date === today ? 'date' : undefined}
-              aria-label={
-                count > 0
-                  ? `${formatDate(date)}, ${count} Appointment${count > 1 ? 's' : ''}`
-                  : formatDate(date)
-              }
+              aria-label={[formatDate(date), ...dayCounts(count, cancelled)].join(', ')}
               onClick={() => pick(date)}
             >
               {dayOfMonth(date)}
-              {count > 0 && <span className="mark" aria-hidden="true" />}
+              {/* A day with only cancelled Appointments has a hollow mark. */}
+              {all.length > 0 && (
+                <span className={count > 0 ? 'mark' : 'mark cancelled'} aria-hidden="true" />
+              )}
             </button>
           </td>
         );
@@ -230,19 +243,24 @@ function DesktopGrid({ month, today, onDay }: GridProps) {
             <span className="day">{dayOfMonth(date)}</span>
             {shown.length > 0 && (
               <ul>
-                {shown.map(({ id, time, what }) => (
-                  <li key={id}>
-                    <Link
-                      className="chip"
-                      to={`/appointments/${id}`}
-                      aria-label={`${formatTime(time)} ${what}, ${formatDate(date)}`}
-                      aria-current={opened === id || undefined}
-                    >
-                      <strong>{formatTime(time)}</strong>
-                      <span>{what}</span>
-                    </Link>
-                  </li>
-                ))}
+                {shown.map((appointment) => {
+                  const { id, time, what } = appointment;
+                  const cancelled = isCancelled(appointment);
+                  return (
+                    <li key={id}>
+                      <Link
+                        className={cancelled ? 'chip cancelled' : 'chip'}
+                        to={`/appointments/${id}`}
+                        aria-label={`${cancelled ? 'Cancelled: ' : ''}${formatTime(time)} ${what}, ${formatDate(date)}`}
+                        aria-current={opened === id || undefined}
+                      >
+                        <strong>{formatTime(time)}</strong>
+                        <span className="chip-what">{what}</span>
+                        {cancelled && <span className="chip-state">Cancelled</span>}
+                      </Link>
+                    </li>
+                  );
+                })}
               </ul>
             )}
             {more > 0 && (
@@ -268,14 +286,14 @@ function dayHeading(date: string, today: string): string {
 function DayList({
   picked,
   today,
-  active,
+  appointments,
 }: {
   picked: string;
   today: string;
-  active: Appointment[];
+  appointments: Appointment[];
 }) {
   const days = new Map<string, Appointment[]>([[picked, []]]);
-  for (const appointment of active)
+  for (const appointment of appointments)
     if (appointment.date >= picked)
       days.set(appointment.date, [...(days.get(appointment.date) ?? []), appointment]);
 
@@ -312,6 +330,17 @@ function DayRow({ appointment }: { appointment: Appointment }) {
   const { id, time, what, withWhom, placeName } = appointment;
   const withAndWhere = joined(' · ', withWhom, placeName);
   const driver = driverSentence(appointment);
+  // A cancelled one is marked so, and nothing else about it is shown: there is nothing to attend.
+  if (isCancelled(appointment))
+    return (
+      <Link className="day-row cancelled" to={`/appointments/${id}`}>
+        <span className="time">{formatTime(time)}</span>
+        <span className="row-what">
+          <strong>{what}</strong>
+          <span className="badge">Cancelled</span>
+        </span>
+      </Link>
+    );
   return (
     <Link className="day-row" to={`/appointments/${id}`}>
       <span className="time">{formatTime(time)}</span>

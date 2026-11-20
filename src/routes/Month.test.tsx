@@ -74,7 +74,7 @@ describe('the Month tab, on a phone', () => {
     );
   });
 
-  it('does not mark a day whose only Appointment is cancelled', async () => {
+  it('marks a day whose only Appointment was cancelled as cancelled, and lists it as cancelled', async () => {
     const calendar = emptyCalendar();
     const hair = await calendar.core.addAppointment(linda, {
       what: 'Hair',
@@ -82,9 +82,36 @@ describe('the Month tab, on a phone', () => {
       time: '11:00',
     });
     await calendar.core.cancelAppointment(mark, hair.id);
+    await calendar.core.addAppointment(linda, {
+      what: 'Eye exam',
+      date: daysFromToday(2),
+      time: '15:30',
+    });
     renderApp('/month', { calendar });
     await screen.findByRole('table');
-    expect(day(today())).toHaveAccessibleName(formatDate(today()));
+
+    expect(day(today())).toHaveAccessibleName(`${formatDate(today())}, 1 cancelled Appointment`);
+    expect(day(today()).querySelector('.mark')).toHaveClass('cancelled');
+    expect(listed()[0]).toEqual([`${brief(today())} Today`, '11:00 amHairCancelled']);
+    expect(listed()[1][1]).toBe('3:30 pmEye exam');
+  });
+
+  it('counts a cancelled Appointment apart from the ones still on', async () => {
+    const calendar = emptyCalendar();
+    const hair = await calendar.core.addAppointment(linda, {
+      what: 'Hair',
+      date: today(),
+      time: '11:00',
+    });
+    await calendar.core.addAppointment(linda, { what: 'Lunch', date: today(), time: '12:30' });
+    await calendar.core.addAppointment(linda, { what: 'Walk', date: today(), time: '16:00' });
+    await calendar.core.cancelAppointment(mark, hair.id);
+    renderApp('/month', { calendar });
+    await screen.findByRole('table');
+    expect(day(today())).toHaveAccessibleName(
+      `${formatDate(today())}, 2 Appointments, 1 cancelled`,
+    );
+    expect(day(today()).querySelector('.mark')).not.toHaveClass('cancelled');
   });
 
   it("lists today's Appointments beneath the grid to begin with, then the ones after it", async () => {
@@ -265,6 +292,29 @@ describe('the Month tab, on a desktop', () => {
     // Moving to another month keeps the Appointment open.
     await userEvent.click(screen.getByRole('button', { name: 'Next month' }));
     expect(within(panel()).getByRole('heading', { level: 2, name: 'Hair' })).toBeInTheDocument();
+  });
+
+  it('shows a cancelled Appointment in its cell, marked as cancelled', async () => {
+    const calendar = emptyCalendar();
+    const hair = await calendar.core.addAppointment(linda, {
+      what: 'Hair',
+      date: today(),
+      time: '11:00',
+    });
+    await calendar.core.addAppointment(linda, { what: 'Lunch', date: today(), time: '12:30' });
+    await calendar.core.cancelAppointment(mark, hair.id);
+    renderApp('/month', { calendar });
+    await screen.findByRole('table');
+
+    const cancelled = within(grid()).getByRole('link', {
+      name: `Cancelled: 11:00 am Hair, ${formatDate(today())}`,
+    });
+    expect(cancelled).toHaveTextContent('11:00 amHairCancelled');
+    expect(cancelled).toHaveClass('cancelled');
+    expect(inGrid('12:30 pm', 'Lunch', today())).not.toHaveClass('cancelled');
+
+    await userEvent.click(cancelled);
+    expect(within(panel()).getByText('Cancelled')).toBeInTheDocument();
   });
 
   it('says how many more there are when a day has more than fit in its cell', async () => {

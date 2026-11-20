@@ -568,6 +568,15 @@ p {
 .month-grid button.day[aria-pressed='true'] .mark {
   background: var(--accent-text);
 }
+/* A day whose every Appointment was cancelled: a hollow mark. */
+.month-grid .mark.cancelled,
+.month-grid button.day[aria-pressed='true'] .mark.cancelled {
+  border: 1.5px solid var(--muted);
+  background: none;
+}
+.month-grid button.day[aria-pressed='true'] .mark.cancelled {
+  border-color: var(--accent-text);
+}
 
 .app.desktop .month-grid {
   border-radius: var(--radius);
@@ -625,7 +634,7 @@ p {
   overflow-wrap: break-word;
 }
 /* A long name takes two lines at most; the whole of it is in the detail panel. */
-.chip span {
+.chip .chip-what {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -640,6 +649,26 @@ p {
 .chip[aria-current='true'] {
   background: var(--accent);
   color: var(--accent-text);
+}
+/* A cancelled Appointment: no fill, a dashed edge, struck through and labelled, so that it is not
+   taken for one still to be kept. */
+.chip.cancelled {
+  border: 1px dashed var(--muted);
+  border-left: 4px solid var(--muted);
+  background: none;
+  color: var(--muted);
+}
+.chip.cancelled strong,
+.chip.cancelled .chip-what {
+  text-decoration: line-through;
+}
+.chip.cancelled[aria-current='true'] {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.chip-state {
+  font-size: 14px;
+  font-weight: 750;
 }
 .month-grid .more {
   margin-top: 6px;
@@ -692,6 +721,16 @@ p {
 .day-row .time {
   white-space: nowrap;
   font-weight: 700;
+}
+.day-row.cancelled {
+  color: var(--muted);
+}
+.day-row.cancelled .time,
+.day-row.cancelled strong {
+  text-decoration: line-through;
+}
+.day-row .badge {
+  margin-top: 4px;
 }
 
 /* ---------- one Appointment, and the form ---------- */
