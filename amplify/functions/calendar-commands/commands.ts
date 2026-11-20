@@ -4,7 +4,7 @@
 import { CalendarRefusal, type Actor, type CalendarCore } from '../../../src/lib/calendar';
 import { COMMAND_FAILED, type CommandAnswer } from '../../../src/lib/calendarApi';
 import { logFailure } from '../../calendar/log';
-import type { FindName } from '../../calendar/people';
+import { displayName, type FindName } from '../../calendar/people';
 import type { TextSenderName } from '../../calendar/text-sender';
 
 /** What the data API hands a function for one mutation, or for the textSender query. */
@@ -32,21 +32,19 @@ const COMMANDS = new Set([
   'removeAppointment',
   'makeSubscriptionLink',
   'switchOffSubscriptionLink',
+  'makeAgentKey',
+  'revokeAgentKey',
   'changeSettings',
   'sendTestText',
 ]);
-
-/** Shown when the account has no usable name. The owner gives every account one. */
-const NO_NAME = 'Someone';
 
 /** The signed-in person, from the identity the data API checked. Nothing the caller sent is used. */
 async function actor(identity: unknown, nameOf: FindName): Promise<Actor> {
   const { sub, username } = (identity ?? {}) as { sub?: unknown; username?: unknown };
   if (typeof sub !== 'string' || !sub || typeof username !== 'string' || !username)
     throw new Error('No signed-in person came with the command.');
-  const name = (await nameOf(username))?.trim().replace(/\s+/g, ' ').slice(0, 80);
   // A command from the app is the person's own act. Agents come in through the MCP server.
-  return { person: { id: sub, name: name || NO_NAME }, viaAgent: false };
+  return { person: { id: sub, name: displayName(await nameOf(username)) }, viaAgent: false };
 }
 
 /** Details arrive as JSON text. Anything else is left for the core to refuse. */
@@ -64,7 +62,7 @@ export function calendarCommandHandler({ core, nameOf, textSender }: CommandDepe
     const command = event.fieldName ?? event.info?.fieldName;
     // Not a command: it changes nothing, and says nothing about the calendar.
     if (command === 'textSender') return textSender();
-    const { id, details, changes, settings } = event.arguments;
+    const { id, details, changes, settings, name, hash } = event.arguments;
     try {
       const by = await actor(event.identity, nameOf);
       const calendar = await core();
@@ -110,6 +108,11 @@ export function calendarCommandHandler({ core, nameOf, textSender }: CommandDepe
         case 'switchOffSubscriptionLink':
           await calendar.switchOffSubscriptionLink(by);
           return { subscriptionLink: null };
+        case 'makeAgentKey':
+          return { agentKey: await calendar.makeAgentKey(by, name) };
+        case 'revokeAgentKey':
+          await calendar.revokeAgentKey(by, hash);
+          return { agentKey: null };
         case 'changeSettings':
           return { settings: await calendar.changeSettings(by, fromJson(settings) as never) };
         case 'sendTestText':

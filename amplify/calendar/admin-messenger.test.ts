@@ -8,6 +8,7 @@ import {
   type PushResult,
   type PushSender,
 } from './admin-messenger';
+import { MCP_SERVER_FIELDS } from '../functions/mcp-server/access';
 import {
   dataApiDevices,
   type DeviceClient,
@@ -427,6 +428,46 @@ describe('app notifications to Admins', () => {
       'https://web.push.apple.com/lindas-laptop',
     );
     expect(devices()).toHaveLength(3);
+  });
+
+  it('reach Admins, and forget a gone device, for the MCP server with only its own fields', async () => {
+    const { client, devices: kept } = await messenger();
+    const may = new Set([...MCP_SERVER_FIELDS.Query, ...MCP_SERVER_FIELDS.Mutation]);
+    const call =
+      (field: string, run: (...args: never[]) => unknown) =>
+      (...args: never[]) => {
+        if (!may.has(field)) throw new Error(`Not Authorized to access ${field}`);
+        return run(...args);
+      };
+    const { AppNotificationDevice, AppNotificationKey } = client.models;
+    const limited = {
+      models: {
+        AppNotificationDevice: {
+          list: call('listAppNotificationDevices', AppNotificationDevice.list),
+          create: call('createAppNotificationDevice', AppNotificationDevice.create),
+          update: call('updateAppNotificationDevice', AppNotificationDevice.update),
+        },
+        AppNotificationKey: {
+          get: call('getAppNotificationKey', AppNotificationKey.get),
+          create: call('createAppNotificationKey', AppNotificationKey.create),
+        },
+      },
+      graphql: (options: { query: string; variables: Record<string, unknown> }) => {
+        const field = /(\w+)\(input/.exec(options.query)?.[1];
+        return call(field ?? '', client.graphql)(options as never);
+      },
+    } as unknown as DeviceClient;
+    const push = pushService({ 'https://web.push.apple.com/lindas-laptop': 'gone' });
+    const m = adminMessenger({
+      admins: async () => accounts('person-linda', 'person-mark'),
+      devices: dataApiDevices(limited),
+      push: push.sender,
+    });
+    expect(await m.sendAppNotification(['person-linda', 'person-mark'], update)).toMatchObject({
+      failed: [],
+    });
+    expect(push.reached).toHaveLength(2);
+    expect(kept().map((d) => d.endpoint)).not.toContain('https://web.push.apple.com/lindas-laptop');
   });
 
   it('keep a gone device that was renewed or moved since it was sent to', async () => {
