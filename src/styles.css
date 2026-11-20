@@ -154,6 +154,10 @@ p {
   min-height: 100dvh;
   padding-bottom: calc(var(--tabbar) + env(safe-area-inset-bottom));
 }
+/* An Appointment and its form fill the screen: no tab bar. */
+.app.phone.full-screen {
+  padding-bottom: env(safe-area-inset-bottom);
+}
 .tabbar {
   position: fixed;
   left: 0;
@@ -274,10 +278,149 @@ p {
   padding: 40px 28px;
   border-left: 1px solid var(--border);
 }
+.detail .page {
+  padding: 0;
+}
 
-/* ---------- Appointments: the list, one Appointment, and the form ----------
-   Plain on purpose. Ticket 06 gives these the chosen design. */
-.appointments {
+/* ---------- the head of a screen, and the way back from a full screen ---------- */
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.page-head h1,
+.page-head h2 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.detail .page-head h2 {
+  font-size: 28px;
+  line-height: 1.2;
+}
+/* A round button holding only an icon, such as New Appointment on a phone. */
+.btn-round {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border-radius: 99px;
+}
+.back {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 4px;
+  min-height: 52px;
+  margin: -12px 0 -8px -6px;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+/* ---------- Upcoming: the next Appointment's card, then the later ones ---------- */
+.upcoming-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.section-label {
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  font-size: 20px;
+}
+
+.next-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 22px;
+  background: var(--surface);
+  border: 2px solid var(--accent);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  text-decoration: none;
+}
+.next-day {
+  white-space: nowrap;
+  color: var(--accent);
+  font-weight: 700;
+}
+.next-time {
+  white-space: nowrap;
+  font-size: 46px;
+  font-weight: 750;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+.next-what {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.next-title {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+.next-driver {
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+/* The Reminders still to be sent, at the foot of the next-Appointment card. */
+.next-reminders {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.next-reminders .muted {
+  font-size: 16px;
+  font-weight: 650;
+}
+.next-reminders ul {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.with-icon {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.with-icon svg {
+  flex: none;
+}
+/* On a desktop the card is wide: the day and time on the left, what it is beside them, or beneath
+   them when the middle column is narrow. */
+.app.desktop .next-card {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 18px 44px;
+  padding: 28px 30px;
+}
+.app.desktop .next-what {
+  flex: 1 1 260px;
+}
+
+.later {
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -285,10 +428,11 @@ p {
   padding: 0;
   list-style: none;
 }
-.appointment-row {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.later-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
   min-height: 52px;
   padding: 14px 18px;
   background: var(--surface);
@@ -297,18 +441,76 @@ p {
   color: var(--text);
   text-decoration: none;
 }
-.appointment-row:hover {
+.app.desktop .later-row {
+  padding: 16px 24px;
+}
+/* On a desktop the time has a column of its own, above what it is when the column is narrow. */
+.row-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 24px;
+  min-width: 0;
+}
+.row-main .row-what {
+  flex: 1 1 180px;
+}
+.next-card:hover,
+.later-row:hover {
   border-color: var(--accent);
 }
-.appointment-row .when {
-  color: var(--accent);
-  font-weight: 650;
+/* The Appointment open in the desktop detail panel. */
+.later-row[aria-current='true'] {
+  border: 2px solid var(--accent);
+  background: var(--accent-soft);
 }
-.appointment-row .what {
+.next-card[aria-current='true'] {
+  background: var(--accent-soft);
+}
+.date-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.15;
+}
+.date-block .weekday,
+.date-block .month {
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.date-block .day {
+  font-size: 28px;
+  font-weight: 750;
+}
+.later-row .time {
+  flex: 0 0 96px;
+  white-space: nowrap;
+  font-weight: 700;
+}
+.row-what {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.row-what strong {
   font-size: 21px;
 }
-.what.cancelled {
-  text-decoration: line-through;
+
+/* ---------- one Appointment, and the form ---------- */
+/* It overlaps another Appointment. A warning, not a refusal: it was saved. */
+.warning {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 18px;
+  border-radius: 14px;
+  background: var(--notice-soft);
+  color: var(--notice);
+  font-weight: 600;
 }
 .badge {
   align-self: flex-start;

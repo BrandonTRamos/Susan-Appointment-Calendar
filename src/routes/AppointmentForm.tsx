@@ -22,8 +22,8 @@ import {
   type TypedReminder,
 } from './AppointmentReminders';
 
-// The form for adding and changing an Appointment. Plain on purpose; ticket 06 gives it the chosen
-// design. It checks nothing itself: the calendar core decides what makes an Appointment, and its
+// The form for adding and changing an Appointment: a full screen on a phone, the detail panel on a
+// desktop. It checks nothing itself: the calendar core decides what makes an Appointment, and its
 // refusal is shown in its own words. It does warn, before saving, about Reminders that will not do
 // what the person may expect (AppointmentReminders.tsx).
 

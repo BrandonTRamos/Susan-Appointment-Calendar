@@ -2,7 +2,7 @@
 import { cleanup, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { addDays, formatDate, formatMoment, momentOf } from '../lib/localTime';
+import { addDays, dayInWords, formatDate, formatMoment, momentOf } from '../lib/localTime';
 import {
   atWidth,
   daysFromToday,
@@ -253,5 +253,55 @@ describe("an opened Appointment's Reminders", () => {
     expect(
       await screen.findByText('No Reminders. Susan will not be texted about this Appointment.'),
     ).toBeInTheDocument();
+  });
+});
+
+describe('the next-Appointment card on Upcoming', () => {
+  async function upcoming(reminders: NonNullable<Parameters<typeof calendarWith>[0]>) {
+    renderApp('/', { calendar: await calendarWith(reminders) });
+    return within(await screen.findByRole('region', { name: 'Next up' })).getByRole('link');
+  }
+  async function calendarWith(
+    reminders: Parameters<
+      ReturnType<typeof emptyCalendar>['core']['addAppointment']
+    >[1]['reminders'],
+  ) {
+    const calendar = emptyCalendar();
+    await calendar.core.addAppointment(linda, {
+      what: 'Cardiology check-up',
+      date: daysFromToday(2),
+      time: '14:00',
+      reminders,
+    });
+    return calendar;
+  }
+  const today = daysFromToday(0);
+
+  it.each(['phone', 'desktop'] as const)(
+    'shows the Reminders still to be sent, at %s width',
+    async (width) => {
+      atWidth(width);
+      const card = await upcoming([
+        // Already passed: not shown.
+        { shape: 'daysBefore', days: 3, time: '18:00' },
+        { shape: 'daysBefore', days: 1, time: '18:00' },
+        { shape: 'before', amount: 2, unit: 'hours' },
+      ]);
+      const list = within(card).getByRole('list', { name: 'Reminders still to be sent' });
+      expect(
+        within(list)
+          .getAllByRole('listitem')
+          .map((item) => item.textContent),
+      ).toEqual([
+        `${dayInWords(daysFromToday(1), today)} at 6:00 pm`,
+        `${dayInWords(daysFromToday(2), today)} at 12:00 pm`,
+      ]);
+    },
+  );
+
+  it('says so when no Reminder is still to be sent', async () => {
+    const card = await upcoming([{ shape: 'daysBefore', days: 3, time: '18:00' }]);
+    expect(within(card).getByText('No Reminder to be sent')).toBeInTheDocument();
+    expect(within(card).queryByRole('list')).not.toBeInTheDocument();
   });
 });

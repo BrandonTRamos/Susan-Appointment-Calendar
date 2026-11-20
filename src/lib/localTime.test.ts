@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   addDays,
+  dateParts,
+  dayInWords,
   formatDate,
   formatMoment,
   formatTime,
@@ -114,5 +116,25 @@ describe("Susan's local time", () => {
     expect(formatTime('12:00')).toBe('12:00 pm');
     expect(formatTime('09:00')).toBe('9:00 am');
     expect(formatMoment('2026-11-19T20:15:00Z', EASTERN)).toBe('Thu, Nov 19, 2026 at 3:15 pm');
+  });
+});
+
+describe('a day in words', () => {
+  it('says Today or Tomorrow, then the weekday and date', () => {
+    expect(dayInWords('2026-11-19', '2026-11-19')).toBe('Today · Thu, Nov 19');
+    expect(dayInWords('2026-11-20', '2026-11-19')).toBe('Tomorrow · Fri, Nov 20');
+    expect(dayInWords('2026-12-31', '2026-12-30')).toBe('Tomorrow · Thu, Dec 31');
+  });
+
+  it('says only the weekday and date further ahead, with the year when it is not this one', () => {
+    expect(dayInWords('2026-11-23', '2026-11-19')).toBe('Mon, Nov 23');
+    expect(dayInWords('2027-01-01', '2026-12-31')).toBe('Tomorrow · Fri, Jan 1, 2027');
+    expect(dayInWords('2027-01-04', '2026-12-31')).toBe('Mon, Jan 4, 2027');
+  });
+});
+
+describe('the parts of a date', () => {
+  it('are its weekday, month and day of the month', () => {
+    expect(dateParts('2026-12-01')).toEqual({ weekday: 'Tue', month: 'Dec', day: '1' });
   });
 });

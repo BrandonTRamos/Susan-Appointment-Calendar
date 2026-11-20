@@ -1,4 +1,6 @@
+import { useId } from 'react';
 import { Field } from '../components/Field';
+import { useInPanel } from '../components/Page';
 import {
   describeReminder,
   isOvernight,
@@ -135,13 +137,14 @@ export function ReminderFields({
   timeZone: string;
   now: Date;
 }) {
+  const headingId = useId();
   const change = (key: string, changes: Partial<TypedReminder>) =>
     onChange(reminders.map((each) => (each.key === key ? { ...each, ...changes } : each)));
   const start = startOf(details, timeZone);
 
   return (
-    <section className="form-reminders" aria-labelledby="reminders-heading">
-      <h2 id="reminders-heading">Reminders</h2>
+    <section className="form-reminders" aria-labelledby={headingId}>
+      <Heading id={headingId}>Reminders</Heading>
       <p className="hint muted">Texts to Susan about this Appointment, at her local time.</p>
       {reminders.length === 0 && (
         <p>No Reminders. Susan will not be texted about this Appointment.</p>
@@ -298,6 +301,11 @@ export function ReminderFields({
   );
 }
 
+/** The Reminders heading: one level below the screen's, which is lower in the detail panel. */
+function Heading({ id, children }: { id: string; children: string }) {
+  return useInPanel() ? <h3 id={id}>{children}</h3> : <h2 id={id}>{children}</h2>;
+}
+
 /** What a person should know about when a Reminder goes out. */
 function Warnings({
   due,
@@ -351,9 +359,10 @@ export function ReminderList({
   now: Date;
 }) {
   const { reminders, state } = appointment;
+  const headingId = useId();
   return (
-    <section className="reminders" aria-labelledby="reminders-heading">
-      <h2 id="reminders-heading">Reminders</h2>
+    <section className="reminders" aria-labelledby={headingId}>
+      <Heading id={headingId}>Reminders</Heading>
       {state === 'cancelled' && (
         <p className="muted">No Reminders are sent for a cancelled Appointment.</p>
       )}

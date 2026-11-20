@@ -23,7 +23,7 @@ Nothing is sent in this ticket. It delivers the planning and the wording; ticket
 - [x] The day in words is right for the moment the Reminder goes out ("today", "tomorrow", or the weekday and date).
 - [x] Words are kept to the basic SMS character set where possible, for example straight quotes for curly ones.
 - [x] The form and the detail show each Reminder's due time and a preview of its exact words.
-- [x] The next-Appointment card on Upcoming shows the Reminders still to be sent, if ticket 06 has landed. (06 had not landed, so there is no card yet. `remindersStillToSend` in the calendar core gives what the card should show; 06 fills the card's place with it.)
+- [x] The next-Appointment card on Upcoming shows the Reminders still to be sent, if ticket 06 has landed. (06 landed first; 07 fills its `RemindersToSend` place, `src/components/RemindersToSend.tsx`, with `remindersStillToSend` from the calendar core: when each goes out, or "No Reminder to be sent". Screen tests check it at phone and desktop widths.)
 - [x] Tests through the core cover each shape, a daylight-saving change, a moved Appointment, and the wording with and without each optional detail. Screen tests cover the three form warnings.
 
 **As built:** Reminders are set as part of adding or changing an Appointment, not by a separate command, so that one save is one change with one activity record. The form and the detail show Reminders through `src/routes/AppointmentReminders.tsx`. A Reminder may not go out after the Appointment starts; the core refuses one, except an exact-time Reminder kept from a move, which stays flagged until someone sees to it. A Reminder at a clock time the clocks skip goes out an hour later, when they have landed; an exact time the clocks skip is refused.

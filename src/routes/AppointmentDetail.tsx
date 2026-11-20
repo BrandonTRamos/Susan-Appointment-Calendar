@@ -3,17 +3,19 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { CalendarLoading, CalendarTrouble } from '../components/CalendarTrouble';
 import { Page } from '../components/Page';
 import { useCalendar } from '../data/CalendarContext';
-import type { Appointment, Stamp } from '../lib/calendar';
+import { overlappingAppointments, type Appointment, type Stamp } from '../lib/calendar';
 import { formatDate, formatMoment, formatTime } from '../lib/localTime';
 import { ReminderList } from './AppointmentReminders';
 
 /**
- * One Appointment: all its details, its Reminders and their words, who added it and who last
- * changed it, and Cancel and Delete.
- * Plain on purpose; ticket 06 gives it the chosen design.
+ * One Appointment: all its details, a warning when it overlaps another, its Reminders and their
+ * words, Edit, Cancel and Delete, and who added it and who last changed it. A full screen on a
+ * phone; on a desktop, the detail panel. It shows the Appointment at its address, or the one it is
+ * given.
  */
-export function AppointmentDetail() {
-  const { id } = useParams();
+export function AppointmentDetail({ id: given }: { id?: string }) {
+  const params = useParams();
+  const id = given ?? params.id;
   const { appointments, failed } = useCalendar();
   const appointment = appointments?.find((each) => each.id === id);
   // Set while this person's own delete is being carried out: the Appointment can be gone from the
@@ -50,7 +52,7 @@ function Detail({
   appointment: Appointment;
   onDeleting: (deleting: boolean) => void;
 }) {
-  const { client, timeZone } = useCalendar();
+  const { client, timeZone, appointments } = useCalendar();
   const navigate = useNavigate();
   const [asking, setAsking] = useState<'cancel' | 'delete' | null>(null);
   const [busy, setBusy] = useState(false);
@@ -59,6 +61,7 @@ function Detail({
   const { id, what, date, time, state, added, lastChanged } = appointment;
   const { withWhom, placeName, placeAddress, driverName, pickupTime } = appointment;
   const cancelled = state === 'cancelled';
+  const overlaps = overlappingAppointments(appointment, appointments ?? []);
 
   /** Carries out a command, and says why if it was refused or failed. */
   async function carryOut(command: () => Promise<unknown>) {
@@ -78,12 +81,22 @@ function Detail({
     `${did} by ${personName}${viaAgent ? ' (via agent)' : ''} on ${formatMoment(at, timeZone)}`;
 
   return (
-    <Page title={what}>
+    <Page title={what} back={{ to: '/', label: 'Back to Upcoming' }}>
       <CalendarTrouble />
       {cancelled && (
         <p>
           <span className="badge">Cancelled</span>
         </p>
+      )}
+      {overlaps.length > 0 && (
+        <div className="warning" role="note">
+          {overlaps.map((other) => (
+            <p key={other.id}>
+              This overlaps <strong>{other.what}</strong>
+              {`, ${formatDate(other.date, 'short')} at ${formatTime(other.time)}.`}
+            </p>
+          ))}
+        </div>
       )}
 
       <dl className="details">
@@ -135,11 +148,6 @@ function Detail({
       </dl>
 
       <ReminderList appointment={appointment} timeZone={timeZone} now={new Date()} />
-
-      <div className="stamps muted">
-        <p>{stamp('Added', added)}</p>
-        {lastChanged && <p>{stamp(cancelled ? 'Cancelled' : 'Last changed', lastChanged)}</p>}
-      </div>
 
       {problem && (
         <p className="error" role="alert">
@@ -216,6 +224,11 @@ function Detail({
           </button>
         </div>
       )}
+
+      <div className="stamps muted">
+        <p>{stamp('Added', added)}</p>
+        {lastChanged && <p>{stamp(cancelled ? 'Cancelled' : 'Last changed', lastChanged)}</p>}
+      </div>
     </Page>
   );
 }
