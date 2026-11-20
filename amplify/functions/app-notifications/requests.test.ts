@@ -13,12 +13,12 @@ const phone = {
 /** Devices kept in memory, with each call to them noted. */
 function devices() {
   const saved: { personId: string; subscription: Subscription }[] = [];
-  const forgotten: string[] = [];
+  const forgotten: { personId: string; endpoint: string }[] = [];
   const kept: Devices = {
     publicKey: async () => 'the-public-key',
     keys: async () => null,
     save: async (personId, subscription) => void saved.push({ personId, subscription }),
-    forget: async (endpoint) => void forgotten.push(endpoint),
+    forget: async (personId, endpoint) => void forgotten.push({ personId, endpoint }),
     forgetById: async () => {},
     of: async () => [],
   };
@@ -43,10 +43,12 @@ describe('turning app notifications on and off for a device', () => {
     expect(saved).toEqual([{ personId: 'person-linda', subscription: phone }]);
   });
 
-  it('forgets the device by its endpoint', async () => {
+  it("forgets the device by its endpoint, as the signed-in person's own", async () => {
     const { forgotten, call } = devices();
-    expect(await call('turnOffAppNotifications', { endpoint: phone.endpoint })).toBe(true);
-    expect(forgotten).toEqual([phone.endpoint]);
+    expect(
+      await call('turnOffAppNotifications', { endpoint: phone.endpoint, personId: 'person-mark' }),
+    ).toBe(true);
+    expect(forgotten).toEqual([{ personId: 'person-linda', endpoint: phone.endpoint }]);
   });
 
   it('takes the push services browsers use', async () => {

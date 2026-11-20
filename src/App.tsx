@@ -16,7 +16,7 @@ import type { CalendarClient } from './data/calendarClient';
 import { forgetAtSignOut, type DeviceRegistry } from './lib/appNotifications';
 import { upcomingAppointments } from './lib/calendar';
 import { useDesktopWidth } from './lib/useDesktopWidth';
-import { useNotificationTaps } from './lib/useNotificationTaps';
+import { useKeepDeviceSaved } from './lib/useKeepDeviceSaved';
 import { useToday } from './lib/useToday';
 import { AppointmentDetail } from './routes/AppointmentDetail';
 import { EditAppointment, NewAppointment } from './routes/AppointmentForm';
@@ -48,7 +48,7 @@ function Layout({
   onSignOut,
 }: Omit<AppProps, 'calendar'>) {
   const desktop = useDesktopWidth();
-  useNotificationTaps(devices);
+  useKeepDeviceSaved(devices);
   // An Appointment's own addresses: on a phone a full screen, on a desktop the detail panel.
   const onAppointment = useMatch('/appointments/*') !== null;
   const panel = useRef<HTMLElement>(null);

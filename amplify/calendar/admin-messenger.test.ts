@@ -121,13 +121,30 @@ describe('the devices app notifications go to', () => {
     expect(await devices.of(['person-mark'])).toMatchObject([{ auth: 'renewed' }]);
   });
 
-  it('are forgotten by their endpoint, and forgetting one that is not kept does nothing', async () => {
+  it('are forgotten by their endpoint, but only as the person they are kept for', async () => {
     const { client, devices: kept } = dataApi();
     const devices = dataApiDevices(client);
     await devices.save('person-linda', subscription('lindas-phone'));
-    await devices.forget('https://web.push.apple.com/lindas-phone');
-    await devices.forget('https://web.push.apple.com/never-kept');
-    expect(kept()).toEqual([]);
+    await devices.save('person-mark', subscription('marks-phone'));
+    await devices.forget('person-linda', 'https://web.push.apple.com/lindas-phone');
+    expect(kept().map((d) => d.personId)).toEqual(['person-mark']);
+    // Someone else's device stays, whoever knows its endpoint.
+    await devices.forget('person-linda', 'https://web.push.apple.com/marks-phone');
+    expect(kept().map((d) => d.personId)).toEqual(['person-mark']);
+    // One that is not kept: nothing happens.
+    await devices.forget('person-linda', 'https://web.push.apple.com/never-kept');
+    expect(kept()).toHaveLength(1);
+  });
+
+  it('stay with the person they moved to when the one before signs out late', async () => {
+    const { client } = dataApi();
+    const devices = dataApiDevices(client);
+    await devices.save('person-linda', subscription('shared'));
+    await devices.save('person-mark', subscription('shared'));
+    await devices.forget('person-linda', 'https://web.push.apple.com/shared');
+    expect(await devices.of(['person-mark'])).toMatchObject([
+      { endpoint: 'https://web.push.apple.com/shared' },
+    ]);
   });
 });
 

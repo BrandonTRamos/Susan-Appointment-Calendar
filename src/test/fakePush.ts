@@ -83,10 +83,6 @@ export function installFakePush({
     subscription: () => current,
     /** How many notifications showing on the device were closed. */
     closed: () => shownClosed,
-    /** The service worker telling the open app that a notification was tapped. */
-    tap(url: string) {
-      container.dispatchEvent(new MessageEvent('message', { data: { type: 'open', url } }));
-    },
     uninstall() {
       for (const key of ['serviceWorker', 'userAgent'])
         delete (navigator as unknown as Record<string, unknown>)[key];
@@ -97,7 +93,15 @@ export function installFakePush({
 }
 
 /** Where devices are kept, in memory, with each call noted. */
-export function fakeRegistry({ failing = false } = {}) {
+export function fakeRegistry({
+  failing = false,
+  failingTurnOn = false,
+}: {
+  /** Nothing can be reached. */
+  failing?: boolean;
+  /** The key can be had, but a device cannot be kept. */
+  failingTurnOn?: boolean;
+} = {}) {
   const turnedOn: DeviceSubscription[] = [];
   const turnedOff: string[] = [];
   const fail = async () => {
@@ -110,6 +114,7 @@ export function fakeRegistry({ failing = false } = {}) {
     },
     async turnOn(device) {
       await fail();
+      if (failingTurnOn) throw new Error('The data API is not answering');
       turnedOn.push(device);
     },
     async turnOff(endpoint) {

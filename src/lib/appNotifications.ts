@@ -92,7 +92,14 @@ export async function turnOn(registry: DeviceRegistry): Promise<AppNotificationS
     userVisibleOnly: true,
     applicationServerKey: fromBase64Url(publicKey),
   });
-  await save(registry, subscription);
+  try {
+    await save(registry, subscription);
+  } catch (error) {
+    // Not kept, so nothing would reach it. Undo the subscription too, so that this device never
+    // shows as on while the backend does not have it.
+    await subscription.unsubscribe().catch(() => false);
+    throw error;
+  }
   return 'on';
 }
 
@@ -133,7 +140,3 @@ export async function forgetAtSignOut(registry: DeviceRegistry | null): Promise<
     console.warn('Could not turn notifications off at sign-out', error);
   }
 }
-
-/** An address inside the app: what a tapped notification may open. */
-export const isAppAddress = (url: unknown): url is string =>
-  typeof url === 'string' && url.startsWith('/') && !url.startsWith('//');

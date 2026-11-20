@@ -1,10 +1,8 @@
 // @vitest-environment jsdom
 import { cleanup, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createSampleCalendar } from '../../data/sampleCalendar';
-import { atWidth, daysFromToday, EASTERN, linda, renderApp } from '../../test/renderApp';
+import { atWidth, renderApp } from '../../test/renderApp';
 import { fakeRegistry, installFakePush, type FakePushOptions } from '../../test/fakePush';
 
 const realMatchMedia = window.matchMedia;
@@ -109,6 +107,27 @@ describe('the App notifications section of Settings', () => {
     expect(screen.getByRole('button', { name: 'Turn on for this device' })).toBeEnabled();
   });
 
+  it('stays off when the device could not be kept, even after the screen opens again', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const push = device();
+    const { registry, turnedOn } = fakeRegistry({ failingTurnOn: true });
+    const first = renderApp('/settings', { devices: registry });
+    await userEvent.click(await screen.findByRole('button', { name: 'Turn on for this device' }));
+    expect(await within(section()).findByRole('alert')).toHaveTextContent(
+      'Could not turn notifications on.',
+    );
+    expect(within(section()).queryByText('On for this device.')).not.toBeInTheDocument();
+    // The browser's subscription is undone, so nothing says this device is on.
+    expect(push.subscription()).toBeNull();
+    expect(turnedOn).toEqual([]);
+
+    first.unmount();
+    renderApp('/settings', { devices: registry });
+    expect(
+      await screen.findByRole('button', { name: 'Turn on for this device' }),
+    ).toBeInTheDocument();
+  });
+
   it('is not available on sample data', async () => {
     device();
     renderApp('/settings');
@@ -147,26 +166,5 @@ describe('a device with app notifications on', () => {
     await vi.waitFor(() =>
       expect(turnedOn).toMatchObject([{ endpoint: push.subscription()!.endpoint }]),
     );
-  });
-
-  it('opens the Appointment an Activity update is about when it is tapped', async () => {
-    const push = device({ permission: 'granted', subscribed: true });
-    const calendar = createSampleCalendar(EASTERN, { empty: true });
-    const { id } = await calendar.core.addAppointment(linda, {
-      what: 'Eye exam',
-      date: daysFromToday(3),
-      time: '15:30',
-    });
-    renderApp('/settings', { calendar, devices: fakeRegistry().registry });
-    act(() => push.tap(`/appointments/${id}`));
-    expect(await screen.findByRole('heading', { level: 1, name: 'Eye exam' })).toBeInTheDocument();
-    expect(window.location.pathname).toBe(`/appointments/${id}`);
-  });
-
-  it('opens nothing outside the app when tapped', async () => {
-    const push = device({ permission: 'granted', subscribed: true });
-    renderApp('/settings', { devices: fakeRegistry().registry });
-    act(() => push.tap('//example.com/elsewhere'));
-    expect(window.location.pathname).toBe('/settings');
   });
 });

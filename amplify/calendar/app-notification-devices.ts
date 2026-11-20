@@ -58,8 +58,11 @@ export interface Devices {
    * they share a laptop, moves to this person: a device is one person's at a time.
    */
   save(personId: string, subscription: Subscription): Promise<void>;
-  /** Forgets the device with this endpoint. Nothing happens when it is not kept. */
-  forget(endpoint: string): Promise<void>;
+  /**
+   * Forgets this person's device with this endpoint. Nothing happens when it is not kept, or is
+   * kept for someone else, as when it moved to them before a late sign-out on it.
+   */
+  forget(personId: string, endpoint: string): Promise<void>;
   /** Forgets a device by its ID: one whose subscription is gone. */
   forgetById(id: string): Promise<void>;
   /** Every device kept for one of these people. */
@@ -106,8 +109,10 @@ export function dataApiDevices(client: DeviceClient): Devices {
       )
         check(await AppNotificationDevice.update(row));
     },
-    async forget(endpoint) {
-      await forgetById(await deviceId(endpoint));
+    async forget(personId, endpoint) {
+      const id = await deviceId(endpoint);
+      const kept = check(await AppNotificationDevice.get({ id }));
+      if (kept?.personId === personId) await forgetById(id);
     },
     async of(personIds) {
       const wanted = new Set(personIds);

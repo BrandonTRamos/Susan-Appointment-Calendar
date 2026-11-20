@@ -19,19 +19,24 @@ self.addEventListener('push', (event) => {
   );
 });
 
-// Tapping a notification opens what it is about: the open app is brought forward and told where to
-// go (useNotificationTaps in src/lib/useNotificationTaps.ts), or the app is opened there.
+// Tapping a notification opens what it is about. A window of the app that is already open is moved
+// to that address and brought forward, whatever it was showing: the calendar, a Public page or the
+// sign-in screen. A window this worker cannot move, or none at all, means a new one is opened there.
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const sent = event.notification.data && event.notification.data.url;
   const url =
     typeof sent === 'string' && sent.startsWith('/') && !sent.startsWith('//') ? sent : '/';
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windows) => {
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (windows) => {
       for (const window of windows) {
-        if (!('focus' in window)) continue;
-        window.postMessage({ type: 'open', url });
-        return window.focus();
+        if (typeof window.navigate !== 'function') continue;
+        try {
+          const moved = await window.navigate(url);
+          if (moved) return moved.focus();
+        } catch {
+          // Not controlled by this worker, so it cannot be moved. Try the next one.
+        }
       }
       return self.clients.openWindow(url);
     }),

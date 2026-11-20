@@ -188,7 +188,10 @@ changes or cancels an Appointment. Alerts will arrive the same way (ticket 15).
   time anyone turns them on and kept in the data API, so there is no secret to set up. The private
   half never leaves the backend.
 - Each device is kept against the account of whoever turned it on. Turning them off, or signing out,
-  forgets the device; so does a device whose push service says its subscription is gone.
+  forgets the device, but only for that person: a device that has since been turned on by someone
+  else stays theirs. A device whose push service says its subscription is gone is forgotten too.
+- Tapping one opens its Appointment in the app's window, whatever that window was showing, or in a
+  new one.
 - Who is an Admin comes from the `Admins` group (see [Accounts](#accounts)). Susan's account is not in
   it, so she never gets them, even on a device she turned them on for.
 - Deleting an Appointment entered by mistake sends no Activity update.

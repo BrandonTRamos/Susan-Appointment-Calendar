@@ -29,3 +29,6 @@ This ticket also establishes the Admin messenger, the port through which the cor
 - The key pair is made by the backend (`amplify/functions/app-notifications`) on first use and kept in the data API, closed to everyone signed in. Wellbeing makes it in the browser, which suits one owner but would hand the private half to every account here. No secret is set up either way.
 - Deleting an Appointment sends no Activity update: the spec names adding, changing and cancelling only.
 - An Activity update that cannot be sent does not undo or fail the command; what broke is logged without the Appointment.
+- Turning a device off forgets it only for the signed-in person, so a late sign-out on a device that has since moved to another account leaves it with them.
+- Tapping an app notification moves an open window of the app to the Appointment, whatever screen it shows (a Public page or the sign-in screen too), or opens a new one.
+- If the device cannot be kept when notifications are turned on, the browser's new subscription is undone, so Settings never shows the device as on.
