@@ -3,6 +3,7 @@
 // against the account of the person who turned notifications on for it.
 
 import type { generateClient } from 'aws-amplify/data';
+import type { DeviceRemoval } from '../../src/lib/appNotifications';
 import { generateVapidKeys, type VapidKeys } from '../../src/lib/vapid';
 import type { Schema } from '../data/resource';
 
@@ -17,7 +18,32 @@ export interface DeviceClient {
     >;
     AppNotificationKey: Pick<Models['AppNotificationKey'], 'get' | 'create'>;
   };
+  /**
+   * A raw data API operation. Forgetting a device needs one: the models' own `delete` cannot carry
+   * a condition, and the data API's `deleteAppNotificationDevice` can. It throws its answer when
+   * that carries errors.
+   */
+  graphql(options: { query: string; variables: Record<string, unknown> }): Promise<GraphqlAnswer>;
 }
+
+/** What a raw data API operation answers. */
+export interface GraphqlAnswer {
+  data?: unknown;
+  errors?: readonly { message: string; errorType?: string | null }[];
+}
+
+/**
+ * Deletes a device only if, at the moment DynamoDB deletes it, it is still kept as it was: the
+ * data API adds `condition` to its own check that the row exists, in the one conditional write
+ * (`npm run synth` checks that its resolver does). Nothing read beforehand decides it.
+ */
+const FORGET_DEVICE = /* GraphQL */ `
+  mutation ForgetDevice($id: ID!, $condition: ModelAppNotificationDeviceConditionInput!) {
+    deleteAppNotificationDevice(input: { id: $id }, condition: $condition) {
+      id
+    }
+  }
+`;
 
 /** A device's push subscription, as the browser gives it. */
 export interface Subscription {
@@ -59,12 +85,16 @@ export interface Devices {
    */
   save(personId: string, subscription: Subscription): Promise<void>;
   /**
-   * Forgets this person's device with this endpoint. Nothing happens when it is not kept, or is
-   * kept for someone else, as when it moved to them before a late sign-out on it.
+   * Forgets this person's device with this endpoint, only if it is still theirs when it is
+   * deleted. Says which happened: forgotten; not kept at all, which is as good; or kept for
+   * someone else, as when it moved to them before a late sign-out on it, and so left with them.
    */
-  forget(personId: string, endpoint: string): Promise<void>;
-  /** Forgets a device by its ID: one whose subscription is gone. */
-  forgetById(id: string): Promise<void>;
+  forget(personId: string, endpoint: string): Promise<DeviceRemoval>;
+  /**
+   * Forgets a device whose subscription its push service says is gone, only if it is still kept
+   * for the same person with the same subscription: one renewed or moved since is left alone.
+   */
+  forgetGone(device: Device): Promise<void>;
   /** Every device kept for one of these people. */
   of(personIds: readonly string[]): Promise<Device[]>;
 }
@@ -77,14 +107,28 @@ export function dataApiDevices(client: DeviceClient): Devices {
     return row ? { publicKey: row.publicKey, privateKey: row.privateKey } : null;
   }
 
-  async function forgetById(id: string) {
-    // Deleting a device that is not kept answers with no row and no error.
-    check(await AppNotificationDevice.delete({ id }));
+  /**
+   * Deletes the device if every field in `kept` still holds at the moment of deletion. False when
+   * it does not, or the device is not kept: the data API's conditional check failed.
+   */
+  async function deleteIf(id: string, kept: Partial<Record<keyof Device, string>>) {
+    const condition = { and: Object.entries(kept).map(([field, eq]) => ({ [field]: { eq } })) };
+    let answer: GraphqlAnswer;
+    try {
+      answer = await client.graphql({ query: FORGET_DEVICE, variables: { id, condition } });
+    } catch (thrown) {
+      // The data API's client throws the whole answer when it carries errors.
+      if (!(thrown && typeof thrown === 'object' && 'errors' in thrown)) throw thrown;
+      answer = thrown as GraphqlAnswer;
+    }
+    if (!answer.errors?.length) return true;
+    if (answer.errors.every((e) => /ConditionalCheckFailed/.test(`${e.errorType} ${e.message}`)))
+      return false;
+    throw new Error(answer.errors.map((e) => e.message).join('; '));
   }
 
   return {
     keys,
-    forgetById,
     async publicKey() {
       const kept = await keys();
       if (kept) return kept.publicKey;
@@ -111,8 +155,13 @@ export function dataApiDevices(client: DeviceClient): Devices {
     },
     async forget(personId, endpoint) {
       const id = await deviceId(endpoint);
+      if (await deleteIf(id, { personId })) return 'forgotten';
+      // Refused, so nothing was deleted. What is kept now only says why.
       const kept = check(await AppNotificationDevice.get({ id }));
-      if (kept?.personId === personId) await forgetById(id);
+      return kept ? 'someone-else' : 'not-kept';
+    },
+    async forgetGone({ id, personId, p256dh, auth }) {
+      await deleteIf(id, { personId, p256dh, auth });
     },
     async of(personIds) {
       const wanted = new Set(personIds);

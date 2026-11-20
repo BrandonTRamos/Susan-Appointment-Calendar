@@ -1,7 +1,7 @@
 // A browser's web push, for screen tests: jsdom has none. It stands in for the service worker
 // registration, its push manager and the Notification permission, and keeps what was asked of it.
 
-import type { DeviceRegistry, DeviceSubscription } from '../lib/appNotifications';
+import type { DeviceRegistry, DeviceRemoval, DeviceSubscription } from '../lib/appNotifications';
 import { fromBase64Url } from '../lib/vapid';
 
 /** A public key of the right shape: a 65-byte P-256 point, base64url. */
@@ -96,11 +96,14 @@ export function installFakePush({
 export function fakeRegistry({
   failing = false,
   failingTurnOn = false,
+  removal = 'forgotten',
 }: {
   /** Nothing can be reached. */
   failing?: boolean;
   /** The key can be had, but a device cannot be kept. */
   failingTurnOn?: boolean;
+  /** What the backend finds when asked to forget this device. */
+  removal?: DeviceRemoval;
 } = {}) {
   const turnedOn: DeviceSubscription[] = [];
   const turnedOff: string[] = [];
@@ -120,6 +123,7 @@ export function fakeRegistry({
     async turnOff(endpoint) {
       await fail();
       turnedOff.push(endpoint);
+      return removal;
     },
   };
   return { registry, turnedOn, turnedOff };

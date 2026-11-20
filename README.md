@@ -70,7 +70,8 @@ GitHub runs lint, format check, type-check, tests, build and synth on every pull
 sign up, sign-in has no second step, anyone signed in can read everything in the calendar, the
 calendar core's commands (and turning app notifications on and off for a device) are the only way a
 signed-in person can change anything, nobody signed in can read the devices app notifications go to
-or the key that signs them, no rule tells Susan from an Admin, every table can be restored to a
+or the key that signs them, the app-notifications function reaches nothing else, a device is only
+ever deleted on a condition checked as it is deleted, no rule tells Susan from an Admin, every table can be restored to a
 point in time, and everything carries the cost tag.
 
 ## How the calendar is kept
@@ -216,8 +217,13 @@ changes or cancels an Appointment. Alerts will arrive the same way (ticket 15).
   time anyone turns them on and kept in the data API, so there is no secret to set up. The private
   half never leaves the backend.
 - Each device is kept against the account of whoever turned it on. Turning them off, or signing out,
-  forgets the device, but only for that person: a device that has since been turned on by someone
-  else stays theirs. A device whose push service says its subscription is gone is forgotten too.
+  forgets the device, but only for that person: the delete is made on condition that the device is
+  still theirs at the moment it lands, so a device someone else has turned on since, even an
+  instant before, stays theirs, and so does its subscription in the browser. If the backend cannot
+  be reached at sign-out, the browser's subscription is ended anyway, so that this person's
+  notifications cannot reach whoever uses the device next. A device whose push service says its
+  subscription is gone is forgotten too, unless it was renewed or moved since.
+- The app-notifications function may call only the device and key operations it needs.
 - Tapping one opens its Appointment in the app's window, whatever that window was showing, or in a
   new one.
 - Who is an Admin comes from the `Admins` group (see [Accounts](#accounts)). Susan's account is not in

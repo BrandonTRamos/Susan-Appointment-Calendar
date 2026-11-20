@@ -3,7 +3,7 @@
 
 import { generateClient } from 'aws-amplify/data';
 import type { Schema } from '../../amplify/data/resource';
-import type { DeviceRegistry } from '../lib/appNotifications';
+import { DEVICE_REMOVALS, type DeviceRegistry, type DeviceRemoval } from '../lib/appNotifications';
 
 function answered<T>(answer: { data?: T | null; errors?: readonly { message: string }[] }): T {
   if (answer.errors?.length || answer.data == null)
@@ -19,7 +19,10 @@ export function createAppNotificationDevices(): DeviceRegistry {
       answered(await client.mutations.turnOnAppNotifications(subscription));
     },
     async turnOff(endpoint) {
-      answered(await client.mutations.turnOffAppNotifications({ endpoint }));
+      const removal = answered(await client.mutations.turnOffAppNotifications({ endpoint }));
+      if (!DEVICE_REMOVALS.includes(removal as DeviceRemoval))
+        throw new Error('The answer could not be read.');
+      return removal as DeviceRemoval;
     },
   };
 }

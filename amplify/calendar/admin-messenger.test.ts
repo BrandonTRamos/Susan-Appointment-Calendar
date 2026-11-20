@@ -11,9 +11,24 @@ import { dataApiDevices, type DeviceClient, type Subscription } from './app-noti
 
 type Row = Record<string, unknown> & { id: string };
 
-/** Stands in for the data API's device and key tables, answering every call with `{ data }`. */
+/**
+ * Stands in for the data API's device and key tables, answering every call with `{ data }`. A
+ * conditional delete is decided against the rows as they are when it is written, as DynamoDB
+ * decides it; `beforeWrite` lets a test land someone else's write just before that moment.
+ */
 function dataApi() {
   const tables = { device: new Map<string, Row>(), key: new Map<string, Row>() };
+  const beforeWrite: (() => Promise<void>)[] = [];
+  const refused = {
+    data: null,
+    errors: [
+      {
+        message:
+          'The conditional request failed (Service: DynamoDb, Status Code: 400, Request ID: x)',
+        errorType: 'DynamoDB:ConditionalCheckFailedException',
+      },
+    ],
+  };
   const model = (rows: Map<string, Row>) => ({
     async get({ id }: { id: string }) {
       return { data: rows.get(id) ?? null };
@@ -35,16 +50,46 @@ function dataApi() {
       rows.set(input.id, { ...rows.get(input.id), ...input });
       return { data: input };
     },
-    async delete({ id }: { id: string }) {
-      const row = rows.get(id) ?? null;
-      rows.delete(id);
-      return { data: row };
+    async delete() {
+      throw new Error('A device is never deleted without a condition.');
     },
   });
+  /** Makes the next conditional delete fail for a reason that is not its condition. */
+  let breakNext = false;
   const client = {
     models: { AppNotificationDevice: model(tables.device), AppNotificationKey: model(tables.key) },
+    async graphql({ query, variables }: { query: string; variables: Record<string, unknown> }) {
+      if (
+        !/deleteAppNotificationDevice\(input: \{ id: \$id \}, condition: \$condition\)/.test(query)
+      )
+        throw new Error('Only the conditional delete is sent raw.');
+      for (const write of beforeWrite.splice(0)) await write();
+      if (breakNext) {
+        breakNext = false;
+        throw { data: null, errors: [{ message: 'Network error', errorType: 'Unknown' }] };
+      }
+      const { id, condition } = variables as {
+        id: string;
+        condition: { and: Record<string, { eq: string }>[] };
+      };
+      const row = tables.device.get(id);
+      const holds = condition.and.every((each) =>
+        Object.entries(each).every(([field, { eq }]) => row?.[field] === eq),
+      );
+      // As the data API's client does, the answer is thrown when it carries errors.
+      if (!row || !holds) throw refused;
+      tables.device.delete(id);
+      return { data: { deleteAppNotificationDevice: { id } } };
+    },
   } as unknown as DeviceClient;
-  return { client, tables, devices: () => [...tables.device.values()] };
+  return {
+    client,
+    tables,
+    devices: () => [...tables.device.values()],
+    breakTheNextDelete: () => void (breakNext = true),
+    /** Lands this write just before the next conditional delete is decided. */
+    justBeforeTheNextDelete: (write: () => Promise<void>) => void beforeWrite.push(write),
+  };
 }
 
 const subscription = (name: string): Subscription => ({
@@ -121,19 +166,49 @@ describe('the devices app notifications go to', () => {
     expect(await devices.of(['person-mark'])).toMatchObject([{ auth: 'renewed' }]);
   });
 
-  it('are forgotten by their endpoint, but only as the person they are kept for', async () => {
+  it('are forgotten by their endpoint for the person they are kept for', async () => {
     const { client, devices: kept } = dataApi();
     const devices = dataApiDevices(client);
     await devices.save('person-linda', subscription('lindas-phone'));
     await devices.save('person-mark', subscription('marks-phone'));
-    await devices.forget('person-linda', 'https://web.push.apple.com/lindas-phone');
+    expect(await devices.forget('person-linda', 'https://web.push.apple.com/lindas-phone')).toBe(
+      'forgotten',
+    );
     expect(kept().map((d) => d.personId)).toEqual(['person-mark']);
-    // Someone else's device stays, whoever knows its endpoint.
-    await devices.forget('person-linda', 'https://web.push.apple.com/marks-phone');
-    expect(kept().map((d) => d.personId)).toEqual(['person-mark']);
-    // One that is not kept: nothing happens.
-    await devices.forget('person-linda', 'https://web.push.apple.com/never-kept');
-    expect(kept()).toHaveLength(1);
+  });
+
+  it('are left alone when they are kept for someone else, whoever knows the endpoint', async () => {
+    const { client, devices: kept } = dataApi();
+    const devices = dataApiDevices(client);
+    await devices.save('person-mark', subscription('marks-phone'));
+    expect(await devices.forget('person-linda', 'https://web.push.apple.com/marks-phone')).toBe(
+      'someone-else',
+    );
+    expect(kept()).toMatchObject([{ personId: 'person-mark' }]);
+  });
+
+  it('that are not kept are already as good as forgotten, however often asked', async () => {
+    const { client, devices: kept } = dataApi();
+    const devices = dataApiDevices(client);
+    await devices.save('person-linda', subscription('lindas-phone'));
+    const endpoint = 'https://web.push.apple.com/lindas-phone';
+    expect(await devices.forget('person-linda', endpoint)).toBe('forgotten');
+    expect(await devices.forget('person-linda', endpoint)).toBe('not-kept');
+    expect(await devices.forget('person-linda', 'https://web.push.apple.com/never-kept')).toBe(
+      'not-kept',
+    );
+    expect(kept()).toEqual([]);
+  });
+
+  it('are kept, and the request fails, when the delete fails for another reason', async () => {
+    const api = dataApi();
+    const devices = dataApiDevices(api.client);
+    await devices.save('person-linda', subscription('lindas-phone'));
+    api.breakTheNextDelete();
+    await expect(
+      devices.forget('person-linda', 'https://web.push.apple.com/lindas-phone'),
+    ).rejects.toThrow('Network error');
+    expect(api.devices()).toHaveLength(1);
   });
 
   it('stay with the person they moved to when the one before signs out late', async () => {
@@ -141,10 +216,38 @@ describe('the devices app notifications go to', () => {
     const devices = dataApiDevices(client);
     await devices.save('person-linda', subscription('shared'));
     await devices.save('person-mark', subscription('shared'));
-    await devices.forget('person-linda', 'https://web.push.apple.com/shared');
+    expect(await devices.forget('person-linda', 'https://web.push.apple.com/shared')).toBe(
+      'someone-else',
+    );
     expect(await devices.of(['person-mark'])).toMatchObject([
       { endpoint: 'https://web.push.apple.com/shared' },
     ]);
+  });
+
+  it('stay with someone who takes the device over just before it would be deleted', async () => {
+    const api = dataApi();
+    const devices = dataApiDevices(api.client);
+    await devices.save('person-linda', subscription('shared'));
+    // Linda's device as far as anything read before could tell; Mark's when the delete lands.
+    expect(await devices.of(['person-linda'])).toHaveLength(1);
+    api.justBeforeTheNextDelete(() => devices.save('person-mark', subscription('shared')));
+    expect(await devices.forget('person-linda', 'https://web.push.apple.com/shared')).toBe(
+      'someone-else',
+    );
+    expect(await devices.of(['person-mark'])).toMatchObject([
+      { endpoint: 'https://web.push.apple.com/shared' },
+    ]);
+  });
+
+  it("are forgotten when they become the person's own just before the delete lands", async () => {
+    const api = dataApi();
+    const devices = dataApiDevices(api.client);
+    await devices.save('person-mark', subscription('shared'));
+    api.justBeforeTheNextDelete(() => devices.save('person-linda', subscription('shared')));
+    expect(await devices.forget('person-linda', 'https://web.push.apple.com/shared')).toBe(
+      'forgotten',
+    );
+    expect(api.devices()).toEqual([]);
   });
 });
 
@@ -197,6 +300,24 @@ describe('app notifications to Admins', () => {
       'https://web.push.apple.com/lindas-laptop',
     );
     expect(devices()).toHaveLength(3);
+  });
+
+  it('keep a gone device that was renewed or moved since it was sent to', async () => {
+    const api = dataApi();
+    const devices = dataApiDevices(api.client);
+    await devices.publicKey();
+    await devices.save('person-linda', subscription('shared'));
+    const push = pushService({ 'https://web.push.apple.com/shared': 'gone' });
+    const m = adminMessenger({
+      admins: async () => ['person-linda'],
+      devices,
+      push: push.sender,
+    });
+    api.justBeforeTheNextDelete(() =>
+      devices.save('person-mark', { ...subscription('shared'), auth: 'renewed' }),
+    );
+    await m.sendAppNotification(['person-linda'], update);
+    expect(api.devices()).toMatchObject([{ personId: 'person-mark', auth: 'renewed' }]);
   });
 
   it('go nowhere while nobody has turned notifications on', async () => {

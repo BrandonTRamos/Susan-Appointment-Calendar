@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { DeviceRemoval } from '../../../src/lib/appNotifications';
 import type { Devices, Subscription } from '../../calendar/app-notification-devices';
 import { appNotificationsHandler, DEVICE_FAILED, type DeviceEvent } from './requests';
 
@@ -11,15 +12,18 @@ const phone = {
 };
 
 /** Devices kept in memory, with each call to them noted. */
-function devices() {
+function devices(removal: DeviceRemoval = 'forgotten') {
   const saved: { personId: string; subscription: Subscription }[] = [];
   const forgotten: { personId: string; endpoint: string }[] = [];
   const kept: Devices = {
     publicKey: async () => 'the-public-key',
     keys: async () => null,
     save: async (personId, subscription) => void saved.push({ personId, subscription }),
-    forget: async (personId, endpoint) => void forgotten.push({ personId, endpoint }),
-    forgetById: async () => {},
+    forget: async (personId, endpoint) => {
+      forgotten.push({ personId, endpoint });
+      return removal;
+    },
+    forgetGone: async () => {},
     of: async () => [],
   };
   const handler = appNotificationsHandler({ devices: async () => kept });
@@ -47,9 +51,18 @@ describe('turning app notifications on and off for a device', () => {
     const { forgotten, call } = devices();
     expect(
       await call('turnOffAppNotifications', { endpoint: phone.endpoint, personId: 'person-mark' }),
-    ).toBe(true);
+    ).toBe('forgotten');
     expect(forgotten).toEqual([{ personId: 'person-linda', endpoint: phone.endpoint }]);
   });
+
+  it.each(['not-kept', 'someone-else'] as const)(
+    'says so when the device was not forgotten because it is %s',
+    async (removal) => {
+      expect(
+        await devices(removal).call('turnOffAppNotifications', { endpoint: phone.endpoint }),
+      ).toBe(removal);
+    },
+  );
 
   it('takes the push services browsers use', async () => {
     const { saved, call } = devices();

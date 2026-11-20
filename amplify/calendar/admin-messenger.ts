@@ -105,7 +105,7 @@ export function adminMessenger({ admins, devices, push }: MessengerDependencies)
       await Promise.all(
         reached.map(async (device) => {
           if ((await push.send(device, payload, keys)) !== 'gone') return;
-          await devices.forgetById(device.id).catch((error: unknown) => {
+          await devices.forgetGone(device).catch((error: unknown) => {
             console.error('Forgetting a gone device failed', (error as Error).name);
           });
         }),

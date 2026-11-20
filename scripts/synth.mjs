@@ -123,6 +123,56 @@ const OWN_MODELS = ['SubscriptionLink'];
 const DEVICE_MUTATIONS = ['turnOffAppNotifications', 'turnOnAppNotifications'];
 /** Kept for app notifications, and closed to everyone signed in: only the backend reaches them. */
 const CLOSED_MODELS = ['AppNotificationDevice', 'AppNotificationKey'];
+/** All the app-notifications function may call in the data API (amplify/backend.ts). */
+const APP_NOTIFICATION_FIELDS = [
+  'Mutation/createAppNotificationDevice',
+  'Mutation/createAppNotificationKey',
+  'Mutation/deleteAppNotificationDevice',
+  'Mutation/updateAppNotificationDevice',
+  'Query/getAppNotificationDevice',
+  'Query/getAppNotificationKey',
+];
+
+/**
+ * What the app-notifications function's role may call in the data API, as 'Type/field', or
+ * 'Type/*' for a whole type. Its role is the one its own policies name.
+ */
+function appNotificationsAccess() {
+  return stacks()
+    .flatMap((stack) => Object.values(stack))
+    .filter(
+      (resource) =>
+        resource.Type === 'AWS::IAM::Policy' &&
+        resource.Properties.Roles?.some((each) =>
+          /^appnotificationslambdaServiceRole/.test(each.Ref ?? ''),
+        ),
+    )
+    .flatMap((policy) => policy.Properties.PolicyDocument.Statement)
+    .filter((statement) => [statement.Action].flat().includes('appsync:GraphQL'))
+    .flatMap((statement) => [statement.Resource].flat())
+    .map((resource) => {
+      const tail = resource?.['Fn::Join']?.[1]?.at(-1) ?? String(resource);
+      return /\/types\/(\w+)\/(?:fields\/)?([\w*]+)$/.exec(tail)?.slice(1).join('/') ?? tail;
+    })
+    .sort();
+}
+
+/**
+ * The words of the step that deletes a device in DynamoDB. A device is forgotten only by a delete
+ * that carries a condition (amplify/calendar/app-notification-devices.ts), so this step must put
+ * the caller's condition into the one conditional write.
+ */
+function deviceDeleteWords() {
+  return stacks()
+    .flatMap((stack) => Object.entries(stack))
+    .filter(
+      ([id, resource]) =>
+        resource.Type === 'AWS::AppSync::FunctionConfiguration' &&
+        id.startsWith('MutationDeleteAppNotificationDeviceDataResolverFn'),
+    )
+    .map(([, resource]) => stepWords(resource.Properties, 'Request'))
+    .join('\n');
+}
 
 /**
  * The subscription feed's function: the one its public address (a Lambda function URL) points at,
@@ -261,6 +311,21 @@ function checks() {
     [
       'anyone signed in can ask for the public key a device subscribes with',
       queries.get('appNotificationKey') === true,
+    ],
+    [
+      'the app-notifications function may call only the device and key operations it needs',
+      appNotificationsAccess().join() === APP_NOTIFICATION_FIELDS.join(),
+    ],
+    [
+      'a device is deleted only if the condition it is deleted on holds when DynamoDB deletes it',
+      (() => {
+        const words = deviceDeleteWords();
+        return (
+          words.includes('"operation": "DeleteItem"') &&
+          words.includes('$util.qr($ctx.stash.conditions.add($args.condition))') &&
+          words.includes('$util.qr($DeleteRequest.put("condition", $Conditions))')
+        );
+      })(),
     ],
     [
       'the commands function can find out who the Admins are, to tell them',

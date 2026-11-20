@@ -138,10 +138,12 @@ const schema = a
       .returns(a.boolean())
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(appNotifications)),
+    // Answers with what became of it (DeviceRemoval in src/lib/appNotifications.ts): forgotten, not
+    // kept, or kept for someone else and so left with them.
     turnOffAppNotifications: a
       .mutation()
       .arguments({ endpoint: a.string().required() })
-      .returns(a.boolean())
+      .returns(a.string())
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(appNotifications)),
   })

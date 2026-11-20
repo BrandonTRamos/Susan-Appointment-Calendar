@@ -151,12 +151,51 @@ describe('a device with app notifications on', () => {
     expect(push.closed()).toBe(1);
   });
 
-  it('still signs out when the device could not be forgotten', async () => {
-    device({ permission: 'granted', subscribed: true });
+  it('still signs out, and unsubscribes, when nobody can say whose the device is', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const push = device({ permission: 'granted', subscribed: true });
     const onSignOut = vi.fn(async () => {});
     renderApp('/settings', { devices: fakeRegistry({ failing: true }).registry, onSignOut });
     await userEvent.click(screen.getByRole('button', { name: 'Sign out' }));
     await vi.waitFor(() => expect(onSignOut).toHaveBeenCalledOnce());
+    // This person's notifications must not reach whoever uses the device next.
+    expect(push.subscription()).toBeNull();
+  });
+
+  it('is unsubscribed at sign-out when the backend no longer keeps it', async () => {
+    const push = device({ permission: 'granted', subscribed: true });
+    const onSignOut = vi.fn(async () => {});
+    renderApp('/settings', { devices: fakeRegistry({ removal: 'not-kept' }).registry, onSignOut });
+    await userEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await vi.waitFor(() => expect(onSignOut).toHaveBeenCalledOnce());
+    expect(push.subscription()).toBeNull();
+  });
+
+  it('is left on for someone else who took it over, and the person is still signed out', async () => {
+    const push = device({ permission: 'granted', subscribed: true });
+    const theirs = push.subscription();
+    const { registry, turnedOff } = fakeRegistry({ removal: 'someone-else' });
+    const onSignOut = vi.fn(async () => {});
+    renderApp('/settings', { devices: registry, onSignOut });
+    await userEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await vi.waitFor(() => expect(onSignOut).toHaveBeenCalledOnce());
+    expect(turnedOff).toEqual([theirs!.endpoint]);
+    // The backend refused to forget it for this person, so their subscription stays theirs.
+    expect(push.subscription()).toBe(theirs);
+    expect(push.closed()).toBe(0);
+  });
+
+  it('is left on for someone else who took it over when the person turns it off', async () => {
+    const push = device({ permission: 'granted', subscribed: true });
+    const theirs = push.subscription();
+    renderApp('/settings', { devices: fakeRegistry({ removal: 'someone-else' }).registry });
+    await userEvent.click(await screen.findByRole('button', { name: 'Turn off for this device' }));
+    expect(
+      await within(section()).findByText(/Someone else has turned notifications on here/),
+    ).toBeInTheDocument();
+    expect(push.subscription()).toBe(theirs);
+    expect(within(section()).queryByText('On for this device.')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Turn on for this device' })).toBeEnabled();
   });
 
   it('is saved again each time the app opens', async () => {

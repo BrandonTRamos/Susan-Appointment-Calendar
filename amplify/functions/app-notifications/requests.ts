@@ -70,8 +70,8 @@ export function appNotificationsHandler({ devices }: { devices: () => Promise<De
           await kept.save(personId, subscriptionOf(event.arguments));
           return true;
         case 'turnOffAppNotifications':
-          await kept.forget(personId, endpointOf(event.arguments.endpoint));
-          return true;
+          // What became of it, so that the device keeps a subscription that is someone else's.
+          return await kept.forget(personId, endpointOf(event.arguments.endpoint));
         default:
           throw new Error(`Unknown request: ${String(request)}`);
       }

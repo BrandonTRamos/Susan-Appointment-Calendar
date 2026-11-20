@@ -68,7 +68,13 @@ export function AppNotifications({ devices }: { devices: DeviceRegistry | null }
           settings, then come back here.
         </p>
       )}
-      {state === 'off' && (
+      {state === 'someone-else' && (
+        <p className="muted">
+          Someone else has turned notifications on here since, so this device now gets theirs. Turn
+          them on to have them come to you instead.
+        </p>
+      )}
+      {(state === 'off' || state === 'someone-else') && (
         <button
           type="button"
           className="btn btn-primary"

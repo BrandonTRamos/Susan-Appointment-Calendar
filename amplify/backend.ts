@@ -1,5 +1,6 @@
 import { defineBackend } from '@aws-amplify/backend';
-import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
+import { Stack } from 'aws-cdk-lib';
+import { CfnPolicy, CfnRole, PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { FunctionUrlAuthType } from 'aws-cdk-lib/aws-lambda';
 import { resolveContactEmail, resolveOwnerName } from '../src/lib/publicPage';
 import { resolveTimeZone } from '../src/lib/timeZone';
@@ -54,6 +55,42 @@ userPool.grant(
   'cognito-idp:ListUsersInGroup',
 );
 backend.calendarCommands.addEnvironment('USER_POOL_ID', userPool.userPoolId);
+
+// The app-notifications function may reach the devices app notifications go to and the key that
+// signs them, and nothing else in the data API: Amplify would let it call every query and mutation,
+// the calendar's included. `npm run synth` checks it.
+const APP_NOTIFICATION_FIELDS = {
+  Query: ['getAppNotificationDevice', 'getAppNotificationKey'],
+  Mutation: [
+    'createAppNotificationDevice',
+    'updateAppNotificationDevice',
+    'deleteAppNotificationDevice',
+    'createAppNotificationKey',
+  ],
+};
+{
+  const api = backend.data.resources.graphqlApi;
+  const dataStack = Stack.of(api);
+  const role = backend.appNotifications.resources.lambda.role?.node.defaultChild as CfnRole;
+  const roleRef = JSON.stringify(dataStack.resolve(role.ref));
+  const fields = Object.entries(APP_NOTIFICATION_FIELDS).flatMap(([type, names]) =>
+    names.map((name) => dataStack.resolve(`${api.arn}/types/${type}/fields/${name}`)),
+  );
+  const access = dataStack.node
+    .findAll()
+    .filter((child): child is CfnPolicy => child instanceof CfnPolicy)
+    .filter((policy) => JSON.stringify(dataStack.resolve(policy.roles)).includes(roleRef))
+    .filter((policy) =>
+      JSON.stringify(dataStack.resolve(policy.policyDocument)).includes('appsync:GraphQL'),
+    );
+  if (access.length !== 1) throw new Error('Could not find the app-notifications data API access.');
+  const document = dataStack.resolve(access[0].policyDocument) as {
+    Statement: { Action: unknown; Resource: unknown }[];
+  };
+  for (const statement of document.Statement)
+    if (statement.Action === 'appsync:GraphQL') statement.Resource = fields;
+  access[0].addPropertyOverride('PolicyDocument', document);
+}
 
 // The calendar subscription's feed, at a public address. Each person's secret link is checked in
 // the function (amplify/functions/subscription-feed/feed.ts). The address is public, so concurrent
