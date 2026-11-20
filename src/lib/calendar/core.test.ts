@@ -2313,6 +2313,94 @@ describe('a Series', () => {
       expect(inSeries(store, ended.series.id)).toHaveLength(ended.appointments.length);
     });
 
+    describe('while the Series is ended or split at the same moment', () => {
+      /**
+       * Two cores over one calendar, as the commands function and the top-up are: `pause` runs
+       * a command partway through the top-up's first new Appointment, or partway through a
+       * command's reading of the Appointments.
+       */
+      async function overlapping() {
+        const { core, store, clock, messenger } = calendar();
+        const pauses: { add?: () => Promise<unknown>; read?: () => Promise<unknown> } = {};
+        const toppingUp: MemoryStore = {
+          ...store,
+          async addAppointment(appointment) {
+            const pause = pauses.add;
+            pauses.add = undefined;
+            await pause?.();
+            return store.addAppointment(appointment);
+          },
+        };
+        const commanding: MemoryStore = {
+          ...store,
+          async everyAppointment() {
+            const all = await store.everyAppointment();
+            const pause = pauses.read;
+            pauses.read = undefined;
+            await pause?.();
+            return all;
+          },
+        };
+        const timeZone = EASTERN;
+        const topUp = createCalendarCore({ store: toppingUp, clock, messenger, timeZone });
+        const commands = createCalendarCore({ store: commanding, clock, messenger, timeZone });
+        const { series, appointments } = await core.addSeries(linda, dialysis);
+        clock.set('2027-02-01T20:00:00.000Z');
+        return { store, series, appointments, pauses, topUp, commands };
+      }
+
+      /** Active Appointments a Series has after its end. */
+      const pastTheEnd = async (store: MemoryStore, seriesId: string) => {
+        const { ends } = (await store.series(seriesId))!;
+        return inSeries(store, seriesId).filter(
+          ({ date, state }) => ends !== null && date > ends && state === 'active',
+        );
+      };
+
+      it('ended while the top-up is making Appointments: none is left after the end', async () => {
+        const { store, series, appointments, pauses, topUp, commands } = await overlapping();
+        pauses.add = () => commands.endSeries(mark, appointments[3].id);
+        await topUp.topUpSeries();
+        expect(await store.series(series.id)).toMatchObject({ ends: '2026-12-02' });
+        expect(await pastTheEnd(store, series.id)).toEqual([]);
+      });
+
+      it('split while the top-up is making Appointments: none is left after the end', async () => {
+        const { store, series, appointments, pauses, topUp, commands } = await overlapping();
+        pauses.add = () => commands.changeSeries(mark, appointments[3].id, { time: '10:00' });
+        await topUp.topUpSeries();
+        expect(await pastTheEnd(store, series.id)).toEqual([]);
+        // Each date has one Appointment: the new Series' own.
+        const active = store.appointments().filter(({ state }) => state === 'active');
+        expect(new Set(datesOf(active)).size).toBe(active.length);
+      });
+
+      it('topped up once a split has read the Appointments: none is left after the end', async () => {
+        const { store, series, appointments, pauses, topUp, commands } = await overlapping();
+        pauses.read = () => topUp.topUpSeries();
+        await commands.changeSeries(mark, appointments[3].id, { time: '10:00' });
+        expect(await pastTheEnd(store, series.id)).toEqual([]);
+        const active = store.appointments().filter(({ state }) => state === 'active');
+        expect(new Set(datesOf(active)).size).toBe(active.length);
+      });
+
+      it('topped up once an end has read the Appointments: none is left after the end', async () => {
+        const { store, series, appointments, pauses, topUp, commands } = await overlapping();
+        pauses.read = () => topUp.topUpSeries();
+        await commands.endSeries(mark, appointments[3].id);
+        expect(await pastTheEnd(store, series.id)).toEqual([]);
+      });
+
+      it('keeps the end that was set while it ran', async () => {
+        const { store, series, appointments, pauses, topUp, commands } = await overlapping();
+        pauses.add = () => commands.endSeries(mark, appointments[3].id);
+        await topUp.topUpSeries();
+        await topUp.topUpSeries();
+        expect(await store.series(series.id)).toMatchObject({ ends: '2026-12-02' });
+        expect(await pastTheEnd(store, series.id)).toEqual([]);
+      });
+    });
+
     it('does not bring back one that was deleted', async () => {
       const { core, store, clock } = calendar();
       const { series, appointments } = await core.addSeries(linda, dialysis);

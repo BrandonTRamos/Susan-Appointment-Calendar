@@ -601,6 +601,22 @@ export function createCalendarCore({
       if (!(await store.appointment(appointment.id))) await store.addAppointment(appointment);
     });
 
+  /**
+   * Takes an Appointment out of the calendar because its Series no longer has it: removed, or kept
+   * and cancelled when Susan has been texted about it, so that she can be told it is off.
+   */
+  async function withdraw(appointment: Appointment, cancelled: Stamp | null) {
+    if (!(await store.textSentAbout(appointment.id))) {
+      await store.removeAppointment(appointment.id);
+    } else if (appointment.state === 'active') {
+      await store.replaceAppointment({
+        ...appointment,
+        state: 'cancelled',
+        lastChanged: cancelled ?? appointment.lastChanged,
+      });
+    }
+  }
+
   /** A Series' Appointments as the calendar has them, in date order. */
   const appointmentsIn = async (seriesId: string) =>
     inDateOrder(
@@ -807,6 +823,14 @@ export function createCalendarCore({
       };
       next.madeThrough = horizonOf(next);
       const dates = repeatDates(repeat, starts, ends, next.madeThrough);
+      // The old Series' end is written before its Appointments are read, so that a top-up running
+      // now either makes its Appointments before they are read here, or sees the end and makes
+      // none past it (topUpSeries).
+      await store.replaceSeries({
+        ...old,
+        ends: addDays(place.date, -1),
+        lastChanged: stamp(by, at),
+      });
       const later = (await appointmentsIn(old.id)).filter(
         (appointment) => appointment.id !== picked.id && appointment.series!.date >= place.date,
       );
@@ -830,26 +854,10 @@ export function createCalendarCore({
       const replaced = later.filter((appointment) => !kept.has(appointment.id));
       const changed = reused.find((appointment) => appointment.id === picked.id)!;
 
-      await inBatches(replaced, async (appointment) => {
-        if (!(await store.textSentAbout(appointment.id))) {
-          await store.removeAppointment(appointment.id);
-        } else if (appointment.state === 'active') {
-          // Kept and cancelled, so that she can be told it is off.
-          await store.replaceAppointment({
-            ...appointment,
-            state: 'cancelled',
-            lastChanged: stamp(by, at),
-          });
-        }
-      });
+      await inBatches(replaced, (appointment) => withdraw(appointment, stamp(by, at)));
       await inBatches(reused, (appointment) => store.replaceAppointment(appointment));
       await addMissing(made);
       await store.addSeries(next);
-      await store.replaceSeries({
-        ...old,
-        ends: addDays(place.date, -1),
-        lastChanged: stamp(by, at),
-      });
       await record('changed', changed, by, at, next.id);
       await tellOtherAdmins(
         by,
@@ -867,6 +875,13 @@ export function createCalendarCore({
         state: 'cancelled',
         lastChanged: stamp(by, at),
       });
+      // Its end is written first, as in changeSeries, so that a top-up running now makes nothing
+      // after it that this does not cancel.
+      await store.replaceSeries({
+        ...series,
+        ends: addDays(place.date, -1),
+        lastChanged: stamp(by, at),
+      });
       const later = (await appointmentsIn(series.id)).filter(
         (appointment) =>
           appointment.id !== picked.id &&
@@ -877,11 +892,6 @@ export function createCalendarCore({
       await inBatches([cancelled, ...later.map(cancel)], (appointment) =>
         store.replaceAppointment(appointment),
       );
-      await store.replaceSeries({
-        ...series,
-        ends: addDays(place.date, -1),
-        lastChanged: stamp(by, at),
-      });
       await record('cancelled', cancelled, by, at, series.id);
       await tellOtherAdmins(
         by,
@@ -891,7 +901,10 @@ export function createCalendarCore({
     },
 
     async topUpSeries() {
-      for (const series of await store.everySeries()) {
+      for (const listed of await store.everySeries()) {
+        // Read afresh, since an earlier Series may have taken a while.
+        const series = await store.series(listed.id);
+        if (!series) continue;
         const through = horizonOf(series);
         if (through <= series.madeThrough) continue;
         const dates = repeatDates(
@@ -911,8 +924,25 @@ export function createCalendarCore({
             throw error;
           }
         });
-        await addMissing(appointments);
-        await store.replaceSeries({ ...series, madeThrough: through });
+        const made: Appointment[] = [];
+        await inBatches(appointments, async (appointment) => {
+          if (await store.appointment(appointment.id)) return;
+          await store.addAppointment(appointment);
+          made.push(appointment);
+        });
+        // The Series may have been ended or split while these were made, after the command that
+        // did it read its Appointments. It writes the end before it reads them, so reading the
+        // Series again now finds that end: whatever was made after it is taken out again.
+        const now = await store.series(series.id);
+        if (!now) continue;
+        const { ends } = now;
+        if (ends)
+          await inBatches(
+            made.filter(({ date }) => date > ends),
+            (appointment) => withdraw(appointment, null),
+          );
+        // Only how far it is made is written, onto the Series as it now is.
+        if (through > now.madeThrough) await store.replaceSeries({ ...now, madeThrough: through });
       }
     },
 

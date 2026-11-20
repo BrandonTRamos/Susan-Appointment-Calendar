@@ -107,11 +107,12 @@ few months on the day it starts, ending on a date or never.
   26 weeks (182 days) from today, or from when the Series starts if that is later. The
   `series-top-up` backend function runs once a day at 08:00 UTC and makes the Appointments each
   Series still needs, so one with no end never runs dry. It records no activity and sends no
-  Activity update: nobody acted.
+  Activity update: nobody acted. If a Series is ended or split while it runs, it takes out again
+  any Appointment it made after the new end.
 - Patterns are worked out on Susan's dates, so a weekly 9:00 am stays at 9:00 am across a clock
   change. The first Appointment has to be on a day the pattern gives. A monthly Series on the 29th,
   30th or 31st lands on the last day of a shorter month. A day on which the clocks skip its start
-  time is left out.
+  time is left out for now; how that should work is waiting on the owner (see the spec).
 - Reminders set on a Series go out a set time before each Appointment; an exact-time Reminder can be
   added to one Appointment in it.
 - Changing or cancelling one asks: **only this one**, which changes it alone and marks it as changed
