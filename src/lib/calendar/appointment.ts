@@ -147,6 +147,17 @@ export function upcomingAppointments(
   );
 }
 
+/**
+ * The Appointments that have already happened, newest first: everything dated before `today`,
+ * cancelled ones included. One from earlier today is still upcoming (see upcomingAppointments).
+ */
+export function pastAppointments(
+  appointments: readonly Appointment[],
+  today: string,
+): Appointment[] {
+  return inDateOrder(appointments.filter((appointment) => appointment.date < today)).reverse();
+}
+
 /** An Appointment has no end time; for overlaps, each is taken to be about this long. */
 const ABOUT_AN_HOUR = 60 * 60_000;
 

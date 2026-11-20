@@ -479,6 +479,260 @@ p {
   font-size: 21px;
 }
 
+/* At the end of Upcoming on a phone, whose tab bar has no room for Past. */
+.past-link {
+  align-self: flex-start;
+}
+
+/* ---------- Month: the month grid, and on a phone the picked day beneath it ---------- */
+/* On a desktop the grid fills the middle column. */
+.middle .page:has(.month-grid) {
+  max-width: none;
+}
+.month-controls {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+.app.phone .month-controls {
+  margin-top: -6px;
+}
+.app.phone .month-controls .btn:first-child {
+  margin-right: auto;
+}
+/* A square button holding only an icon, such as Previous month. */
+.btn-icon {
+  width: 52px;
+  padding: 0;
+}
+.month-grid {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+.month-grid th {
+  padding: 4px 0 8px;
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 700;
+}
+.month-grid abbr {
+  text-decoration: none;
+}
+.month-grid td {
+  padding: 0;
+  vertical-align: top;
+}
+/* Days of the months either side are shown, but quieter. */
+.month-grid td.other-month {
+  opacity: 0.45;
+}
+
+.app.phone .month-grid button.day {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 52px;
+  height: 52px;
+  margin: 0 auto;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 99px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.app.phone .month-grid button.day[aria-current='date'] {
+  border-color: var(--accent);
+}
+.app.phone .month-grid button.day[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 750;
+}
+/* The mark on a day that has an Appointment. */
+.month-grid .mark {
+  position: absolute;
+  bottom: 5px;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  border-radius: 99px;
+  background: var(--accent);
+}
+.month-grid button.day[aria-pressed='true'] .mark {
+  background: var(--accent-text);
+}
+/* A day whose every Appointment was cancelled: a hollow mark. */
+.month-grid .mark.cancelled,
+.month-grid button.day[aria-pressed='true'] .mark.cancelled {
+  border: 1.5px solid var(--muted);
+  background: none;
+}
+.month-grid button.day[aria-pressed='true'] .mark.cancelled {
+  border-color: var(--accent-text);
+}
+
+.app.desktop .month-grid {
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--border);
+}
+.app.desktop .month-grid th {
+  padding: 14px 12px;
+  text-align: left;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border);
+}
+.app.desktop .month-grid td {
+  height: 128px;
+  padding: 8px 6px;
+  border-top: 1px solid var(--border);
+}
+.app.desktop .month-grid td + td {
+  border-left: 1px solid var(--border);
+}
+.app.desktop .month-grid td .day {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 34px;
+  margin-bottom: 6px;
+  font-weight: 700;
+}
+.app.desktop .month-grid td[aria-current='date'] .day {
+  border-radius: 99px;
+  background: var(--accent);
+  color: var(--accent-text);
+}
+.month-grid ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.chip {
+  display: flex;
+  flex-direction: column;
+  padding: 5px 8px;
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.3;
+  text-decoration: none;
+  overflow-wrap: break-word;
+}
+/* A long name takes two lines at most; the whole of it is in the detail panel. */
+.chip .chip-what {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  hyphens: auto;
+}
+.chip:hover {
+  outline: 2px solid var(--accent);
+}
+/* The Appointment open in the detail panel. */
+.chip[aria-current='true'] {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+/* A cancelled Appointment: no fill, a dashed edge, struck through and labelled, so that it is not
+   taken for one still to be kept. */
+.chip.cancelled {
+  border: 1px dashed var(--muted);
+  border-left: 4px solid var(--muted);
+  background: none;
+  color: var(--muted);
+}
+.chip.cancelled strong,
+.chip.cancelled .chip-what {
+  text-decoration: line-through;
+}
+.chip.cancelled[aria-current='true'] {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.chip-state {
+  font-size: 14px;
+  font-weight: 750;
+}
+.month-grid .more {
+  margin-top: 6px;
+  padding: 4px 6px;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.day-list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+}
+.day-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--border);
+}
+.day-group h2 {
+  font-size: 18px;
+}
+.day-group h2 .muted {
+  margin-left: 6px;
+  font-weight: 500;
+}
+.day-group ul {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.day-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 12px;
+  min-height: 52px;
+  padding: 6px 0;
+  color: var(--text);
+  text-decoration: none;
+}
+.day-row .time {
+  white-space: nowrap;
+  font-weight: 700;
+}
+.day-row.cancelled {
+  color: var(--muted);
+}
+.day-row.cancelled .time,
+.day-row.cancelled strong {
+  text-decoration: line-through;
+}
+.day-row .badge {
+  margin-top: 4px;
+}
+
 /* ---------- one Appointment, and the form ---------- */
 /* It overlaps another Appointment. A warning, not a refusal: it was saved. */
 .warning {

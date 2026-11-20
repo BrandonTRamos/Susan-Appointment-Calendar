@@ -7,6 +7,7 @@ import {
   createMemoryStore,
   NO_ADMIN_MESSENGER,
   overlappingAppointments,
+  pastAppointments,
   upcomingAppointments,
   type Actor,
   type NewAppointment,
@@ -734,6 +735,36 @@ describe('upcoming Appointments', () => {
     await core.cancelAppointment(mark, hair.id);
     expect(upcomingAppointments(store.appointments(), '2026-11-19').map((a) => a.what)).toEqual([
       'Eye exam',
+    ]);
+  });
+});
+
+describe('past Appointments', () => {
+  it('are those dated before today, newest first, cancelled ones included', async () => {
+    const { core, store } = calendar();
+    await core.addAppointment(linda, { ...checkUp, what: 'Flu shot', date: '2026-10-02' });
+    const dentist = await core.addAppointment(linda, {
+      ...checkUp,
+      what: 'Dentist',
+      date: '2026-11-18',
+      time: '09:00',
+    });
+    await core.addAppointment(linda, { ...checkUp, what: 'Hair', date: '2026-11-18' });
+    await core.addAppointment(linda, { ...checkUp, what: 'Last year', date: '2025-12-30' });
+    await core.addAppointment(linda, {
+      ...checkUp,
+      what: 'Breakfast',
+      date: '2026-11-19',
+      time: '08:00',
+    });
+    await core.addAppointment(linda, { ...checkUp, what: 'Eye exam', date: '2026-12-01' });
+    await core.cancelAppointment(mark, dentist.id);
+    const past = pastAppointments(store.appointments(), '2026-11-19');
+    expect(past.map((a) => [a.what, a.state])).toEqual([
+      ['Hair', 'active'],
+      ['Dentist', 'cancelled'],
+      ['Flu shot', 'active'],
+      ['Last year', 'active'],
     ]);
   });
 });
