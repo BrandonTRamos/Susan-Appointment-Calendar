@@ -148,7 +148,8 @@ const schema = a
       .returns(a.string())
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(appNotifications)),
-    // Keeps this device against the signed-in person's account, or forgets it.
+    // Keeps this device against the signed-in person's account, or forgets it. Turning them on is
+    // the only way a device changes hands.
     turnOnAppNotifications: a
       .mutation()
       .arguments({
@@ -160,8 +161,21 @@ const schema = a
       .returns(a.boolean())
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(appNotifications)),
+    // Keeps this device up to date when the app opens, only if it is the signed-in person's. Answers
+    // with what became of it (DeviceRenewal in src/lib/appNotifications.ts).
+    renewAppNotifications: a
+      .mutation()
+      .arguments({
+        endpoint: a.string().required(),
+        p256dh: a.string().required(),
+        auth: a.string().required(),
+        label: a.string(),
+      })
+      .returns(a.string())
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(appNotifications)),
     // Answers with what became of it (DeviceRemoval in src/lib/appNotifications.ts): forgotten, not
-    // kept, or kept for someone else and so left with them.
+    // kept, kept for someone else and so left with them, or unconfirmed.
     turnOffAppNotifications: a
       .mutation()
       .arguments({ endpoint: a.string().required() })

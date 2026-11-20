@@ -60,7 +60,7 @@ backend.calendarCommands.addEnvironment('USER_POOL_ID', userPool.userPoolId);
 // signs them, and nothing else in the data API: Amplify would let it call every query and mutation,
 // the calendar's included. `npm run synth` checks it.
 const APP_NOTIFICATION_FIELDS = {
-  Query: ['getAppNotificationDevice', 'getAppNotificationKey'],
+  Query: ['getAppNotificationKey'],
   Mutation: [
     'createAppNotificationDevice',
     'updateAppNotificationDevice',
@@ -91,6 +91,16 @@ const APP_NOTIFICATION_FIELDS = {
     if (statement.Action === 'appsync:GraphQL') statement.Resource = fields;
   access[0].addPropertyOverride('PolicyDocument', document);
 }
+
+// When a write about a device is refused, the function reads whose the device is now straight from
+// its table, with a strongly consistent read, which the data API's reads are not
+// (amplify/calendar/app-notification-devices.ts). It may get one item from that table and nothing
+// more; every write still goes through the data API.
+const deviceTable = backend.data.resources.tables['AppNotificationDevice'];
+backend.appNotifications.addEnvironment('APP_NOTIFICATION_DEVICE_TABLE', deviceTable.tableName);
+backend.appNotifications.resources.lambda.addToRolePolicy(
+  new PolicyStatement({ actions: ['dynamodb:GetItem'], resources: [deviceTable.tableArn] }),
+);
 
 // The calendar subscription's feed, at a public address. Each person's secret link is checked in
 // the function (amplify/functions/subscription-feed/feed.ts). The address is public, so concurrent

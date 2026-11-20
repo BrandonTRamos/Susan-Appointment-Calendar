@@ -217,14 +217,24 @@ changes or cancels an Appointment. Alerts will arrive the same way (ticket 15).
 - They are web push, as in Wellbeing. The key pair that signs them is made by the backend the first
   time anyone turns them on and kept in the data API, so there is no secret to set up. The private
   half never leaves the backend.
-- Each device is kept against the account of whoever turned it on. Turning them off, or signing out,
-  forgets the device, but only for that person: the delete is made on condition that the device is
-  still theirs at the moment it lands, so a device someone else has turned on since, even an
-  instant before, stays theirs, and so does its subscription in the browser. If the backend cannot
-  be reached at sign-out, the browser's subscription is ended anyway, so that this person's
-  notifications cannot reach whoever uses the device next. A device whose push service says its
-  subscription is gone is forgotten too, unless it was renewed or moved since.
-- The app-notifications function may call only the device and key operations it needs.
+- Each device is kept against the account of whoever turned it on. Turning them on in Settings is
+  the only way a device changes hands, as when two people share a laptop: the one who turned them
+  on last gets them.
+- Opening the app only keeps its device up to date for the person who already has it. An older
+  session opened on a device someone else has turned them on for since takes nothing; Settings
+  there says notifications on this device are not coming to that person, and offers to turn them
+  on. Settings shows them as on only when the backend confirms the device is that person's.
+- Turning them off, or signing out, forgets the device, but only for that person: the delete is
+  made on condition that the device is still theirs at the moment it lands. If it is refused, the
+  device's table is read with a strongly consistent read to say why; the data API's own reads can
+  lag. Only a device that was forgotten, or that nobody has, lets the browser end its
+  subscription. One that is someone else's, or whose owner cannot be read, keeps it for them. If
+  the backend cannot be reached at all at sign-out, the subscription is ended anyway, so that this
+  person's notifications cannot reach whoever uses the device next.
+- A device whose push service says its subscription is gone is forgotten too, unless it was renewed
+  or moved since.
+- The app-notifications function may call only the device and key operations it needs, and may read
+  single devices from their table, and nothing else.
 - Tapping one opens its Appointment in the app's window, whatever that window was showing, or in a
   new one.
 - Who is an Admin comes from the `Admins` group (see [Accounts](#accounts)). Susan's account is not in

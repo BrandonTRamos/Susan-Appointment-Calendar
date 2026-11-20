@@ -69,6 +69,9 @@ export function appNotificationsHandler({ devices }: { devices: () => Promise<De
         case 'turnOnAppNotifications':
           await kept.save(personId, subscriptionOf(event.arguments));
           return true;
+        case 'renewAppNotifications':
+          // Only ever keeps this person's own device up to date: it takes none.
+          return await kept.renew(personId, subscriptionOf(event.arguments));
         case 'turnOffAppNotifications':
           // What became of it, so that the device keeps a subscription that is someone else's.
           return await kept.forget(personId, endpointOf(event.arguments.endpoint));

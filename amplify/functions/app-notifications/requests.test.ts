@@ -15,6 +15,7 @@ const phone = {
 function devices(removal: DeviceRemoval = 'forgotten') {
   const saved: { personId: string; subscription: Subscription }[] = [];
   const forgotten: { personId: string; endpoint: string }[] = [];
+  const renewed: { personId: string; subscription: Subscription }[] = [];
   const kept: Devices = {
     publicKey: async () => 'the-public-key',
     keys: async () => null,
@@ -24,12 +25,16 @@ function devices(removal: DeviceRemoval = 'forgotten') {
       return removal;
     },
     forgetGone: async () => {},
+    renew: async (personId, subscription) => {
+      renewed.push({ personId, subscription });
+      return 'renewed';
+    },
     of: async () => [],
   };
   const handler = appNotificationsHandler({ devices: async () => kept });
   const call = (fieldName: string, args: Record<string, unknown> = {}, identity: unknown = linda) =>
     handler({ fieldName, arguments: args, identity } as DeviceEvent);
-  return { saved, forgotten, call };
+  return { saved, forgotten, renewed, call };
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -47,6 +52,15 @@ describe('turning app notifications on and off for a device', () => {
     expect(saved).toEqual([{ personId: 'person-linda', subscription: phone }]);
   });
 
+  it("renews only the signed-in person's own device, whatever the device says", async () => {
+    const { saved, renewed, call } = devices();
+    expect(await call('renewAppNotifications', { ...phone, personId: 'person-mark' })).toBe(
+      'renewed',
+    );
+    expect(renewed).toEqual([{ personId: 'person-linda', subscription: phone }]);
+    expect(saved).toEqual([]);
+  });
+
   it("forgets the device by its endpoint, as the signed-in person's own", async () => {
     const { forgotten, call } = devices();
     expect(
@@ -55,7 +69,7 @@ describe('turning app notifications on and off for a device', () => {
     expect(forgotten).toEqual([{ personId: 'person-linda', endpoint: phone.endpoint }]);
   });
 
-  it.each(['not-kept', 'someone-else'] as const)(
+  it.each(['not-kept', 'someone-else', 'unconfirmed'] as const)(
     'says so when the device was not forgotten because it is %s',
     async (removal) => {
       expect(

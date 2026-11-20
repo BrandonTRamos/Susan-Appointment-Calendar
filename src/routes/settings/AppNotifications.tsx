@@ -70,8 +70,8 @@ export function AppNotifications({ devices }: { devices: DeviceRegistry | null }
       )}
       {state === 'someone-else' && (
         <p className="muted">
-          Someone else has turned notifications on here since, so this device now gets theirs. Turn
-          them on to have them come to you instead.
+          Notifications on this device are not coming to you: someone else may have turned them on
+          here since, so they are left as they are. Turn them on to have them come to you instead.
         </p>
       )}
       {(state === 'off' || state === 'someone-else') && (

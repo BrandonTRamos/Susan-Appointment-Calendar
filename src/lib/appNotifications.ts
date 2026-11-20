@@ -15,11 +15,21 @@ export interface DeviceSubscription {
 }
 
 /**
- * What became of a request to forget this device: forgotten; not kept at all, which is as good;
- * or kept for someone else, who turned notifications on here since, and so left with them.
+ * What became of a request to forget this device for the signed-in person: forgotten; not kept at
+ * all, which is as good; kept for someone else, who turned notifications on here since, and so
+ * left with them; or unconfirmed, when the backend refused but could not say why. Only the first
+ * two let the browser drop its subscription.
  */
-export const DEVICE_REMOVALS = ['forgotten', 'not-kept', 'someone-else'] as const;
+export const DEVICE_REMOVALS = ['forgotten', 'not-kept', 'someone-else', 'unconfirmed'] as const;
 export type DeviceRemoval = (typeof DEVICE_REMOVALS)[number];
+
+/**
+ * What became of keeping this device up to date for the signed-in person: renewed, as theirs;
+ * not kept for anyone; kept for someone else; or unconfirmed. Only "renewed" means notifications
+ * on this device are this person's.
+ */
+export const DEVICE_RENEWALS = ['renewed', 'not-kept', 'someone-else', 'unconfirmed'] as const;
+export type DeviceRenewal = (typeof DEVICE_RENEWALS)[number];
 
 /**
  * Where devices are kept against the signed-in person's account (src/data/appNotificationDevices.ts).
@@ -28,7 +38,13 @@ export type DeviceRemoval = (typeof DEVICE_REMOVALS)[number];
 export interface DeviceRegistry {
   /** The public key a device subscribes with. */
   publicKey(): Promise<string>;
+  /** Turns them on here for the signed-in person, taking the device from anyone who had it. */
   turnOn(subscription: DeviceSubscription): Promise<void>;
+  /**
+   * Keeps this device up to date for the signed-in person, only if it is already theirs. It never
+   * takes a device, so the app can ask it whenever it opens.
+   */
+  renew(subscription: DeviceSubscription): Promise<DeviceRenewal>;
   /** Forgets this device for the signed-in person, only if it is still theirs. */
   turnOff(endpoint: string): Promise<DeviceRemoval>;
 }
@@ -44,8 +60,22 @@ export type AppNotificationState =
   | 'blocked'
   | 'off'
   | 'on'
-  /** Turning them off found this device kept for someone else, so it was left on for them. */
+  /**
+   * The browser has a subscription, but notifications on this device are not this person's: the
+   * backend keeps it for someone else, or could not say. It is left as it is.
+   */
   | 'someone-else';
+
+/** Only a device the backend confirms is the person's counts as on for them. */
+const STATE_OF: Record<DeviceRenewal, AppNotificationState> = {
+  renewed: 'on',
+  'not-kept': 'off',
+  'someone-else': 'someone-else',
+  unconfirmed: 'someone-else',
+};
+
+/** Only these answers mean the browser's subscription is nobody else's, so it may be dropped. */
+const MAY_DROP: readonly DeviceRemoval[] = ['forgotten', 'not-kept'];
 
 const supported = () =>
   'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
@@ -67,7 +97,10 @@ export async function appNotificationState(
   if (!supported()) return onIos() ? 'home-screen' : 'unavailable';
   if (Notification.permission === 'denied') return 'blocked';
   if (Notification.permission !== 'granted') return 'off';
-  return (await currentSubscription()) ? 'on' : 'off';
+  const subscription = await currentSubscription();
+  if (!subscription) return 'off';
+  // The browser's subscription alone does not say whose it is: the backend does.
+  return STATE_OF[await registry.renew(subscriptionOf(subscription))];
 }
 
 function deviceLabel(): string {
@@ -80,15 +113,15 @@ function deviceLabel(): string {
   return 'Browser';
 }
 
-async function save(registry: DeviceRegistry, subscription: PushSubscription) {
+function subscriptionOf(subscription: PushSubscription): DeviceSubscription {
   const { keys } = subscription.toJSON();
   if (!keys?.p256dh || !keys.auth) throw new Error('The browser gave an incomplete subscription.');
-  await registry.turnOn({
+  return {
     endpoint: subscription.endpoint,
     p256dh: keys.p256dh,
     auth: keys.auth,
     label: deviceLabel(),
-  });
+  };
 }
 
 /** Asks for permission (call it straight from a tap), subscribes, and keeps this device. */
@@ -103,53 +136,55 @@ export async function turnOn(registry: DeviceRegistry): Promise<AppNotificationS
     await subscription.unsubscribe();
     subscription = null;
   }
+  const made = !subscription;
   subscription ??= await registration.pushManager.subscribe({
     userVisibleOnly: true,
     applicationServerKey: fromBase64Url(publicKey),
   });
   try {
-    await save(registry, subscription);
+    await registry.turnOn(subscriptionOf(subscription));
   } catch (error) {
-    // Not kept, so nothing would reach it. Undo the subscription too, so that this device never
-    // shows as on while the backend does not have it.
-    await subscription.unsubscribe().catch(() => false);
+    // Not kept, so nothing would reach it. A subscription made just now is undone too, so that
+    // this device never shows as on while the backend does not have it. One the browser had
+    // already may be someone else's, so it is left alone.
+    if (made) await subscription.unsubscribe().catch(() => false);
     throw error;
   }
   return 'on';
 }
 
 /**
- * Stops this device getting this person's app notifications, and forgets it. When the backend
- * finds it kept for someone else, who turned them on here since, it is left as it is: its browser
- * subscription is theirs now too.
+ * Stops this device getting this person's app notifications, and forgets it. Unless the backend
+ * confirms that it was this person's or nobody's, the browser's subscription is left as it is: it
+ * may be someone else's, who turned them on here since.
  */
 export async function turnOff(registry: DeviceRegistry): Promise<AppNotificationState> {
   const subscription = await currentSubscription();
   if (!subscription) return 'off';
-  if ((await registry.turnOff(subscription.endpoint)) === 'someone-else') return 'someone-else';
+  if (!MAY_DROP.includes(await registry.turnOff(subscription.endpoint))) return 'someone-else';
   await subscription.unsubscribe();
   return 'off';
 }
 
 /**
- * Saves this device's subscription again when the app opens. The backend forgets a device whose
- * subscription is gone, and a browser can renew one; either way this puts it back.
+ * Keeps this device's subscription up to date when the app opens: a browser can renew its keys.
+ * It only ever renews a device the backend already keeps for this person, so opening an older
+ * session never takes a device someone else has turned notifications on for since.
  */
 export async function keepSaved(registry: DeviceRegistry | null): Promise<void> {
-  if ((await appNotificationState(registry)) !== 'on' || !registry) return;
-  const subscription = await currentSubscription();
-  if (subscription) await save(registry, subscription);
+  await appNotificationState(registry);
 }
 
 /**
  * At sign-out: forgets this device for this person and unsubscribes it, so that the next person to
  * use it is not sent this person's notifications. It never stops the sign-out.
  *
- * - When the backend finds the device kept for someone else, who turned them on here since, their
- *   subscription and the notifications showing are left alone.
- * - When the backend cannot be reached, nobody can say whose the device is, so it is unsubscribed
- *   anyway: this person's notifications must not reach whoever uses it next. The backend forgets
- *   it the next time anything is sent to it.
+ * - When the backend finds the device kept for someone else, who turned them on here since, or
+ *   refuses to forget it without being able to say why, the device is already not this person's:
+ *   the subscription and the notifications showing are left alone for whoever's it is.
+ * - When the backend cannot be reached at all, nobody can say whether it is still this person's,
+ *   so it is unsubscribed anyway: this person's notifications must not reach whoever uses it next.
+ *   The backend forgets it the next time anything is sent to it.
  */
 export async function forgetAtSignOut(registry: DeviceRegistry | null): Promise<void> {
   if (!registry || !supported()) return;
@@ -162,7 +197,7 @@ export async function forgetAtSignOut(registry: DeviceRegistry | null): Promise<
     } catch (error) {
       console.warn('Could not forget this device at sign-out', error);
     }
-    if (removal === 'someone-else') return;
+    if (removal && !MAY_DROP.includes(removal)) return;
     await subscription.unsubscribe();
     const registration = await navigator.serviceWorker.getRegistration();
     for (const shown of (await registration?.getNotifications()) ?? []) shown.close();

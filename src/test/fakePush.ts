@@ -1,7 +1,12 @@
 // A browser's web push, for screen tests: jsdom has none. It stands in for the service worker
 // registration, its push manager and the Notification permission, and keeps what was asked of it.
 
-import type { DeviceRegistry, DeviceRemoval, DeviceSubscription } from '../lib/appNotifications';
+import type {
+  DeviceRegistry,
+  DeviceRemoval,
+  DeviceRenewal,
+  DeviceSubscription,
+} from '../lib/appNotifications';
 import { fromBase64Url } from '../lib/vapid';
 
 /** A public key of the right shape: a 65-byte P-256 point, base64url. */
@@ -97,6 +102,7 @@ export function fakeRegistry({
   failing = false,
   failingTurnOn = false,
   removal = 'forgotten',
+  renewal = 'renewed',
 }: {
   /** Nothing can be reached. */
   failing?: boolean;
@@ -104,9 +110,12 @@ export function fakeRegistry({
   failingTurnOn?: boolean;
   /** What the backend finds when asked to forget this device. */
   removal?: DeviceRemoval;
+  /** What the backend finds when asked to keep this device up to date. */
+  renewal?: DeviceRenewal;
 } = {}) {
   const turnedOn: DeviceSubscription[] = [];
   const turnedOff: string[] = [];
+  const renewed: DeviceSubscription[] = [];
   const fail = async () => {
     if (failing) throw new Error('The data API is not answering');
   };
@@ -120,11 +129,16 @@ export function fakeRegistry({
       if (failingTurnOn) throw new Error('The data API is not answering');
       turnedOn.push(device);
     },
+    async renew(device) {
+      await fail();
+      renewed.push(device);
+      return renewal;
+    },
     async turnOff(endpoint) {
       await fail();
       turnedOff.push(endpoint);
       return removal;
     },
   };
-  return { registry, turnedOn, turnedOff };
+  return { registry, turnedOn, turnedOff, renewed };
 }

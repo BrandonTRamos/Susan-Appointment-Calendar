@@ -33,3 +33,5 @@ This ticket also establishes the Admin messenger, the port through which the cor
 - The app-notifications function's data API access is narrowed to the device and key operations it uses, and a gone device is forgotten only if it is still the same subscription for the same person.
 - Tapping an app notification moves an open window of the app to the Appointment, whatever screen it shows (a Public page or the sign-in screen too), or opens a new one.
 - If the device cannot be kept when notifications are turned on, the browser's new subscription is undone, so Settings never shows the device as on.
+- Opening the app only renews a device that is already the person's, by a write conditioned on that; it never takes one. Only turning notifications on in Settings moves a device to a person. Settings shows them as on only when the backend confirms the device is the person's.
+- When a conditional write about a device is refused, why is read with a strongly consistent read of the device table, because the data API's reads are eventually consistent. If even that cannot be read, the answer is "unconfirmed", and the browser keeps its subscription.

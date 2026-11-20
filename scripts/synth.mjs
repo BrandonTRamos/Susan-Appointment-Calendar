@@ -119,8 +119,15 @@ const COMMANDS = [
 const MODELS = ['Appointment', 'ActivityRecord'];
 /** Kept per person, and read only by that person. Only the commands function writes these. */
 const OWN_MODELS = ['SubscriptionLink'];
-/** Turning app notifications on and off for a device: the only other mutations anyone may call. */
-const DEVICE_MUTATIONS = ['turnOffAppNotifications', 'turnOnAppNotifications'];
+/**
+ * Turning app notifications on and off for a device, and keeping it up to date: the only other
+ * mutations anyone may call.
+ */
+const DEVICE_MUTATIONS = [
+  'renewAppNotifications',
+  'turnOffAppNotifications',
+  'turnOnAppNotifications',
+];
 /** Kept for app notifications, and closed to everyone signed in: only the backend reaches them. */
 const CLOSED_MODELS = ['AppNotificationDevice', 'AppNotificationKey'];
 /** All the app-notifications function may call in the data API (amplify/backend.ts). */
@@ -129,7 +136,6 @@ const APP_NOTIFICATION_FIELDS = [
   'Mutation/createAppNotificationKey',
   'Mutation/deleteAppNotificationDevice',
   'Mutation/updateAppNotificationDevice',
-  'Query/getAppNotificationDevice',
   'Query/getAppNotificationKey',
 ];
 
@@ -158,20 +164,49 @@ function appNotificationsAccess() {
 }
 
 /**
- * The words of the step that deletes a device in DynamoDB. A device is forgotten only by a delete
- * that carries a condition (amplify/calendar/app-notification-devices.ts), so this step must put
- * the caller's condition into the one conditional write.
+ * The words of the step that writes a device in DynamoDB for one data API mutation ('Delete' or
+ * 'Update'). A device is forgotten, or kept up to date, only by a write that carries a condition
+ * (amplify/calendar/app-notification-devices.ts), so this step must put the caller's condition into
+ * the one conditional write.
  */
-function deviceDeleteWords() {
+function deviceWriteWords(verb) {
   return stacks()
     .flatMap((stack) => Object.entries(stack))
     .filter(
       ([id, resource]) =>
         resource.Type === 'AWS::AppSync::FunctionConfiguration' &&
-        id.startsWith('MutationDeleteAppNotificationDeviceDataResolverFn'),
+        id.startsWith(`Mutation${verb}AppNotificationDeviceDataResolverFn`),
     )
     .map(([, resource]) => stepWords(resource.Properties, 'Request'))
     .join('\n');
+}
+
+/**
+ * The app-notifications function: its properties, what its role may do outside the data API, and
+ * the code it runs as bundled for the deploy.
+ */
+function appNotificationsFunction() {
+  const all = stacks();
+  const lambda = all
+    .flatMap((stack) => Object.entries(stack))
+    .find(
+      ([id, resource]) =>
+        resource.Type === 'AWS::Lambda::Function' && /^appnotificationslambda[0-9A-F]+$/.test(id),
+    )?.[1];
+  if (!lambda) return { properties: {}, statements: [], code: '' };
+  const role = lambda.Properties.Role?.['Fn::GetAtt']?.[0];
+  const statements = all
+    .flatMap((stack) => Object.values(stack))
+    .filter(
+      (resource) =>
+        resource.Type === 'AWS::IAM::Policy' &&
+        resource.Properties.Roles?.some((each) => each.Ref === role),
+    )
+    .flatMap((policy) => policy.Properties.PolicyDocument.Statement)
+    .filter((statement) => !String(statement.Action).startsWith('appsync:'));
+  const asset = /^([0-9a-f]{64})\.zip$/.exec(lambda.Properties.Code?.S3Key ?? '')?.[1];
+  const code = asset ? readFileSync(join(out, `asset.${asset}`, 'index.mjs'), 'utf8') : '';
+  return { properties: lambda.Properties, statements, code };
 }
 
 /**
@@ -292,7 +327,7 @@ function checks() {
         .filter(([, open]) => open)
         .map(([name]) => name)
         .sort()
-        .join() === [...COMMANDS, ...DEVICE_MUTATIONS].join(),
+        .join() === [...COMMANDS, ...DEVICE_MUTATIONS].sort().join(),
     ],
     [
       'nobody signed in can read or write the devices app notifications go to, or their key',
@@ -319,11 +354,58 @@ function checks() {
     [
       'a device is deleted only if the condition it is deleted on holds when DynamoDB deletes it',
       (() => {
-        const words = deviceDeleteWords();
+        const words = deviceWriteWords('Delete');
         return (
           words.includes('"operation": "DeleteItem"') &&
           words.includes('$util.qr($ctx.stash.conditions.add($args.condition))') &&
           words.includes('$util.qr($DeleteRequest.put("condition", $Conditions))')
+        );
+      })(),
+    ],
+    [
+      'a device is kept up to date only if the condition it is written on holds when it is written',
+      (() => {
+        const words = deviceWriteWords('Update');
+        return (
+          words.includes('"operation": "UpdateItem"') &&
+          words.includes('$util.qr($ctx.stash.conditions.add($args.condition))') &&
+          words.includes('$util.qr($UpdateItem.put("condition", $Conditions))')
+        );
+      })(),
+    ],
+    [
+      // Why a write about a device was refused is read straight from its table, because the data
+      // API's reads are eventually consistent (amplify/calendar/app-notification-devices.ts).
+      'the app-notifications function may only get single devices from their table, consistently',
+      (() => {
+        const fn = appNotificationsFunction();
+        const table = fn.properties.Environment?.Variables?.APP_NOTIFICATION_DEVICE_TABLE;
+        const dynamo = fn.statements.filter((statement) =>
+          [statement.Action].flat().some((action) => String(action).startsWith('dynamodb:')),
+        );
+        const tableArn = JSON.stringify(dynamo[0]?.Resource ?? '');
+        return (
+          JSON.stringify(table ?? '').includes('AppNotificationDevice') &&
+          dynamo.length === 1 &&
+          JSON.stringify([dynamo[0].Action].flat()) === '["dynamodb:GetItem"]' &&
+          tableArn.includes('AppNotificationDevice') &&
+          !tableArn.includes('index') &&
+          // Beside it, only what Amplify's data client needs to start: its settings, and the
+          // description of the models it reads.
+          fn.statements.every(
+            (statement) =>
+              statement === dynamo[0] ||
+              [statement.Action]
+                .flat()
+                .every(
+                  (action) =>
+                    action === 'ssm:GetParameters' ||
+                    (action === 's3:GetObject' &&
+                      JSON.stringify(statement.Resource).includes('modelIntrospectionSchema')),
+                ),
+          ) &&
+          /ConsistentRead:\s*(?:!0|true)\b/.test(fn.code) &&
+          !/ConsistentRead:\s*(?:!1|false)\b/.test(fn.code)
         );
       })(),
     ],
