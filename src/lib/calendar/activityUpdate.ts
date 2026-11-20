@@ -1,10 +1,17 @@
 // The words of an Activity update: the app notification that tells the other Admins someone added,
 // changed or cancelled an Appointment. It names who did it, the Appointment and when it is, and,
-// for a change, which details changed. It gives no detail's new words beyond what it is and when,
-// because it shows on a locked phone.
+// for a change, which details changed and whether the Reminders did. It gives no detail's new
+// words beyond what it is and when, because it shows on a locked phone.
 
 import { formatDate, formatTime } from '../localTime';
-import { DETAIL_NAMES, DETAILS, type Actor, type Appointment, type Detail } from './appointment';
+import {
+  DETAIL_NAMES,
+  DETAILS,
+  type Actor,
+  type Appointment,
+  type Detail,
+  type Reminder,
+} from './appointment';
 import type { AppNotification } from './ports';
 
 export type ActivityUpdate =
@@ -27,6 +34,30 @@ function changed(detail: Detail, before: Appointment): string {
   return name;
 }
 
+/** A Reminder as a person sets it: which one, and when it goes out. Not when that works out to. */
+const setting = (reminder: Reminder) =>
+  JSON.stringify(
+    Object.entries(reminder)
+      .filter(([field, value]) => field !== 'dueAt' && field !== 'needsReview' && value != null)
+      // Read back from the data API, the same Reminder may hold its fields in another order.
+      .sort(([a], [b]) => a.localeCompare(b)),
+  );
+
+/**
+ * Whether a person changed the Reminders: added, removed or retimed one, or confirmed one flagged
+ * for review. Moving the Appointment works them out again and flags exact-time ones, but that
+ * follows from the move and is told as the move.
+ */
+function remindersChanged(before: readonly Reminder[], after: readonly Reminder[]): boolean {
+  const was = before.map(setting).sort().join('\n');
+  const now = after.map(setting).sort().join('\n');
+  const confirmed = after.some(
+    (reminder) =>
+      !reminder.needsReview && before.some((old) => old.id === reminder.id && old.needsReview),
+  );
+  return was !== now || confirmed;
+}
+
 export function activityUpdate(update: ActivityUpdate): AppNotification {
   const { action, by, appointment } = update;
   const who = by.viaAgent ? `${by.person.name}'s agent` : by.person.name;
@@ -35,7 +66,9 @@ export function activityUpdate(update: ActivityUpdate): AppNotification {
   if (update.action === 'changed') {
     const { before } = update;
     const details = DETAILS.filter((detail) => appointment[detail] !== before[detail]);
-    body = `${about}: ${listed(details.map((detail) => changed(detail, before)))}.`;
+    const words = details.map((detail) => changed(detail, before));
+    if (remindersChanged(before.reminders, appointment.reminders)) words.push('the Reminders');
+    if (words.length) body = `${about}: ${listed(words)}.`;
   }
   return {
     title: "Susan's Calendar",

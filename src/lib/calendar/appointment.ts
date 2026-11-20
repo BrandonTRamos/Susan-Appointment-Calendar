@@ -79,12 +79,54 @@ export const DETAIL_NAMES: Record<Detail, string> = {
   privateNotes: 'the Private notes',
 };
 
-/** What a new Appointment needs: what it is, its date and its start time. The rest can wait. */
-export type NewAppointment = Pick<AppointmentDetails, 'what' | 'date' | 'time'> &
-  Partial<AppointmentDetails>;
+export const REMINDER_SHAPES = ['before', 'daysBefore', 'at'] as const;
+export type ReminderShape = (typeof REMINDER_SHAPES)[number];
 
-/** The details to change. One left out stays as it is; null or empty words clear one. */
-export type AppointmentChanges = Partial<AppointmentDetails>;
+export const REMINDER_UNITS = ['minutes', 'hours', 'days'] as const;
+export type ReminderUnit = (typeof REMINDER_UNITS)[number];
+
+/**
+ * When a Reminder goes out, in one of three shapes. The first two follow the Appointment when it
+ * moves; the third keeps its time. Times are Susan's local time.
+ */
+export type ReminderTiming =
+  /** A gap before the Appointment's start: "2 hours before". */
+  | { shape: 'before'; amount: number; unit: ReminderUnit }
+  /** A number of days before, at a clock time: "the day before at 6:00 pm". 0 is the same day. */
+  | { shape: 'daysBefore'; days: number; time: string }
+  /** An exact date, 'YYYY-MM-DD', and time, 'HH:MM'. */
+  | { shape: 'at'; date: string; time: string };
+
+/** A Reminder on an Appointment: a text to Susan about it. */
+export type Reminder = ReminderTiming & {
+  id: string;
+  /** The moment it goes out, as an ISO timestamp. The core keeps it in step with the Appointment. */
+  dueAt: string;
+  /**
+   * An exact-time Reminder whose Appointment has moved since it was set. It keeps its time until
+   * someone confirms or changes it.
+   */
+  needsReview: boolean;
+};
+
+/**
+ * A Reminder as a person sets it. One with the ID of a Reminder the Appointment already has is that
+ * Reminder, kept or changed; one without is new. `reviewed` confirms a Reminder flagged for review.
+ */
+export type ReminderSetting = ReminderTiming & { id?: string; reviewed?: boolean };
+
+/**
+ * What a new Appointment needs: what it is, its date and its start time. The rest can wait. With no
+ * Reminders given it starts with one, the day before at 6:00 pm; an empty list means none.
+ */
+export type NewAppointment = Pick<AppointmentDetails, 'what' | 'date' | 'time'> &
+  Partial<AppointmentDetails> & { reminders?: ReminderSetting[] };
+
+/**
+ * The details to change. One left out stays as it is; null or empty words clear one. Reminders, when
+ * given, are the whole new list.
+ */
+export type AppointmentChanges = Partial<AppointmentDetails> & { reminders?: ReminderSetting[] };
 
 export const APPOINTMENT_STATES = ['active', 'cancelled'] as const;
 export type AppointmentState = (typeof APPOINTMENT_STATES)[number];
@@ -95,6 +137,8 @@ export interface Appointment extends AppointmentDetails {
   startsAt: string;
   /** A cancelled Appointment stays in the calendar. */
   state: AppointmentState;
+  /** Its Reminders, in the order they go out. */
+  reminders: Reminder[];
   added: Stamp;
   /** Null until someone changes or cancels it. */
   lastChanged: Stamp | null;

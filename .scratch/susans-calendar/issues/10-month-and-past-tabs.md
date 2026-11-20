@@ -26,4 +26,5 @@
 - Moving to another month picks today if it is in that month, otherwise the month's first day. Picking a day of a neighbouring month moves the grid to that month. The month on show and the picked day are kept while an Appointment opened from Month is open.
 - On a desktop a cell shows two Appointments; a "2 more" button opens the cell out to show every one.
 - An Appointment opens beside, and on a phone goes back to, the tab it was opened from (`usePickedFrom` in `src/components/Navigation.tsx`).
+- On a phone each row beneath the grid for an Appointment still to come says how many of its Reminders are still to be sent, "1 Reminder to send" or "2 Reminders to send", as the phone mockup has it, and nothing when none are (the owner's choice when ticket 07 filled the row's place; `ReminderCount` in `src/components/RemindersToSend.tsx`). The full times are on the Upcoming card and the Appointment.
 - Past is every Appointment dated before today (`pastAppointments` in the calendar core); one from earlier today is still on Upcoming.

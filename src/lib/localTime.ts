@@ -95,6 +95,23 @@ export function momentOf(date: string, time: string, zone: string): Date | null 
   return null;
 }
 
+/**
+ * The moment a date and time happen in a zone, reading a time the clocks skip as that time moved on
+ * by the gap the clocks jump: 2:30 am becomes 3:30 am where they go forward an hour, 2:45 am where
+ * they go forward half an hour. For times worked out by the calendar rather than typed by a person,
+ * which have to happen at some moment.
+ */
+export function momentOrSkipped(date: string, time: string, zone: string): Date {
+  const moment = momentOf(date, time, zone);
+  if (moment) return moment;
+  // Read with the zone's distance from UTC before the clocks jumped, the time lands as far past
+  // the jump as it was meant to be past its start.
+  const wall = asIfUtc(date, time);
+  const probe = wall - DAY;
+  const local = localDateTime(new Date(probe), zone);
+  return new Date(wall - (asIfUtc(local.date, local.time) - probe));
+}
+
 const weekdayAndDate = (style: 'long' | 'short') =>
   new Intl.DateTimeFormat('en-US', {
     timeZone: 'UTC',
@@ -103,10 +120,22 @@ const weekdayAndDate = (style: 'long' | 'short') =>
     day: 'numeric',
     year: 'numeric',
   });
-const DATE_FORMATS = { long: weekdayAndDate('long'), short: weekdayAndDate('short') };
+const DATE_FORMATS = {
+  long: weekdayAndDate('long'),
+  short: weekdayAndDate('short'),
+  noYear: new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC',
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  }),
+};
 
-/** A date in words: "Friday, November 20, 2026", or "Fri, Nov 20, 2026" when short. */
-export function formatDate(date: string, style: 'long' | 'short' = 'long'): string {
+/**
+ * A date in words: "Friday, November 20, 2026", "Fri, Nov 20, 2026" when short, or "Friday,
+ * November 20" with no year.
+ */
+export function formatDate(date: string, style: keyof typeof DATE_FORMATS = 'long'): string {
   return DATE_FORMATS[style].format(new Date(asIfUtc(date, '00:00')));
 }
 

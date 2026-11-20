@@ -1,5 +1,10 @@
 import { a, defineData, type ClientSchema } from '@aws-amplify/backend';
-import { ACTIVITY_ACTIONS, APPOINTMENT_STATES } from '../../src/lib/calendar';
+import {
+  ACTIVITY_ACTIONS,
+  APPOINTMENT_STATES,
+  REMINDER_SHAPES,
+  REMINDER_UNITS,
+} from '../../src/lib/calendar';
 import { appNotifications } from '../functions/app-notifications/resource';
 import { calendarCommands } from '../functions/calendar-commands/resource';
 
@@ -29,6 +34,22 @@ const schema = a
       at: a.datetime().required(),
     }),
 
+    // One Reminder on an Appointment (Reminder in src/lib/calendar/appointment.ts). Its timing has
+    // one of three shapes, and only the fields of its shape are set: `amount` and `unit` for a gap
+    // before the start, `days` and `time` for days before at a clock time, `date` and `time` for an
+    // exact time.
+    Reminder: a.customType({
+      id: a.string().required(),
+      shape: a.enum(REMINDER_SHAPES),
+      amount: a.integer(),
+      unit: a.enum(REMINDER_UNITS),
+      days: a.integer(),
+      date: a.date(),
+      time: a.string(), // 'HH:MM'
+      dueAt: a.datetime().required(),
+      needsReview: a.boolean().required(),
+    }),
+
     // What each field means is in src/lib/calendar/appointment.ts. The date and both times are
     // Susan's local time; `startsAt` is the moment that is.
     Appointment: a
@@ -45,6 +66,7 @@ const schema = a
         noteForSusan: a.string(),
         privateNotes: a.string(),
         state: a.enum(APPOINTMENT_STATES),
+        reminders: a.ref('Reminder').array(),
         added: a.ref('Stamp').required(),
         lastChanged: a.ref('Stamp'),
       })
