@@ -109,6 +109,10 @@ export function feedStore(reader: TableReader, tables: FeedTables): Store {
     replaceAppointment: async () => readOnly(),
     removeAppointment: async () => readOnly(),
     recordActivity: async () => readOnly(),
+    series: async () => notRead(),
+    everySeries: async () => notRead(),
+    addSeries: async () => readOnly(),
+    replaceSeries: async () => readOnly(),
     keepSubscriptionLink: async () => readOnly(),
     removeSubscriptionLink: async () => readOnly(),
     // Nor about Replies or calendar Alerts.

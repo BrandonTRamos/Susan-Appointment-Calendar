@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { CalendarLoading, CalendarTrouble } from '../components/CalendarTrouble';
 import { Field } from '../components/Field';
@@ -12,6 +12,8 @@ import {
   type AppointmentChanges,
   type RefusalField,
   type ReminderSetting,
+  type Series,
+  type SeriesChanges,
 } from '../lib/calendar';
 import { timeZoneName } from '../lib/timeZone';
 import { NotInCalendar } from './AppointmentDetail';
@@ -23,25 +25,51 @@ import {
   typedReminder,
   type TypedReminder,
 } from './AppointmentReminders';
+import {
+  endsSetting,
+  NO_REPEAT,
+  RepeatFields,
+  repeatSetting,
+  typedRepeat,
+  type TypedRepeat,
+} from './AppointmentRepeat';
 
 // The form for adding and changing an Appointment: a full screen on a phone, the detail panel on a
 // desktop. It checks nothing itself: the calendar core decides what makes an Appointment, and its
 // refusal is shown in its own words. It does warn, before saving, about Reminders that will not do
-// what the person may expect (AppointmentReminders.tsx).
+// what the person may expect (AppointmentReminders.tsx). A new Appointment can be made to repeat
+// (AppointmentRepeat.tsx), which adds a Series; saving a change to one in a Series asks whether it
+// is for only this one or for this and all later ones.
 
-/** What is typed in the form: every detail as words, empty when there is none, and the Reminders. */
+/**
+ * What is typed in the form: every detail as words, empty when there is none, the Reminders, and
+ * how it repeats.
+ */
 interface Typed {
   details: Record<(typeof DETAILS)[number], string>;
   reminders: TypedReminder[];
+  repeat: TypedRepeat;
 }
 
-/** A saved Appointment as the form opens it, or a new one with the Reminder it starts with. */
-const typedFrom = (appointment?: Appointment): Typed => ({
+/** Which Appointments in a Series a change is for. */
+type Scope = 'one' | 'later';
+
+/**
+ * A saved Appointment as the form opens it, with its Series when it is in one, or a new one with
+ * the Reminder it starts with.
+ */
+const typedFrom = (appointment?: Appointment, series?: Series | null): Typed => ({
   details: Object.fromEntries(
     DETAILS.map((detail) => [detail, appointment?.[detail] ?? '']),
   ) as Typed['details'],
   reminders: appointment ? appointment.reminders.map(typedReminder) : [typedReminder()],
+  repeat: series ? typedRepeat(series) : NO_REPEAT,
 });
+
+/** Whether a change to how it repeats or when it ends was typed. */
+const repeatChanged = (typed: Typed, start: Typed) =>
+  JSON.stringify([repeatSetting(typed.repeat), endsSetting(typed.repeat)]) !==
+  JSON.stringify([repeatSetting(start.repeat), endsSetting(start.repeat)]);
 
 const settings = (reminders: TypedReminder[]): ReminderSetting[] => reminders.map(reminderSetting);
 
@@ -49,25 +77,62 @@ export function NewAppointment() {
   const { client } = useCalendar();
   // The new Appointment's ID, chosen once for this form: if a save has to be sent again, because
   // its answer was lost or the person pressed Save twice, the core adds one Appointment, not two.
+  // A Series gets its own, the same way.
   const [id] = useState(() => crypto.randomUUID());
+  const [seriesId] = useState(() => crypto.randomUUID());
   const back = usePickedFrom();
   return (
     <Page title="New Appointment">
       <Form
         start={typedFrom()}
         backTo={back.to}
-        save={async ({ details, reminders }) =>
-          (await client.addAppointment({ ...details, reminders: settings(reminders) }, id)).id
-        }
+        canStopRepeating
+        save={async ({ details, reminders, repeat }) => {
+          const setting = repeatSetting(repeat);
+          if (!setting)
+            return (await client.addAppointment({ ...details, reminders: settings(reminders) }, id))
+              .id;
+          const series = {
+            ...details,
+            reminders: settings(reminders),
+            repeat: setting,
+            ends: endsSetting(repeat),
+          };
+          return (await client.addSeries(series, seriesId)).id;
+        }}
       />
     </Page>
   );
+}
+
+/**
+ * The Series an Appointment belongs to, read once: undefined while it is being read, null for one
+ * not in a Series, or when its Series could not be read, which leaves it to be changed on its own.
+ */
+function useSeriesOf(appointment: Appointment | undefined): Series | null | undefined {
+  const { client } = useCalendar();
+  const seriesId = appointment?.series?.id;
+  const [read, setRead] = useState<{ id: string; series: Series | null } | null>(null);
+  useEffect(() => {
+    if (!seriesId) return;
+    let current = true;
+    client.series(seriesId).then(
+      (series) => current && setRead({ id: seriesId, series }),
+      () => current && setRead({ id: seriesId, series: null }),
+    );
+    return () => {
+      current = false;
+    };
+  }, [client, seriesId]);
+  if (!seriesId) return null;
+  return read?.id === seriesId ? read.series : undefined;
 }
 
 export function EditAppointment() {
   const { id } = useParams();
   const { client, appointments, failed } = useCalendar();
   const appointment = appointments?.find((each) => each.id === id);
+  const series = useSeriesOf(appointment);
 
   return (
     <Page title="Change Appointment">
@@ -82,24 +147,34 @@ export function EditAppointment() {
           </Link>
         </>
       )}
-      {appointment?.state === 'active' && (
+      {appointment?.state === 'active' && series === undefined && <CalendarLoading />}
+      {appointment?.state === 'active' && series !== undefined && (
         // Keyed by the Appointment alone: what is being typed is kept when someone else changes it.
         <Form
           key={appointment.id}
-          start={typedFrom(appointment)}
+          start={typedFrom(appointment, series)}
           backTo={`/appointments/${appointment.id}`}
-          save={async (typed, start) => {
+          inSeries={series !== null}
+          save={async (typed, start, scope) => {
             // Only what this person changed is sent, so that it cannot undo someone else's change
-            // to another detail made while the form was open.
-            const changes: AppointmentChanges = {};
+            // to another detail made while the form was open. For this and all later ones, what is
+            // not sent stays as the Series has it.
+            const changes: SeriesChanges = {};
             for (const detail of DETAILS)
               if (typed.details[detail].trim() !== start.details[detail])
                 changes[detail] = typed.details[detail];
             const reminders = settings(typed.reminders);
             if (JSON.stringify(reminders) !== JSON.stringify(settings(start.reminders)))
               changes.reminders = reminders;
+            if (scope === 'later') {
+              if (repeatChanged(typed, start)) {
+                changes.repeat = repeatSetting(typed.repeat) ?? undefined;
+                changes.ends = endsSetting(typed.repeat);
+              }
+              return (await client.changeSeries(appointment.id, changes)).id;
+            }
             if (Object.keys(changes).length > 0)
-              await client.changeAppointment(appointment.id, changes);
+              await client.changeAppointment(appointment.id, changes as AppointmentChanges);
             return appointment.id;
           }}
         />
@@ -113,11 +188,15 @@ interface FormProps {
   start: Typed;
   /** Where "Back without saving" goes. */
   backTo: string;
-  /** Saves what was typed and answers with the Appointment's ID. */
-  save: (typed: Typed, start: Typed) => Promise<string>;
+  /** For a new Appointment: whether it repeats can be chosen, and starts as not. */
+  canStopRepeating?: boolean;
+  /** For an Appointment in a Series: saving asks whether the change is for later ones too. */
+  inSeries?: boolean;
+  /** Saves what was typed, for which Appointments in a Series, and answers with the Appointment's ID. */
+  save: (typed: Typed, start: Typed, scope?: Scope) => Promise<string>;
 }
 
-function Form({ start, backTo, save }: FormProps) {
+function Form({ start, backTo, canStopRepeating = false, inSeries = false, save }: FormProps) {
   const { timeZone } = useCalendar();
   const navigate = useNavigate();
   // The details as they were when the form opened, whatever happens to the Appointment meanwhile.
@@ -127,10 +206,21 @@ function Form({ start, backTo, save }: FormProps) {
   const [problem, setProblem] = useState<{ message: string; detail?: RefusalField } | null>(null);
   /** Asking whether to save an Appointment that will send Susan no Reminder. */
   const [asking, setAsking] = useState(false);
+  /** Asking which Appointments in the Series the change is for; then, which was picked. */
+  const [choosing, setChoosing] = useState(false);
+  const [scope, setScope] = useState<Scope | undefined>(undefined);
   const now = new Date();
+  const repeats = typed.repeat.every !== 'none';
+  const unchanged = JSON.stringify(typed) === JSON.stringify(opened);
 
-  async function submit(event?: FormEvent, noReminderConfirmed = false) {
+  async function submit(event?: FormEvent, noReminderConfirmed = false, chosen = scope) {
     event?.preventDefault();
+    if (inSeries && !chosen && !unchanged) {
+      setChoosing(true);
+      return;
+    }
+    setChoosing(false);
+    setScope(chosen);
     if (
       !noReminderConfirmed &&
       noReminderToSend(typed.details, typed.reminders, timeZone, new Date())
@@ -142,13 +232,14 @@ function Form({ start, backTo, save }: FormProps) {
     setBusy(true);
     setProblem(null);
     try {
-      const id = await save(typed, opened);
+      const id = await save(typed, opened, chosen);
       navigate(`/appointments/${id}`, { replace: true });
     } catch (error) {
       setProblem({
         message: error instanceof Error ? error.message : String(error),
         detail: error instanceof CalendarRefusal ? error.detail : undefined,
       });
+      setScope(undefined);
       setBusy(false);
     }
   }
@@ -200,21 +291,75 @@ function Form({ start, backTo, save }: FormProps) {
         {(ids) => <textarea {...ids} {...input('privateNotes')} rows={4} />}
       </Field>
 
+      {(canStopRepeating || inSeries) && (
+        <RepeatFields
+          typed={typed.repeat}
+          date={typed.details.date}
+          canStop={canStopRepeating}
+          onChange={(repeat) => {
+            setTyped((was) => ({ ...was, repeat }));
+            setChoosing(false);
+          }}
+        />
+      )}
+
       <ReminderFields
         details={typed.details}
         reminders={typed.reminders}
         onChange={(reminders) => {
           setTyped((was) => ({ ...was, reminders }));
           setAsking(false);
+          setChoosing(false);
         }}
         timeZone={timeZone}
         now={now}
+        // A new Series' Reminders follow each Appointment in it; one Appointment in a Series can
+        // still have an exact-time one.
+        exactTime={!(canStopRepeating && repeats)}
       />
 
       {problem && (
         <p className="error" role="alert">
           {problem.message}
         </p>
+      )}
+      {choosing && (
+        <div className="card confirm" role="group" aria-label="Change which Appointments?">
+          {repeatChanged(typed, opened) ? (
+            <p>
+              <strong>Change this and all later ones?</strong> A change to how it repeats or when it
+              ends is for this Appointment and all later ones in the Series.
+            </p>
+          ) : (
+            <p>
+              <strong>Change only this one, or this and all later ones?</strong> This Appointment
+              repeats.
+            </p>
+          )}
+          <div className="actions">
+            {!repeatChanged(typed, opened) && (
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={busy}
+                onClick={() => submit(undefined, false, 'one')}
+              >
+                Only this one
+              </button>
+            )}
+            <button
+              type="button"
+              className={repeatChanged(typed, opened) ? 'btn btn-primary' : 'btn'}
+              disabled={busy}
+              onClick={() => submit(undefined, false, 'later')}
+            >
+              This and all later ones
+            </button>
+            <button type="button" className="btn" onClick={() => setChoosing(false)}>
+              Go back
+            </button>
+          </div>
+        </div>
       )}
       {asking && (
         <div className="card confirm" role="group" aria-label="Save with no Reminder?">
@@ -233,17 +378,24 @@ function Form({ start, backTo, save }: FormProps) {
               type="button"
               className="btn btn-primary"
               disabled={busy}
-              onClick={() => submit(undefined, true)}
+              onClick={() => submit(undefined, true, scope)}
             >
               Save with no Reminder
             </button>
-            <button type="button" className="btn" onClick={() => setAsking(false)}>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                setAsking(false);
+                setScope(undefined);
+              }}
+            >
               Go back
             </button>
           </div>
         </div>
       )}
-      {!asking && (
+      {!asking && !choosing && (
         <div className="actions">
           <button type="submit" className="btn btn-primary" disabled={busy}>
             Save

@@ -17,7 +17,7 @@ Something Susan has to be at, at a set date and time, whether medical or not. Ev
 _Avoid_: Event, visit, booking, entry
 
 **Series**:
-Appointments that repeat on a regular pattern and were entered once. Each one in a Series is still an Appointment in its own right and can be changed or cancelled without affecting the others.
+Appointments that repeat on a regular pattern and were entered once. Each one in a Series is still an Appointment in its own right and can be changed or cancelled without affecting the others, which marks it as individually changed. A change can instead be for one Appointment and all later ones, which ends the Series there and continues it as a new Series.
 _Avoid_: Recurring event, recurrence, repeat
 
 **Reminder**:

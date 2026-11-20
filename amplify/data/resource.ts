@@ -7,6 +7,7 @@ import {
   REMINDER_SHAPES,
   REMINDER_UNITS,
   REPLY_ANSWERS,
+  REPEAT_KINDS,
   TEXT_KINDS,
   TEXT_REASONS,
   TEXT_STATUSES,
@@ -14,12 +15,13 @@ import {
 import { appNotifications } from '../functions/app-notifications/resource';
 import { calendarCommands } from '../functions/calendar-commands/resource';
 import { sendTexts } from '../functions/send-texts/resource';
+import { seriesTopUp } from '../functions/series-top-up/resource';
 import { textReplies } from '../functions/text-replies/resource';
 
 // Calendar data, and the only way to change it.
 //
-// Anyone signed in can read the calendar, with live updates, and their own subscription link; nobody
-// signed in can write a model directly. Writing goes through the calendar core (src/lib/calendar),
+// Anyone signed in can read the calendar, with live updates, its Series, and their own subscription
+// link; nobody signed in can write a model directly. Writing goes through the calendar core (src/lib/calendar),
 // whose commands are the mutations at the end. `npm run synth` checks that those, and turning app
 // notifications on and off for a device, are the only mutations a signed-in person can call
 // (scripts/synth.mjs).
@@ -60,6 +62,35 @@ const schema = a
       setAt: a.datetime(),
     }),
 
+    // How a Series repeats (Repeat in src/lib/calendar/series.ts): every `interval` weeks on
+    // `weekdays` (0 is Monday), or every `interval` months on `day`.
+    Repeat: a.customType({
+      every: a.enum(REPEAT_KINDS),
+      interval: a.integer().required(),
+      weekdays: a.integer().array(),
+      day: a.integer(),
+    }),
+
+    // Where an Appointment stands in its Series (SeriesPlace in src/lib/calendar/series.ts).
+    SeriesPlace: a.customType({
+      id: a.id().required(),
+      date: a.date().required(),
+      repeat: a.ref('Repeat').required(),
+      individuallyChanged: a.boolean().required(),
+      // The Series' time, 'HH:MM', when the clocks skipped it that night and moved it on.
+      shiftedFrom: a.string(),
+    }),
+
+    // A Reminder on a Series: a Reminder's timing, never an exact time (SeriesReminder in
+    // src/lib/calendar/series.ts).
+    SeriesReminder: a.customType({
+      shape: a.enum(REMINDER_SHAPES),
+      amount: a.integer(),
+      unit: a.enum(REMINDER_UNITS),
+      days: a.integer(),
+      time: a.string(), // 'HH:MM'
+    }),
+
     // What each field means is in src/lib/calendar/appointment.ts. The date and both times are
     // Susan's local time; `startsAt` is the moment that is.
     Appointment: a
@@ -77,6 +108,30 @@ const schema = a
         privateNotes: a.string(),
         state: a.enum(APPOINTMENT_STATES),
         reminders: a.ref('Reminder').array(),
+        series: a.ref('SeriesPlace'),
+        added: a.ref('Stamp').required(),
+        lastChanged: a.ref('Stamp'),
+      })
+      .authorization((allow) => [allow.authenticated().to(['read'])]),
+
+    // A Series: the details, pattern and Reminders its Appointments start with (Series in
+    // src/lib/calendar/series.ts). Its Appointments are real Appointments, each pointing at it.
+    Series: a
+      .model({
+        what: a.string().required(),
+        time: a.string().required(), // 'HH:MM'
+        withWhom: a.string(),
+        placeName: a.string(),
+        placeAddress: a.string(),
+        driverName: a.string(),
+        pickupTime: a.string(), // 'HH:MM'
+        noteForSusan: a.string(),
+        privateNotes: a.string(),
+        repeat: a.ref('Repeat').required(),
+        starts: a.date().required(),
+        ends: a.date(),
+        reminders: a.ref('SeriesReminder').array(),
+        madeThrough: a.date().required(),
         added: a.ref('Stamp').required(),
         lastChanged: a.ref('Stamp'),
       })
@@ -92,6 +147,8 @@ const schema = a
         viaAgent: a.boolean().required(),
         action: a.enum(ACTIVITY_ACTIONS),
         appointmentId: a.id().required(),
+        // Set for a command on a whole Series.
+        seriesId: a.id(),
         what: a.string().required(),
         date: a.date().required(),
         time: a.string().required(),
@@ -213,6 +270,10 @@ const schema = a
     }),
     cancelAppointment: command().arguments({ id: a.id().required() }),
     removeAppointment: command().arguments({ id: a.id().required() }),
+    // A Series: added with its ID, chosen by the app; changed or ended from the Appointment `id` on.
+    addSeries: command().arguments({ id: a.id(), details: a.json().required() }),
+    changeSeries: command().arguments({ id: a.id().required(), changes: a.json().required() }),
+    endSeries: command().arguments({ id: a.id().required() }),
     // Each answers with a CommandAnswer: the new link's secret, shown this once, or null.
     makeSubscriptionLink: command(),
     switchOffSubscriptionLink: command(),
@@ -293,12 +354,13 @@ const schema = a
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(appNotifications)),
   })
-  // Lets the functions write through the data API, so that every change reaches everyone looking at
-  // the calendar (docs/adr/0003-the-core-writes-through-the-data-api.md). The scheduled run sends
-  // texts through it; the app-notifications and text-replies functions are narrowed to their own
-  // operations (amplify/backend.ts).
+  // Lets the functions that run the core write through the data API, so that every change reaches
+  // everyone looking at the calendar (docs/adr/0003-the-core-writes-through-the-data-api.md). The
+  // scheduled run sends texts through it; the Series top-up, the app-notifications function and the
+  // text-replies function are narrowed to their own operations (amplify/backend.ts).
   .authorization((allow) => [
     allow.resource(calendarCommands).to(['query', 'mutate']),
+    allow.resource(seriesTopUp).to(['query', 'mutate']),
     allow.resource(appNotifications).to(['query', 'mutate']),
     allow.resource(sendTexts).to(['query', 'mutate']),
     allow.resource(textReplies).to(['query', 'mutate']),

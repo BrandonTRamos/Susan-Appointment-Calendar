@@ -1,5 +1,5 @@
 // The words of an Activity update: the app notification that tells the other Admins someone added,
-// changed or cancelled an Appointment. It names who did it, the Appointment and when it is, and,
+// changed or cancelled an Appointment, or a Series from one of its Appointments on. It names who did it, the Appointment and when it is, and,
 // for a change, which details changed and whether the Reminders did. It gives no detail's new
 // words beyond what it is and when, because it shows on a locked phone.
 
@@ -13,6 +13,7 @@ import {
   type Reminder,
 } from './appointment';
 import type { AppNotification } from './ports';
+import { describeRepeat, type Series } from './series';
 
 export type ActivityUpdate =
   | { action: 'added' | 'cancelled'; by: Actor; appointment: Appointment }
@@ -82,5 +83,46 @@ export function activityUpdate(update: ActivityUpdate): AppNotification {
     body,
     opens: `/appointments/${appointment.id}`,
     tag: `appointment-${appointment.id}`,
+  };
+}
+
+/**
+ * Someone added a Series, changed it from one Appointment on, or cancelled it from one on: `from`
+ * is its first Appointment, or the one it was changed or cancelled from. One update tells of the
+ * whole Series, never one per Appointment in it.
+ */
+export interface SeriesActivityUpdate {
+  action: 'added' | 'changed' | 'cancelled';
+  by: Actor;
+  series: Series;
+  from: Appointment;
+}
+
+/** A Series' pattern, time and end, in words that follow "every": "week on Monday at 9:00 am". */
+function howItRepeats(series: Series): string {
+  const pattern = describeRepeat(series.repeat).replace(/^Every /, 'every ');
+  const until = series.ends ? `, until ${formatDate(series.ends, 'short')}` : '';
+  return `${pattern} at ${formatTime(series.time)}${until}`;
+}
+
+export function seriesActivityUpdate({
+  action,
+  by,
+  series,
+  from,
+}: SeriesActivityUpdate): AppNotification {
+  const who = by.viaAgent ? `${by.person.name}'s agent` : by.person.name;
+  const day = formatDate(from.date, 'short');
+  const body =
+    action === 'added'
+      ? `${who} added a Series: ${series.what}, ${howItRepeats(series)}, from ${day}.`
+      : action === 'changed'
+        ? `${who} changed ${series.what} from ${day} on: now ${howItRepeats(series)}.`
+        : `${who} cancelled ${from.what} from ${day} on: this and all later ones.`;
+  return {
+    title: "Susan's Calendar",
+    body,
+    opens: `/appointments/${from.id}`,
+    tag: `series-${series.id}`,
   };
 }

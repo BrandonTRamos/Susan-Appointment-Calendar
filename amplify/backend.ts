@@ -12,6 +12,8 @@ import { data } from './data/resource';
 import { appNotifications } from './functions/app-notifications/resource';
 import { calendarCommands } from './functions/calendar-commands/resource';
 import { sendTexts } from './functions/send-texts/resource';
+import { SERIES_TOP_UP_FIELDS } from './functions/series-top-up/access';
+import { seriesTopUp } from './functions/series-top-up/resource';
 import { subscriptionFeed } from './functions/subscription-feed/resource';
 import { textReplies } from './functions/text-replies/resource';
 import { REPLY_WEBHOOK_URL } from './calendar/text-sender';
@@ -20,6 +22,7 @@ const backend = defineBackend({
   auth,
   data,
   calendarCommands,
+  seriesTopUp,
   subscriptionFeed,
   appNotifications,
   sendTexts,
@@ -88,14 +91,31 @@ if (alertsFrom) {
   );
 }
 
+// The daily Series top-up runs one at a time, so that two runs never try to make the same
+// Appointments at once. A run that fails is not tried again by Lambda, and the schedule tries to
+// start one for at most an hour: the horizon is months ahead, so the next day's run catches up.
+// `npm run synth` checks all of this.
+const seriesTopUpLambda = backend.seriesTopUp.resources.lambda;
+backend.seriesTopUp.resources.cfnResources.cfnFunction.reservedConcurrentExecutions = 1;
+seriesTopUpLambda.configureAsyncInvoke({ maxEventAge: Duration.hours(1), retryAttempts: 0 });
+for (const schedule of seriesTopUpLambda.node.findAll())
+  if (schedule instanceof CfnSchedule)
+    schedule.addPropertyOverride('Target.RetryPolicy', {
+      MaximumEventAgeInSeconds: 3600,
+      MaximumRetryAttempts: 2,
+    });
+
+/** Fields of the data API, by type: 'Query' or 'Mutation'. */
+type Fields = Record<'Query' | 'Mutation', string[]>;
+
 /**
- * Narrows what a function may call in the data API to these operations, by type: Amplify would let
- * it call every query and mutation, the calendar's included. `npm run synth` checks each.
+ * Lets a function call these fields of the data API and no others. Amplify would let a function the
+ * data schema names call every query and mutation; this narrows its one policy that does.
  */
-function narrowDataApi(
-  lambda: typeof backend.appNotifications.resources.lambda,
-  allowed: Record<'Query' | 'Mutation', string[]>,
+function onlyDataApiFields(
+  lambda: { role?: { node: { defaultChild?: unknown } } },
   name: string,
+  allowed: Fields,
 ) {
   const api = backend.data.resources.graphqlApi;
   const dataStack = Stack.of(api);
@@ -121,29 +141,29 @@ function narrowDataApi(
 }
 
 // The app-notifications function may reach the devices app notifications go to and the key that
-// signs them, and nothing else in the data API. `npm run synth` checks it.
-narrowDataApi(
-  backend.appNotifications.resources.lambda,
-  {
-    Query: ['getAppNotificationKey'],
-    Mutation: [
-      'createAppNotificationDevice',
-      'updateAppNotificationDevice',
-      'deleteAppNotificationDevice',
-      'createAppNotificationKey',
-    ],
-  },
-  'app-notifications',
-);
+// signs them, and nothing else in the data API: Amplify would let it call every query and mutation,
+// the calendar's included. `npm run synth` checks it.
+onlyDataApiFields(backend.appNotifications.resources.lambda, 'app-notifications', {
+  Query: ['getAppNotificationKey'],
+  Mutation: [
+    'createAppNotificationDevice',
+    'updateAppNotificationDevice',
+    'deleteAppNotificationDevice',
+    'createAppNotificationKey',
+  ],
+});
+
+// The Series top-up may call only the data API fields its code needs (SERIES_TOP_UP_FIELDS in
+// amplify/functions/series-top-up/access.ts). `npm run synth` checks it.
+onlyDataApiFields(backend.seriesTopUp.resources.lambda, 'Series top-up', SERIES_TOP_UP_FIELDS);
 
 // The reply address's function only keeps a Reply: it reads the settings, to tell whether it came
 // from Susan's number, and creates the Reply's record, and may do nothing else in the data API.
 // The scheduled run passes it on and answers her. `npm run synth` checks it.
-narrowDataApi(
-  backend.textReplies.resources.lambda,
-  { Query: ['getCalendarSettings'], Mutation: ['createReply'] },
-  'text-replies',
-);
+onlyDataApiFields(backend.textReplies.resources.lambda, 'text-replies', {
+  Query: ['getCalendarSettings'],
+  Mutation: ['createReply'],
+});
 
 // When a write about a device is refused, the function reads whose the device is now straight from
 // its table, with a strongly consistent read, which the data API's reads are not

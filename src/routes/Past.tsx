@@ -1,6 +1,7 @@
 import { Link, useMatch } from 'react-router-dom';
 import { CalendarLoading, CalendarTrouble } from '../components/CalendarTrouble';
 import { Page } from '../components/Page';
+import { RepeatMark } from '../components/RepeatMark';
 import { useCalendar } from '../data/CalendarContext';
 import { pastAppointments, type Appointment } from '../lib/calendar';
 import { dateParts, formatTime } from '../lib/localTime';
@@ -73,6 +74,7 @@ function PastRow({
           <span className="muted">
             {desktop ? withAndWhere : joined(' · ', formatTime(time), withAndWhere)}
           </span>
+          <RepeatMark appointment={appointment} />
           {state === 'cancelled' && <span className="badge">Cancelled</span>}
         </span>
       </span>

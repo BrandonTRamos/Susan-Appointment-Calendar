@@ -1,5 +1,7 @@
 // What the calendar holds, in the words of CONTEXT.md.
 
+import type { SeriesPlace } from './series';
+
 /** Someone with an account: Susan or an Admin. The calendar makes no difference between them. */
 export interface Person {
   /** The account's permanent ID. Never shown. */
@@ -104,7 +106,9 @@ export type Reminder = ReminderTiming & {
   dueAt: string;
   /**
    * An exact-time Reminder whose Appointment has moved since it was set. It keeps its time until
-   * someone confirms or changes it.
+   * someone confirms or changes it. Or a Reminder that follows its Appointment, on one a Series
+   * made, that the clocks going forward put at or after its start: it is held until someone changes
+   * or removes it, and cannot be confirmed as it is. Either way it is never sent while flagged.
    */
   needsReview: boolean;
   /**
@@ -146,6 +150,8 @@ export interface Appointment extends AppointmentDetails {
   state: AppointmentState;
   /** Its Reminders, in the order they go out. */
   reminders: Reminder[];
+  /** Where it stands in the Series it belongs to, or null for one entered on its own. */
+  series: SeriesPlace | null;
   added: Stamp;
   /** Null until someone changes or cancels it. */
   lastChanged: Stamp | null;
@@ -157,7 +163,8 @@ export type ActivityAction = (typeof ACTIVITY_ACTIONS)[number];
 /**
  * The calendar's own note of one command: who did what to which Appointment, and whether through
  * an agent. It carries what the Appointment was called and when it was, so it still reads after
- * the Appointment is deleted.
+ * the Appointment is deleted. A command on a whole Series leaves one, about the Appointment it
+ * started from, with the Series' ID.
  */
 export interface ActivityRecord {
   id: string;
@@ -167,6 +174,11 @@ export interface ActivityRecord {
   viaAgent: boolean;
   action: ActivityAction;
   appointmentId: string;
+  /**
+   * The Series the command was on, from this Appointment on: one added, changed or ended. Null for
+   * a command on one Appointment, including one changed on its own in a Series.
+   */
+  seriesId: string | null;
   what: string;
   date: string;
   time: string;

@@ -9,6 +9,7 @@ import { generateClient } from 'aws-amplify/data';
 import {
   NO_SETTINGS,
   type Appointment,
+  type Series,
   type Store,
   type SubscriptionLink,
   type Text,
@@ -20,12 +21,14 @@ import {
   toAppointment,
   toCalendarAlert,
   toReply,
+  toSeries,
   toSettings,
   textRow,
   toText,
   type AppointmentRow,
   type CalendarAlertRow,
   type ReplyRow,
+  type SeriesRow,
   type TextRow,
 } from '../../src/lib/calendarApi';
 import type { Schema } from '../data/resource';
@@ -36,6 +39,7 @@ type Models = ReturnType<typeof generateClient<Schema>>['models'];
 export interface DataClient {
   models: {
     Appointment: Pick<Models['Appointment'], 'get' | 'list' | 'create' | 'update' | 'delete'>;
+    Series: Pick<Models['Series'], 'get' | 'list' | 'create' | 'update'>;
     ActivityRecord: Pick<Models['ActivityRecord'], 'create'>;
     SubscriptionLink: Pick<
       Models['SubscriptionLink'],
@@ -143,9 +147,21 @@ const toLink = ({ personId, hash, madeAt }: SubscriptionLink): SubscriptionLink 
   madeAt,
 });
 
+/**
+ * What differs between what was read and what is written, with the ID. The data API has no way to
+ * say "only if nobody else has written since", so this is what keeps two writers that overlap from
+ * undoing each other: a change does not write back a field it never touched.
+ */
+function differing<T extends { id: string }>(was: T | undefined, now: T) {
+  const differs = ([key, value]: [string, unknown]) =>
+    !was || JSON.stringify(value) !== JSON.stringify(was[key as keyof T]);
+  return { ...Object.fromEntries(Object.entries(now).filter(differs)), id: now.id };
+}
+
 export function dataStore(client: DataClient): Store {
   const {
     Appointment,
+    Series,
     ActivityRecord,
     SubscriptionLink,
     Text,
@@ -154,8 +170,9 @@ export function dataStore(client: DataClient): Store {
     CalendarAlert,
     RepliesSeen,
   } = client.models;
-  /** Each Appointment as the core last read it here, until it is written. */
+  /** Each Appointment and Series as the core last read it here, until it is written. */
   const read = new Map<string, Appointment>();
+  const readSeries = new Map<string, Series>();
 
   /** Replaces a row only if the condition holds as it is written. Answers whether it did. */
   async function changeIf(
@@ -196,16 +213,11 @@ export function dataStore(client: DataClient): Store {
     async addAppointment(appointment) {
       check(await Appointment.create(appointment));
     },
-    // Only what differs from what the core read is written. The data API has no way to say "only
-    // if nobody else has written since", so this is what keeps two commands that overlap from
-    // undoing each other: a change does not write back a state or a detail it never touched.
+    // Only what differs from what the core read is written (differing, above).
     async replaceAppointment(appointment) {
       const was = read.get(appointment.id);
       read.delete(appointment.id);
-      const differs = ([key, value]: [string, unknown]) =>
-        !was || JSON.stringify(value) !== JSON.stringify(was[key as keyof Appointment]);
-      const changed = Object.fromEntries(Object.entries(appointment).filter(differs));
-      check(await Appointment.update({ ...changed, id: appointment.id }));
+      check(await Appointment.update(differing(was, appointment)));
     },
     async removeAppointment(id) {
       read.delete(id);
@@ -262,9 +274,31 @@ export function dataStore(client: DataClient): Store {
       check(await ActivityRecord.create(record));
     },
     async everyAppointment() {
-      return (await everyRow<AppointmentRow>((options) => Appointment.list(options))).map(
+      const all = (await everyRow<AppointmentRow>((options) => Appointment.list(options))).map(
         toAppointment,
       );
+      for (const appointment of all) read.set(appointment.id, appointment);
+      return all;
+    },
+    async series(id) {
+      const row = check(await Series.get({ id }));
+      const found = row ? toSeries(row) : null;
+      if (found) readSeries.set(id, found);
+      else readSeries.delete(id);
+      return found;
+    },
+    async addSeries(series) {
+      check(await Series.create(series));
+    },
+    async replaceSeries(series) {
+      const was = readSeries.get(series.id);
+      readSeries.delete(series.id);
+      check(await Series.update(differing(was, series)));
+    },
+    async everySeries() {
+      const all = (await everyRow<SeriesRow>((options) => Series.list(options))).map(toSeries);
+      for (const series of all) readSeries.set(series.id, series);
+      return all;
     },
     async subscriptionLinkOf(personId) {
       const row = check(await SubscriptionLink.get({ personId }));

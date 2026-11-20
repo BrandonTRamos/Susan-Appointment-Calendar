@@ -6,6 +6,7 @@
 import type { ActivityRecord, Appointment } from './appointment';
 import type { CalendarAlert } from './alerts';
 import type { Reply } from './replies';
+import type { Series } from './series';
 import type { SubscriptionLink } from './subscription';
 import type { CalendarSettings, Text } from './texts';
 
@@ -49,6 +50,14 @@ export interface Store {
   recordActivity(record: ActivityRecord): Promise<void>;
   /** Every Appointment in the calendar, active and cancelled, in any order. */
   everyAppointment(): Promise<Appointment[]>;
+  /** The Series with this ID, or null when the calendar has none. */
+  series(id: string): Promise<Series | null>;
+  /** Keeps a new Series. */
+  addSeries(series: Series): Promise<void>;
+  /** Replaces the Series that has this one's ID with this one. */
+  replaceSeries(series: Series): Promise<void>;
+  /** Every Series in the calendar, ended ones too, in any order. */
+  everySeries(): Promise<Series[]>;
   /** The person's subscription link, or null when they have none. */
   subscriptionLinkOf(personId: string): Promise<SubscriptionLink | null>;
   /** The subscription link with this hash, or null when there is none. */

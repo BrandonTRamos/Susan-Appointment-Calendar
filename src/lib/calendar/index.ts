@@ -55,3 +55,4 @@ export type {
   Store,
   TextSender,
 } from './ports';
+export * from './series';

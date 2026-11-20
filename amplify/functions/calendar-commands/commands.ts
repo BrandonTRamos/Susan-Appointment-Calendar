@@ -91,6 +91,21 @@ export function calendarCommandHandler({ core, nameOf, textSender }: CommandDepe
         case 'removeAppointment':
           await calendar.deleteAppointment(by, id as string);
           return { appointment: null };
+        // A Series answers with its first Appointment; the rest reach the app as live updates.
+        case 'addSeries': {
+          const added = await calendar.addSeries(
+            by,
+            fromJson(details) as never,
+            id as string | null | undefined,
+          );
+          return { appointment: added.appointments[0] };
+        }
+        case 'changeSeries':
+          return {
+            appointment: await calendar.changeSeries(by, id as string, fromJson(changes) as never),
+          };
+        case 'endSeries':
+          return { appointment: await calendar.endSeries(by, id as string) };
         case 'makeSubscriptionLink':
           return { subscriptionLink: await calendar.makeSubscriptionLink(by) };
         case 'switchOffSubscriptionLink':
