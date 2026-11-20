@@ -110,19 +110,21 @@ const MODELS = ['Appointment', 'ActivityRecord'];
 const OWN_MODELS = ['SubscriptionLink'];
 
 /**
- * The subscription feed's function, the one with a cap on requests at once: what its role may do,
- * and the code it runs, as bundled for the deploy.
+ * The subscription feed's function: the one its public address (a Lambda function URL) points at,
+ * found by that address rather than by anything another function might share. Gives its
+ * properties, what its role may do, the code it runs as bundled for the deploy, and how many public
+ * addresses there are.
  */
 function feedFunction() {
   const all = stacks();
+  const urls = all.flatMap((stack) =>
+    Object.values(stack).filter((resource) => resource.Type === 'AWS::Lambda::Url'),
+  );
+  const target = urls[0]?.Properties?.TargetFunctionArn?.['Fn::GetAtt']?.[0];
   const lambda = all
-    .flatMap((stack) => Object.values(stack))
-    .find(
-      (resource) =>
-        resource.Type === 'AWS::Lambda::Function' &&
-        resource.Properties?.ReservedConcurrentExecutions > 0,
-    );
-  if (!lambda) return { actions: [], code: '' };
+    .map((stack) => stack[target])
+    .find((resource) => resource?.Type === 'AWS::Lambda::Function');
+  if (urls.length !== 1 || !lambda) return { urls, properties: {}, actions: [], code: '' };
   const role = lambda.Properties.Role?.['Fn::GetAtt']?.[0];
   const actions = all
     .flatMap((stack) => Object.values(stack))
@@ -135,8 +137,22 @@ function feedFunction() {
     .flatMap((statement) => [statement.Action].flat());
   const asset = /^([0-9a-f]{64})\.zip$/.exec(lambda.Properties.Code?.S3Key ?? '')?.[1];
   const code = asset ? readFileSync(join(out, `asset.${asset}`, 'index.mjs'), 'utf8') : '';
-  return { actions, code };
+  return { urls, properties: lambda.Properties, actions, code };
 }
+
+/** The names of the indexes on a model's table, as synthesized. */
+function indexesOf(model) {
+  return stacks()
+    .map((stack) => stack[`${model}Table`])
+    .filter((table) => table?.Type === 'Custom::AmplifyDynamoDBTable')
+    .flatMap((table) => table.Properties.globalSecondaryIndexes ?? [])
+    .map((index) => index.indexName);
+}
+
+/** The hash index the feed reads (LINK_INDEX in amplify/calendar/feed-store.ts). */
+const feedIndex = /export const LINK_INDEX = '([^']+)';/.exec(
+  readFileSync('amplify/calendar/feed-store.ts', 'utf8'),
+)?.[1];
 
 /** What the synthesized backend must say. Each entry is [what is being checked, whether it holds]. */
 function checks() {
@@ -234,14 +250,27 @@ function checks() {
     ],
     [
       // The feed has the only public address. Its link is checked inside the function.
-      'the subscription feed has a public address, with a cap on requests at once',
-      resources('AWS::Lambda::Url').length === 1 &&
-        resources('AWS::Lambda::Url')[0].AuthType === 'NONE' &&
-        resources('AWS::Lambda::Function').filter(
-          (lambda) =>
-            lambda.ReservedConcurrentExecutions > 0 &&
-            lambda.Environment?.Variables?.SUSAN_TIME_ZONE,
-        ).length === 1,
+      'the subscription feed has the only public address, with a cap on requests at once',
+      feed.urls.length === 1 &&
+        feed.urls[0].Properties.AuthType === 'NONE' &&
+        feed.properties.ReservedConcurrentExecutions > 0,
+    ],
+    [
+      // Its environment names the two tables it reads, from the tables' own stacks.
+      'the subscription feed is told the Appointment and SubscriptionLink tables',
+      ['Appointment', 'SubscriptionLink'].every((model) =>
+        JSON.stringify(
+          feed.properties.Environment?.Variables?.[
+            model === 'Appointment' ? 'APPOINTMENT_TABLE' : 'SUBSCRIPTION_LINK_TABLE'
+          ] ?? '',
+        ).includes(`amplifyData${model}${model}Table`),
+      ),
+    ],
+    [
+      'the hash index the subscription feed reads is the one on the SubscriptionLink table',
+      Boolean(feedIndex) &&
+        indexesOf('SubscriptionLink').join() === feedIndex &&
+        feed.code.includes(`"${feedIndex}"`),
     ],
     [
       // Its link and the Appointments are read from the tables, because the data API's own reads
