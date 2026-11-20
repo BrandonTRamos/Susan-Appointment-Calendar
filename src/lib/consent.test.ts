@@ -1,36 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import setup from '../../docs/text-message-setup.md?raw';
-import { CONSENT_CONFIRMATION, consentScript } from './consent';
+import { CONSENT_CONFIRMATION } from './consent';
 
-/** The text of each fenced block in the setup document: what the owner reads, sends or runs. */
+/** The text of each fenced block in the setup document: what the owner sends or runs. */
 const blocks = (language: string) =>
   [...setup.matchAll(new RegExp('```' + language + '\\n([\\s\\S]*?)\\n```', 'g'))].map(
     (match) => match[1],
   );
 const words = blocks('text');
 const commands = blocks('bash');
-
-describe('the consent script', () => {
-  const script = consentScript('[app address]');
-
-  it('is word for word what the setup document tells the owner to read to Susan', () => {
-    expect(words).toContain(script.ask.join('\n\n'));
-    expect(words).toContain(script.afterYes);
-  });
-
-  it('tells her everything she needs to know before she answers', () => {
-    const spoken = script.ask.join(' ');
-    expect(spoken).toMatch(/remind you about your appointments/);
-    expect(spoken).toMatch(/between 2 and 10 a week/);
-    expect(spoken).toMatch(/Message and data rates may apply/);
-    expect(spoken).toMatch(/reply HELP/);
-    expect(spoken).toMatch(/reply STOP/);
-    expect(spoken).toMatch(/\[app address\]\/terms/);
-    expect(spoken).toMatch(/\[app address\]\/privacy/);
-    expect(script.ask.at(-1)).toMatch(/Do you agree .* yes or no\.$/);
-    expect(script.afterYes).toMatch(/confirm/);
-  });
-});
 
 describe('the Confirmation text', () => {
   it('is the one in the setup document, shown once and sent by the command beneath it', () => {

@@ -19,8 +19,8 @@ The research behind this is `docs/research/text-message-options.md`.
 
 ## Consequences
 
-- **No registration and no review.** The owner's ticket to register a number falls away. The Public pages are no longer required by any reviewer; they stay as a plain account of what the calendar texts and what it does with Susan's number, and the consent script still points to them.
-- **Consent still matters.** Textbelt's terms require that the recipient has opted in and that the sender keeps a record. Susan is still asked in person with the consent script and sent the Confirmation text.
+- **No registration and no review.** The owner's ticket to register a number falls away. The Public pages are no longer required by any reviewer; they stay as a plain account of what the calendar texts and what it does with Susan's number.
+- **Consent is the owner's to hold.** Textbelt's terms require that the recipient has opted in. Susan agreed to be texted before any of this was built, so there is no consent script and the app keeps no record of consent. Her first text is still the Confirmation text, which says she agreed and how to stop.
 - **The sending number is Textbelt's, not ours.** Texts come from a shared pool, and Textbelt keeps to one number for a recipient only "whenever possible". If the number changes, Susan sees a text from a number that is not in her contacts, and the calendar has no way to know. This is the main known weakness.
 - **How Textbelt's numbers are registered with carriers is not disclosed.** Whether a Reminder falls inside that arrangement cannot be checked from outside, so a carrier could begin filtering these texts without notice. The delivery status and the "not confirmed delivered" Alert are what would show it.
 - **Delivery status is asked for, not pushed.** The app asks Textbelt for each text's status until it is settled. Some carriers never report delivery, in which case the status stays at "sent". Statuses are kept by Textbelt for one week.

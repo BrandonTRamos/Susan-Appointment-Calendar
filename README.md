@@ -100,18 +100,17 @@ public pages need it too.
 
 Three pages open for anyone, with no sign-in. The sign-in screen links to the first.
 
-| Address    | What it shows                                                                                                                            |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `/about`   | What Susan's Calendar is, what it texts and to whom, how consent is given, the contact address, and the privacy policy and terms in full |
-| `/privacy` | The privacy policy on its own                                                                                                            |
-| `/terms`   | The terms on their own                                                                                                                   |
+| Address    | What it shows                                                                                                                         |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `/about`   | What Susan's Calendar is, what it texts and to whom, that Susan agreed, the contact address, and the privacy policy and terms in full |
+| `/privacy` | The privacy policy on its own                                                                                                         |
+| `/terms`   | The terms on their own                                                                                                                |
 
-They are the plain account of what the calendar texts and what it does with Susan's number. The
-words read to Susan to ask for her consent give her the addresses of the last two, so the addresses
-must not change. The contact address and the owner's name come from `CONTACT_EMAIL` and
-`OWNER_NAME` above, so neither is written in the repository. The consent words are in
-`src/lib/consent.ts` and in [`docs/text-message-setup.md`](docs/text-message-setup.md); a test
-fails if the two differ.
+They are the plain account of what the calendar texts and what it does with Susan's number. Their
+addresses must not change. The contact address and the owner's name come from `CONTACT_EMAIL` and
+`OWNER_NAME` above, so neither is written in the repository. The Confirmation text, the first text
+Susan gets, is in `src/lib/consent.ts` and in
+[`docs/text-message-setup.md`](docs/text-message-setup.md); a test fails if the two differ.
 
 ## Accounts
 

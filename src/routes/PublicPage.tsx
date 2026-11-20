@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
-import { CONSENT_CONFIRMATION, consentScript } from '../lib/consent';
+import { CONSENT_CONFIRMATION } from '../lib/consent';
 import { PUBLIC_PATHS, type PublicPageName } from '../lib/publicPage';
 
 export interface PublicPageProps {
@@ -56,12 +56,11 @@ function PrivacyPolicy({ contactEmail, ownerName }: OwnerDetails) {
         one family.
       </p>
       <Clause lead="What is kept.">
-        The mobile number of the one person who receives text messages, and the record of her
-        consent: the date she agreed and how. The appointments entered in the calendar: what each
-        one is, when and where it is, who it is with, who is driving, and notes. The name and email
-        address of each person with an account. The text messages sent, whether each one was
-        delivered, and any replies. The name and phone number of the person she is told to call for
-        help.
+        The mobile number of the one person who receives text messages. The appointments entered in
+        the calendar: what each one is, when and where it is, who it is with, who is driving, and
+        notes. The name and email address of each person with an account. The text messages sent,
+        whether each one was delivered, and any replies. The name and phone number of the person she
+        is told to call for help.
       </Clause>
       <Clause lead="How it is used.">
         Only to keep the calendar, to send Susan the reminders she agreed to, and to tell the people
@@ -111,8 +110,8 @@ function Terms({ contactEmail, ownerName }: OwnerDetails) {
         No advertising is ever sent, and nobody else receives messages.
       </Clause>
       <Clause lead="Agreeing.">
-        Messages are sent only after she has said yes, in person, to the words shown on the{' '}
-        <a href={PUBLIC_PATHS.about}>About page</a>. Agreeing is not a condition of anything.
+        Messages are sent only because she has agreed to receive them. Agreeing is not a condition
+        of anything.
       </Clause>
       <Clause lead="How often.">{FREQUENCY}</Clause>
       <Clause lead="Message and data rates may apply.">
@@ -145,7 +144,6 @@ function Terms({ contactEmail, ownerName }: OwnerDetails) {
 }
 
 function About({ contactEmail, ownerName }: OwnerDetails) {
-  const script = consentScript(window.location.host);
   return (
     <>
       <h1>{TITLES.about}</h1>
@@ -183,20 +181,10 @@ function About({ contactEmail, ownerName }: OwnerDetails) {
       <section>
         <h2>How consent is given</h2>
         <p>
-          No mobile number is collected on this website or by text message. Susan is asked in
-          person, and answers for herself. {ownerName ?? 'The person who runs the calendar'} reads
-          her these words:
+          No mobile number is collected on this website or by text message. Susan has agreed,
+          herself, to receive these messages. The first one she gets says so and tells her how to
+          stop:
         </p>
-        <blockquote className="quoted">
-          {script.ask.map((words) => (
-            <p key={words}>{words}</p>
-          ))}
-        </blockquote>
-        <p>If she agrees, she is told:</p>
-        <blockquote className="quoted">
-          <p>{script.afterYes}</p>
-        </blockquote>
-        <p>The date is written down, and one text message confirms it:</p>
         <blockquote className="quoted">
           <p>{CONSENT_CONFIRMATION}</p>
         </blockquote>
@@ -230,7 +218,7 @@ function About({ contactEmail, ownerName }: OwnerDetails) {
 /**
  * The pages anyone can open without signing in: what Susan's Calendar is, its privacy policy and
  * its terms. About carries all three; the policy and the terms also have a page each, because the
- * consent script read to Susan gives an address for each. Links here are plain ones: these
+ * policy and the terms each need an address that can be handed to someone. Links here are plain ones: these
  * pages sit outside the app's router (src/Root.tsx).
  */
 export function PublicPage({ page, contactEmail, ownerName, sampleData }: PublicPageProps) {

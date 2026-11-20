@@ -1,10 +1,8 @@
 # Setting up text messages
 
-Everything the owner needs to do by hand so that the calendar can text Susan: get a Textbelt key, ask Susan for her agreement, and send the Confirmation text. It follows ADR 0002 (`docs/adr/0002-textbelt-for-text-messages.md`), and it is what ticket 05 works through.
+Everything the owner needs to do by hand so that the calendar can text Susan: get a Textbelt key and send her the Confirmation text. It follows ADR 0002 (`docs/adr/0002-textbelt-for-text-messages.md`), and it is what ticket 05 works through.
 
-Textbelt sends from its own numbers, so there is nothing to register and nobody reviews anything. What remains is the key and Susan's consent.
-
-Replace `[app address]` wherever it appears with the app's address without `https://`, as written in the README once ticket 03 is done.
+Textbelt sends from its own numbers, so there is nothing to register and nobody reviews anything. Susan has already agreed to be texted, so there is no script to read and nothing to record. What remains is the key and her first text.
 
 Never write Susan's surname, her phone number or the Textbelt key in this repository. It is public.
 
@@ -31,37 +29,9 @@ Prices on 19 November 2026. Credit is bought in advance; nothing is owed monthly
 - [ ] Keep the key somewhere private. Ticket 18 stores it as the app's deployment secret.
 - [ ] Open `https://textbelt.com/account?key=` followed by the key, and set the sender name to `Susan's Calendar`. Every text already opens with that name; setting it stops Textbelt adding a name of its own to a first text.
 
-## Step 2: Susan's consent
+## Step 2: The Confirmation text
 
-Read the script to Susan yourself, in person, and let her answer for herself. Do it on a day when you can send the Confirmation text straight afterwards: any time once the app is live at its address, or on the day of ticket 18.
-
-### The consent script
-
-Read it exactly. It is also shown on `https://[app address]/about`. To change a word, change `src/lib/consent.ts` and this document together; a test fails if they differ.
-
-```text
-Susan, I have set up a service called Susan's Calendar. It sends text messages to your mobile phone to remind you about your appointments: what each one is, when and where it is, and who is driving you. It also texts you if an appointment you were reminded about is moved or cancelled.
-
-How many texts you get depends on how many appointments you have. It is usually between 2 and 10 a week. Message and data rates may apply.
-
-You can reply HELP to any of the texts to get help, and you can reply STOP at any time to stop them.
-
-The terms are at [app address]/terms and the privacy policy is at [app address]/privacy. Your mobile number is used only to send you these texts.
-
-Do you agree to get these text reminders from Susan's Calendar on your mobile phone? Please answer yes or no.
-```
-
-If she says yes, say:
-
-```text
-Thank you. You will get one text message now to confirm it.
-```
-
-If she says no, or is unsure, send nothing and do not record a yes.
-
-### The Confirmation text
-
-Send this once, straight after she agrees. It must be the first text she gets from Textbelt, because it is the one that tells her how to stop the texts.
+Send this once. It must be the first text she gets from Textbelt, because it is the one that tells her how to stop the texts. Any day will do; tell her to expect it. To change a word, change `src/lib/consent.ts` and this document together; a test fails if they differ.
 
 ```text
 Susan's Calendar: You agreed to get text reminders about your appointments. Msg frequency varies. Msg & data rates may apply. Reply HELP for help. Reply STOP to unsubscribe.
@@ -87,21 +57,11 @@ curl https://textbelt.com/status/TEXT_ID
 
 A text sent this way names no address for replies, so anything she answers before ticket 17 is live goes nowhere. STOP still works: Textbelt handles it.
 
-### The record of her consent
-
-Textbelt's terms expect the sender to keep a record that the recipient agreed. **Do not commit it: this repository is public.** Copy the lines below into a note of your own, somewhere you will still have in a few years, and fill them in there. Tick the box on ticket 05 once it is done.
-
-- Date she agreed: \_\_\_\_\_\_\_\_\_\_\_\_
-- Time: \_\_\_\_\_\_\_\_\_\_\_\_
-- How: in person, with the script above read to her in full by the owner
-- Her answer: \_\_\_\_\_\_\_\_\_\_\_\_
-- Confirmation text sent on: \_\_\_\_\_\_\_\_\_\_\_\_
-
 ## What Textbelt's documentation says
 
 Checked on 19 November 2026.
 
-- **Who may send.** No registration and no business details. The terms ask three things: recipients "must have explicitly opted into receiving your messages" and "You are expected to retain opt-in records"; "Indicate your name or business in your SMS"; and "If you are sending recurring SMS, provide opt-out instructions."
+- **Who may send.** No registration and no business details. The terms ask three things: recipients "must have explicitly opted into receiving your messages" and "You are expected to retain opt-in records" (the owner holds Susan's agreement; no record is kept in the app or in this repository); "Indicate your name or business in your SMS"; and "If you are sending recurring SMS, provide opt-out instructions."
 - **Opt-out wording goes in the first text.** Textbelt adds "Reply STOP to unsubscribe" itself "the first time you message a new user", unless the word STOP is already in the text. The Confirmation text carries it, so nothing is added. The documentation does not say that later texts must repeat it, so Reminders and Change notices stay as the spec words them.
 - **The sender's name** must appear in the conversation. Every text opens "Susan's Calendar:".
 - **STOP and START.** "We automatically process STOP responses." To undo it, "the recipient must send 'START' in reply", and nobody else can do it for her.

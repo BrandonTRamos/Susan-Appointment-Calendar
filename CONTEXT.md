@@ -29,7 +29,7 @@ A text message to Susan saying that an Appointment she has already been reminded
 _Avoid_: Update, cancellation text, correction
 
 **Confirmation text**:
-The one text message sent to Susan straight after she agrees to be texted, saying that she agreed and how to stop the texts. It is the first text she gets and the only one that carries opt-out wording. It is not a Reminder.
+The first text message Susan gets, sent once, saying that she agreed to be texted and how to stop the texts. It is the only one that carries opt-out wording. It is not a Reminder.
 _Avoid_: Welcome message, opt-in message, first Reminder
 
 **Reply**:
