@@ -130,12 +130,15 @@ export function ReminderFields({
   onChange,
   timeZone,
   now,
+  exactTime = true,
 }: {
   details: TypedDetails;
   reminders: TypedReminder[];
   onChange: (reminders: TypedReminder[]) => void;
   timeZone: string;
   now: Date;
+  /** Whether a Reminder can be at an exact time: not on a Series, whose Reminders follow each one. */
+  exactTime?: boolean;
 }) {
   const headingId = useId();
   const change = (key: string, changes: Partial<TypedReminder>) =>
@@ -145,7 +148,11 @@ export function ReminderFields({
   return (
     <section className="form-reminders" aria-labelledby={headingId}>
       <Heading id={headingId}>Reminders</Heading>
-      <p className="hint muted">Texts to Susan about this Appointment, at her local time.</p>
+      <p className="hint muted">
+        {exactTime
+          ? 'Texts to Susan about this Appointment, at her local time.'
+          : 'Texts to Susan about each Appointment in the Series, at her local time. They go out a set time before each one.'}
+      </p>
       {reminders.length === 0 && (
         <p>No Reminders. Susan will not be texted about this Appointment.</p>
       )}
@@ -166,7 +173,9 @@ export function ReminderFields({
                 >
                   <option value="before">Some time before the start</option>
                   <option value="daysBefore">Days before, at a set time</option>
-                  <option value="at">At an exact date and time</option>
+                  {(exactTime || typed.shape === 'at') && (
+                    <option value="at">At an exact date and time</option>
+                  )}
                 </select>
               )}
             </Field>

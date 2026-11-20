@@ -8,9 +8,10 @@ import {
 } from 'react';
 import { Link, useMatch } from 'react-router-dom';
 import { CalendarLoading, CalendarTrouble } from '../components/CalendarTrouble';
-import { BackIcon, ForwardIcon, PlusIcon } from '../components/Icons';
+import { BackIcon, ForwardIcon, PlusIcon, RepeatIcon } from '../components/Icons';
 import { Page } from '../components/Page';
 import { ReminderCount } from '../components/RemindersToSend';
+import { RepeatMark } from '../components/RepeatMark';
 import { useCalendar } from '../data/CalendarContext';
 import type { Appointment } from '../lib/calendar';
 import { addDays, dateParts, formatDate, formatTime } from '../lib/localTime';
@@ -251,11 +252,16 @@ function DesktopGrid({ month, today, onDay }: GridProps) {
                       <Link
                         className={cancelled ? 'chip cancelled' : 'chip'}
                         to={`/appointments/${id}`}
-                        aria-label={`${cancelled ? 'Cancelled: ' : ''}${formatTime(time)} ${what}, ${formatDate(date)}`}
+                        aria-label={`${cancelled ? 'Cancelled: ' : ''}${formatTime(time)} ${what}, ${formatDate(date)}${appointment.series ? ', repeats' : ''}`}
                         aria-current={opened === id || undefined}
                       >
                         <strong>{formatTime(time)}</strong>
                         <span className="chip-what">{what}</span>
+                        {appointment.series && (
+                          <span className="repeat-icon">
+                            <RepeatIcon size={14} />
+                          </span>
+                        )}
                         {cancelled && <span className="chip-state">Cancelled</span>}
                       </Link>
                     </li>
@@ -340,6 +346,7 @@ function DayRow({ appointment }: { appointment: Appointment }) {
         <span className="time">{formatTime(time)}</span>
         <span className="row-what">
           <strong>{what}</strong>
+          <RepeatMark appointment={appointment} />
           <span className="badge">Cancelled</span>
         </span>
       </Link>
@@ -351,6 +358,7 @@ function DayRow({ appointment }: { appointment: Appointment }) {
         <strong>{what}</strong>
         {withAndWhere && <span className="muted">{withAndWhere}</span>}
         {driver && <span className="muted">{driver}</span>}
+        <RepeatMark appointment={appointment} />
         <ReminderCount appointment={appointment} />
       </span>
     </Link>

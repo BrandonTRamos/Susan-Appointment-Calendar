@@ -1154,3 +1154,71 @@ body.has-update .public {
 .subscription-link .hint {
   font-size: 16px;
 }
+
+/* ---------- Series ---------- */
+/* Beside an Appointment in a list: it belongs to a Series. */
+.repeats {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 600;
+}
+.repeats svg {
+  flex: none;
+}
+.chip .repeat-icon {
+  flex: none;
+  display: inline-flex;
+}
+/* The form's Repeats section. */
+.form-repeat {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.form-repeat h2 {
+  margin: 0;
+}
+.weekdays {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px 18px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.weekdays legend {
+  float: left;
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 0;
+  font-weight: 700;
+}
+.weekday {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  font-weight: 500;
+}
+.weekday input {
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.repeat-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+}
+.details dd .muted {
+  display: block;
+  font-size: 16px;
+}

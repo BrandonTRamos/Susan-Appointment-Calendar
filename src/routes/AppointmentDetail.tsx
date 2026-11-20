@@ -4,7 +4,12 @@ import { CalendarLoading, CalendarTrouble } from '../components/CalendarTrouble'
 import { usePickedFrom } from '../components/Navigation';
 import { Page } from '../components/Page';
 import { useCalendar } from '../data/CalendarContext';
-import { overlappingAppointments, type Appointment, type Stamp } from '../lib/calendar';
+import {
+  describeRepeat,
+  overlappingAppointments,
+  type Appointment,
+  type Stamp,
+} from '../lib/calendar';
 import { formatDate, formatMoment, formatTime } from '../lib/localTime';
 import { ReminderList } from './AppointmentReminders';
 
@@ -104,6 +109,19 @@ function Detail({
       <dl className="details">
         <dt>When</dt>
         <dd>{`${formatDate(date)} at ${formatTime(time)}`}</dd>
+        {appointment.series && (
+          <>
+            <dt>Repeats</dt>
+            <dd>
+              <span>{describeRepeat(appointment.series.repeat)}</span>
+              {appointment.series.individuallyChanged && (
+                <span className="muted">
+                  Changed on its own, apart from the rest of the Series.
+                </span>
+              )}
+            </dd>
+          </>
+        )}
         {withWhom && (
           <>
             <dt>With</dt>
@@ -157,7 +175,36 @@ function Detail({
         </p>
       )}
 
-      {asking === 'cancel' && (
+      {asking === 'cancel' && appointment.series && (
+        <div className="card confirm" role="group" aria-label="Cancel which Appointments?">
+          <p>
+            <strong>Cancel only this one, or this and all later ones?</strong> This Appointment
+            repeats. Whatever is cancelled stays in the calendar, marked cancelled.
+          </p>
+          <div className="actions">
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={busy}
+              onClick={() => carryOut(() => client.cancelAppointment(id))}
+            >
+              Cancel only this one
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={busy}
+              onClick={() => carryOut(() => client.endSeries(id))}
+            >
+              Cancel this and all later ones
+            </button>
+            <button type="button" className="btn" disabled={busy} onClick={() => setAsking(null)}>
+              No, keep them
+            </button>
+          </div>
+        </div>
+      )}
+      {asking === 'cancel' && !appointment.series && (
         <div className="card confirm" role="group" aria-label="Cancel this Appointment?">
           <p>
             <strong>Cancel this Appointment?</strong> It stays in the calendar, marked cancelled.
