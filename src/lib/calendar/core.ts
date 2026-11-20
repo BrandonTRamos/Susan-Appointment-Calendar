@@ -18,7 +18,14 @@ import {
   type NewAppointment,
   type Stamp,
 } from './appointment';
+import { calendarFeed } from './feed';
 import type { Clock, Store } from './ports';
+import {
+  isSubscriptionSecret,
+  newSubscriptionSecret,
+  subscriptionHash,
+  type MadeSubscriptionLink,
+} from './subscription';
 
 /** Why a command was refused. */
 export type RefusalReason =
@@ -68,6 +75,20 @@ export interface CalendarCore {
    * cancel it instead, so that she is told.
    */
   deleteAppointment(by: Actor, id: string): Promise<void>;
+
+  /**
+   * Makes the person a new calendar subscription link, which switches off any they had. The secret
+   * in it is handed back this once: only a hash of it is kept.
+   */
+  makeSubscriptionLink(by: Actor): Promise<MadeSubscriptionLink>;
+  /** Switches off the person's subscription link. Nothing happens when they have none. */
+  switchOffSubscriptionLink(by: Actor): Promise<void>;
+  /**
+   * The calendar as an iCalendar feed (feed.ts), for the link with this secret. Null for a secret
+   * that is not a link's, whether it never was one or its link was switched off: which of the two
+   * is never told.
+   */
+  subscriptionFeed(secret: unknown): Promise<string | null>;
 }
 
 export interface CalendarCoreOptions {
@@ -297,6 +318,30 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
         );
       await store.removeAppointment(current.id);
       await record('deleted', current, by, clock.now().toISOString());
+    },
+
+    // A subscription link changes no Appointment, so it leaves no activity record.
+    async makeSubscriptionLink(by) {
+      const secret = newSubscriptionSecret();
+      const madeAt = clock.now().toISOString();
+      await store.keepSubscriptionLink({
+        personId: by.person.id,
+        hash: await subscriptionHash(secret),
+        madeAt,
+      });
+      return { secret, madeAt };
+    },
+
+    async switchOffSubscriptionLink(by) {
+      if (await store.subscriptionLinkOf(by.person.id))
+        await store.removeSubscriptionLink(by.person.id);
+    },
+
+    async subscriptionFeed(secret) {
+      if (!isSubscriptionSecret(secret)) return null;
+      const link = await store.subscriptionLinkByHash(await subscriptionHash(secret));
+      if (!link) return null;
+      return calendarFeed(await store.everyAppointment());
     },
   };
 }

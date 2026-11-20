@@ -22,4 +22,17 @@ export interface CalendarClient {
   changeAppointment(id: string, changes: AppointmentChanges): Promise<Appointment>;
   cancelAppointment(id: string): Promise<Appointment>;
   deleteAppointment(id: string): Promise<void>;
+
+  // The signed-in person's own calendar subscription link (src/lib/calendar/subscription.ts).
+  /** When their link was made, or null when they have none. */
+  subscriptionLink(): Promise<{ madeAt: string } | null>;
+  /**
+   * Makes them a new link, which switches off any they had, and answers with the address to paste
+   * into a calendar app. This is the only time the address is seen in full.
+   */
+  makeSubscriptionLink(): Promise<{ address: string; madeAt: string }>;
+  switchOffSubscriptionLink(): Promise<void>;
 }
+
+/** Said when a backend has no address for the feed, so a link cannot be made. */
+export const NO_FEED = 'Calendar subscription is not set up yet.';

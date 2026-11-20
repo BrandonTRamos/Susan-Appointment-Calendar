@@ -72,6 +72,11 @@ export function calendarCommandHandler({ core, nameOf }: CommandDependencies) {
         case 'removeAppointment':
           await calendar.deleteAppointment(by, id as string);
           return { appointment: null };
+        case 'makeSubscriptionLink':
+          return { subscriptionLink: await calendar.makeSubscriptionLink(by) };
+        case 'switchOffSubscriptionLink':
+          await calendar.switchOffSubscriptionLink(by);
+          return { subscriptionLink: null };
         default:
           throw new Error(`Unknown calendar command: ${String(command)}`);
       }
@@ -81,7 +86,7 @@ export function calendarCommandHandler({ core, nameOf }: CommandDependencies) {
         const { reason, message, detail } = error;
         return { refusal: { reason, message, detail } };
       }
-      // What broke and where, and nothing about the Appointment.
+      // What broke and where, and nothing about the Appointment or a link.
       const e = error instanceof Error ? error : null;
       console.error(
         'Calendar command failed',
