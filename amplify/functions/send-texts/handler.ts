@@ -1,6 +1,7 @@
 import {
   createCalendarCore,
   NO_ADMIN_MESSENGER,
+  resolveConfirmationMinutes,
   systemClock,
   type CalendarCore,
 } from '../../../src/lib/calendar';
@@ -21,6 +22,8 @@ function getCore() {
         // The run tells no Admin anything yet: Alerts arrive with ticket 15.
         messenger: NO_ADMIN_MESSENGER,
         timeZone: resolveTimeZone(process.env.SUSAN_TIME_ZONE),
+        unconfirmedAfter:
+          resolveConfirmationMinutes(process.env.TEXT_CONFIRMATION_MINUTES) * 60_000,
       }),
     )
     .catch((error: unknown) => {

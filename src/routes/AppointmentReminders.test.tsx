@@ -161,6 +161,48 @@ describe('saving an Appointment that will send no Reminder', () => {
     expect(calendar.store.appointments()).toEqual([]);
   });
 
+  it('asks when its only Reminder in time would hold a web address, says why, and saves on a yes', async () => {
+    const { calendar } = await newAppointment(daysFromToday(4));
+    await userEvent.type(field('Note for Susan'), 'Check in at example.de');
+    // The preview says so before anything is saved, and the words are shown as typed.
+    expect(
+      within(reminder(1)).getByText(/This text holds a web address, so it will not be sent/),
+    ).toBeInTheDocument();
+    expect(within(reminder(1)).getByText(/Check in at example\.de/)).toBeInTheDocument();
+    await save();
+    const asking = screen.getByRole('group', { name: 'Save with no Reminder?' });
+    expect(asking).toHaveTextContent('No Reminder will be sent for this Appointment.');
+    expect(asking).toHaveTextContent("Its Reminders' words hold a web address");
+    expect(calendar.store.appointments()).toEqual([]);
+    await userEvent.click(within(asking).getByRole('button', { name: 'Save with no Reminder' }));
+    await screen.findByRole('heading', { level: 1, name: 'Cardiology check-up' });
+    expect(calendar.store.appointments()).toMatchObject([
+      { noteForSusan: 'Check in at example.de', reminders: [{ shape: 'daysBefore' }] },
+    ]);
+    // On the Appointment, the Reminder is kept, says it will not be sent, and warns why.
+    const kept = within(await screen.findByRole('list', { name: 'Reminders' }));
+    expect(kept.getByText('Will not be sent')).toBeInTheDocument();
+    expect(kept.getByText(/This text holds a web address, so it will not be sent/)).toBeTruthy();
+  });
+
+  it('does not say why when no Reminder falls in time at all', async () => {
+    await newAppointment(daysFromToday(4));
+    await userEvent.click(
+      within(reminder(1)).getByRole('button', { name: 'Remove this Reminder' }),
+    );
+    await save();
+    const asking = screen.getByRole('group', { name: 'Save with no Reminder?' });
+    expect(asking).not.toHaveTextContent('web address');
+  });
+
+  it('does not ask when the web address is only in the Private notes, which no text carries', async () => {
+    const { calendar } = await newAppointment(daysFromToday(4));
+    await userEvent.type(field('Private notes'), 'Portal: https://portal.example.com');
+    await save();
+    await screen.findByRole('heading', { level: 1, name: 'Cardiology check-up' });
+    expect(calendar.store.appointments()).toHaveLength(1);
+  });
+
   it('does not ask when one Reminder is still to be sent', async () => {
     const { calendar } = await newAppointment(daysFromToday(4));
     await save();

@@ -6,7 +6,6 @@ import { CfnSchedule } from 'aws-cdk-lib/aws-scheduler';
 import { resolveContactEmail, resolveOwnerName } from '../src/lib/publicPage';
 import { resolveTimeZone } from '../src/lib/timeZone';
 import { auth } from './auth/resource';
-import { textSenderName } from './calendar/text-sender';
 import { configureProjectTags } from './cost-tags';
 import { data } from './data/resource';
 import { appNotifications } from './functions/app-notifications/resource';
@@ -147,15 +146,15 @@ for (const schedule of sendTextsLambda.node.findAll())
     });
 
 // For the app (src/config.ts): Susan's time zone; the contact address and owner's name shown on the
-// public pages; the feed's address, which each person's link is made from; and the text sender. A value that isn't a
-// time zone or an email address fails the deploy. A value that isn't set is left out.
+// public pages; and the feed's address, which each person's link is made from. A value that isn't a
+// time zone or an email address fails the deploy. A value that isn't set is left out. Which text
+// sender is in use is not here: the Textbelt key is a secret that can be stored after a deploy, so
+// the app asks (the textSender query in amplify/data/resource.ts).
 backend.addOutput({
   custom: {
     timeZone: resolveTimeZone(process.env.SUSAN_TIME_ZONE),
     contactEmail: resolveContactEmail(process.env.CONTACT_EMAIL) ?? undefined,
     ownerName: resolveOwnerName(process.env.OWNER_NAME) ?? undefined,
     subscriptionFeedUrl: feedUrl.url,
-    // Which text sender the backend uses: the app says so while texts are only being recorded.
-    textSender: textSenderName(),
   },
 });

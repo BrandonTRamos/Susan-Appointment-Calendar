@@ -13,6 +13,7 @@ import {
   momentOrSkipped,
 } from '../localTime';
 import { reminderPlan, type Told } from './texts';
+import { holdsWebAddress } from './webAddress';
 import type {
   Appointment,
   AppointmentDetails,
@@ -87,12 +88,32 @@ export function describeReminder(timing: ReminderTiming): string {
 /**
  * The Reminders still to be sent: those whose time has not yet come, in the order they go out, as
  * reminderPlan (texts.ts) has them. A cancelled Appointment has none, and a Reminder held for review
- * since its Appointment moved is not one: it goes out only once someone keeps or changes it.
+ * since its Appointment moved is not one: it goes out only once someone keeps or changes it. Nor is
+ * one whose words hold a web address, which is never sent (reminderHoldsWebAddress).
  */
-export function remindersStillToSend(appointment: Appointment, now: Date): Reminder[] {
+export function remindersStillToSend(
+  appointment: Appointment,
+  now: Date,
+  timeZone: string,
+): Reminder[] {
   return appointment.reminders.filter(
-    (reminder) => reminderPlan(appointment, reminder, now) === 'later',
+    (reminder) =>
+      reminderPlan(appointment, reminder, now) === 'later' &&
+      !reminderHoldsWebAddress(appointment, reminder, timeZone),
   );
+}
+
+/**
+ * Whether a Reminder's words, as it goes out at `dueAt`, hold a web address: the check the core
+ * makes of every text before sending it (webAddress.ts), so such a Reminder is never sent. Its day
+ * in words may differ from the moment it actually goes, but nothing else in its words does.
+ */
+export function reminderHoldsWebAddress(
+  appointment: Omit<AppointmentDetails, 'privateNotes'>,
+  reminder: { dueAt: string | Date },
+  timeZone: string,
+): boolean {
+  return holdsWebAddress(reminderWords(appointment, reminder, timeZone));
 }
 
 /** Words as they are typed or kept, as one line with no stray spaces, or null for none. */

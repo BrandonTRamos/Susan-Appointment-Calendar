@@ -305,6 +305,7 @@ describe('the calendar kept in the data API', () => {
       triedAt: '2026-11-19T20:00:00.000Z',
       sentAt: null,
       reference: null,
+      creditLeft: null,
       told: null,
     };
     await store.claimText(waiting);
@@ -334,6 +335,7 @@ describe('the calendar kept in the data API', () => {
       triedAt: reminder.dueAt,
       sentAt: reminder.dueAt,
       reference: null,
+      creditLeft: 12,
       // What it told her goes in and comes back as it was.
       told: { date: added.date, time: added.time, cancelled: false },
     };

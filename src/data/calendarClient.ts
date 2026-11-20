@@ -53,9 +53,10 @@ export interface CalendarClient {
   sendTestText(): Promise<Text>;
   /**
    * Whether texts are only recorded, by the stand-in sender, and reach no phone: on sample data,
-   * and wherever the backend has no Textbelt key.
+   * and wherever the backend has no Textbelt key. Asked of the backend, since the key is a secret
+   * that can be stored after a deploy.
    */
-  textsRecordedOnly: boolean;
+  textsRecordedOnly(): Promise<boolean>;
 }
 
 /** Said when a backend has no address for the feed, so a link cannot be made. */

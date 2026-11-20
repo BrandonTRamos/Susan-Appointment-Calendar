@@ -37,6 +37,7 @@ export function SusansPhoneAndContact() {
   const [saved, setSaved] = useState(false);
   const [testId, setTestId] = useState<string | null>(null);
   const [testProblem, setTestProblem] = useState<string | null>(null);
+  const [recordedOnly, setRecordedOnly] = useState(false);
 
   useEffect(() => {
     let current = true;
@@ -48,6 +49,11 @@ export function SusansPhoneAndContact() {
       },
       () =>
         current && setProblem('Could not read the settings. Check your connection and try again.'),
+    );
+    // Said only once known: until then, and if the backend cannot be asked, nothing is claimed.
+    client.textsRecordedOnly().then(
+      (only) => current && setRecordedOnly(only),
+      () => {},
     );
     return () => {
       current = false;
@@ -100,7 +106,7 @@ export function SusansPhoneAndContact() {
           recorded as not sent.
         </p>
       )}
-      {client.textsRecordedOnly && (
+      {recordedOnly && (
         <p className="hint muted">
           Texts are recorded here, not sent to a phone: the calendar is not yet connected to its
           text service.

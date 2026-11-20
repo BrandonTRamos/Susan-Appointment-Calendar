@@ -16,6 +16,7 @@ import {
 import { timeZoneName } from '../lib/timeZone';
 import { NotInCalendar } from './AppointmentDetail';
 import {
+  addressKeepsReminders,
   noReminderToSend,
   ReminderFields,
   reminderSetting,
@@ -221,6 +222,12 @@ function Form({ start, backTo, save }: FormProps) {
             <strong>No Reminder will be sent for this Appointment.</strong> Susan will not be texted
             about it. Save it anyway?
           </p>
+          {addressKeepsReminders(typed.details, typed.reminders, timeZone, now) && (
+            <p>
+              Its Reminders' words hold a web address, which texts to Susan cannot carry. Take the
+              address out of the details to have them sent.
+            </p>
+          )}
           <div className="actions">
             <button
               type="button"

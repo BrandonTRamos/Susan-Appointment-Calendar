@@ -100,6 +100,7 @@ export function toText(row: Kept<TextRow, Text>): Text {
     triedAt: row.triedAt,
     sentAt: row.sentAt ?? null,
     reference: row.reference ?? null,
+    creditLeft: row.creditLeft ?? null,
     // A text recorded before ticket 14 has no record of what it told her.
     told: row.told
       ? { date: row.told.date, time: row.told.time, cancelled: row.told.cancelled }

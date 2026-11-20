@@ -15,7 +15,10 @@ const checkUp = { what: 'Cardiology check-up', date: '2026-11-20', time: '14:00'
 const linda = { sub: 'person-linda', username: 'account-linda' };
 
 /** The commands as the data API would call them, over a calendar kept in memory. */
-function commands(names: Record<string, string | null> = { 'account-linda': 'Linda' }) {
+function commands(
+  names: Record<string, string | null> = { 'account-linda': 'Linda' },
+  textSender: () => 'textbelt' | 'stand-in' = () => 'stand-in',
+) {
   const store = createMemoryStore();
   const messenger = createMemoryMessenger(['person-linda', 'person-mark']);
   const core = createCalendarCore({
@@ -26,7 +29,7 @@ function commands(names: Record<string, string | null> = { 'account-linda': 'Lin
     timeZone: 'America/New_York',
   });
   const nameOf = vi.fn(async (username: string) => names[username] ?? null);
-  const handler = calendarCommandHandler({ core: async () => core, nameOf });
+  const handler = calendarCommandHandler({ core: async () => core, nameOf, textSender });
   /** Calls a mutation the way Amplify Gen 2 does: its name at the top, JSON arguments as text. */
   const call = (
     fieldName: string,
@@ -42,6 +45,16 @@ function commands(names: Record<string, string | null> = { 'account-linda': 'Lin
 }
 
 afterEach(() => vi.restoreAllMocks());
+
+describe('which text sender is in use', () => {
+  it('is said to anyone signed in who asks, and changes nothing', async () => {
+    const { store, call } = commands(undefined, () => 'textbelt');
+    expect(await call('textSender', {})).toBe('textbelt');
+    expect(await commands().call('textSender', {})).toBe('stand-in');
+    expect(store.appointments()).toEqual([]);
+    expect(store.texts()).toEqual([]);
+  });
+});
 
 describe('the commands, as the data API calls them', () => {
   it('add, change, cancel and delete an Appointment, answering with it as it now is', async () => {
@@ -224,7 +237,8 @@ describe('when a command cannot be carried out', () => {
       attempts: 1,
       triedAt: reminder.dueAt,
       sentAt: reminder.dueAt,
-      reference: 'stand-in-1',
+      reference: '12345',
+      creditLeft: 40,
       told: { date: added.date, time: added.time, cancelled: false },
     });
     expect(await call('removeAppointment', { id })).toMatchObject({
@@ -240,6 +254,7 @@ describe('when a command cannot be carried out', () => {
         throw new Error('The data API is not answering');
       },
       nameOf: async () => 'Linda',
+      textSender: () => 'stand-in',
     });
     const secret = { ...checkUp, privateNotes: 'Insurance number 12345' };
     await expect(
@@ -267,6 +282,7 @@ describe('when a command cannot be carried out', () => {
           },
         }) as unknown as CalendarCore,
       nameOf: async () => 'Linda',
+      textSender: () => 'stand-in',
     });
     const thrown = await handler({
       fieldName: 'sendTestText',

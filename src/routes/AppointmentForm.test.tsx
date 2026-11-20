@@ -73,6 +73,29 @@ describe('adding an Appointment', () => {
     ]);
   });
 
+  it('warns, as it is typed, that a text holding a web address will not be sent, and saves it as typed', async () => {
+    const date = daysFromToday(4);
+    const { calendar } = renderApp('/appointments/new');
+    await userEvent.type(field('What it is'), 'Cardiology check-up');
+    await userEvent.type(field('Date'), date);
+    await userEvent.type(field('Start time'), '14:00');
+    expect(screen.queryByText(/holds a web address/)).not.toBeInTheDocument();
+    await userEvent.type(field('Note for Susan'), 'Check in at example.de first.');
+    expect(screen.getByText(/This text holds a web address, so it will not be sent/)).toBeTruthy();
+    // A web address in the Private notes goes in no text, so nothing is said of it.
+    await userEvent.clear(field('Note for Susan'));
+    await userEvent.type(field('Private notes'), 'Portal: https://portal.example.com');
+    expect(screen.queryByText(/holds a web address/)).not.toBeInTheDocument();
+    await userEvent.type(field('Note for Susan'), 'Check in at example.de first.');
+    await save();
+    // Its one Reminder will not be sent, so the form asks first, as for an Appointment with none.
+    await userEvent.click(screen.getByRole('button', { name: 'Save with no Reminder' }));
+    await screen.findByRole('heading', { level: 1, name: 'Cardiology check-up' });
+    expect(calendar.store.appointments()).toMatchObject([
+      { noteForSusan: 'Check in at example.de first.' },
+    ]);
+  });
+
   it('says what is missing and keeps what was typed', async () => {
     const { calendar } = renderApp('/appointments/new');
     await userEvent.type(field('Who it is with'), 'Dr. Patel');

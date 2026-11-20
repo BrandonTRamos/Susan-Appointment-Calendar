@@ -2,14 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Amplify } from 'aws-amplify';
 import { UpdateBanner } from './components/UpdateBanner';
-import {
-  amplifyOutputs,
-  contactEmail,
-  ownerName,
-  subscriptionFeedUrl,
-  textsRecordedOnly,
-  timeZone,
-} from './config';
+import { amplifyOutputs, contactEmail, ownerName, subscriptionFeedUrl, timeZone } from './config';
 import { Root } from './Root';
 import './styles.css';
 
@@ -23,7 +16,6 @@ createRoot(document.getElementById('root')!).render(
       contactEmail={contactEmail}
       ownerName={ownerName}
       subscriptionFeedUrl={subscriptionFeedUrl}
-      textsRecordedOnly={textsRecordedOnly}
     />
     <UpdateBanner />
   </StrictMode>,
