@@ -22,6 +22,20 @@ function textbeltKey(env: Env): string | null {
   return key && key !== UNRESOLVED_SECRET ? key : null;
 }
 
+/** The variable that holds the calendar's reply address, which every text names (amplify/backend.ts). */
+export const REPLY_WEBHOOK_URL = 'REPLY_WEBHOOK_URL';
+
+/** The reply address, or null when the function was given none that is a web address. */
+export function replyAddress(env: Env = process.env): string | null {
+  const address = env[REPLY_WEBHOOK_URL]?.trim();
+  return address && /^https:\/\/[^\s]+$/.test(address) ? address : null;
+}
+
+/** The Textbelt key for checking that a Reply came from Textbelt, or null while none is stored. */
+export function replyKey(env: Env = process.env): string | null {
+  return textbeltKey(env);
+}
+
 /** Which sender is in use: the app says so while texts are only being recorded. */
 export type TextSenderName = 'textbelt' | 'stand-in';
 
@@ -31,15 +45,18 @@ export function textSenderName(env: Env = process.env): TextSenderName {
 
 /**
  * The sender for a backend function. It looks for the key at each send, since Amplify refreshes a
- * function's secrets while it runs. Only Textbelt names the texts it takes, so every text there is
- * to ask about is one of Textbelt's, and asking needs no key.
+ * function's secrets while it runs. Every text names the reply address, so Susan's Replies come
+ * back to the calendar. Only Textbelt names the texts it takes, so every text there is to ask about
+ * is one of Textbelt's, and asking needs no key.
  */
 export function textSenderFor(env: Env = process.env): TextSender {
   const standIn = createStandInSender();
   return {
     send(text) {
       const key = textbeltKey(env);
-      return key ? textbeltSender({ key }).send(text) : standIn.send(text);
+      return key
+        ? textbeltSender({ key, replyTo: replyAddress(env) }).send(text)
+        : standIn.send(text);
     },
     delivery: (reference) => textbeltSender({ key: '' }).delivery(reference),
   };

@@ -12,7 +12,13 @@
 import { formatDate, formatMoment, formatTime } from '../localTime';
 import type { Appointment } from './appointment';
 import type { AdminEmail, AppNotification } from './ports';
-import { SEND_ATTEMPTS, type Text, type TextAlert, type TextKind } from './texts';
+import {
+  SEND_ATTEMPTS,
+  type MessageProgress,
+  type Text,
+  type TextAlert,
+  type TextKind,
+} from './texts';
 import { holdsWebAddress } from './webAddress';
 
 /**
@@ -20,13 +26,20 @@ import { holdsWebAddress } from './webAddress';
  * delivered. unconfirmed: it was sent but never confirmed delivered. tooLate: it could not be sent
  * before the Appointment started. noNumber: it was not sent because Susan's mobile number was not
  * set when it came due, which is a gap in the setup, not a failure. webAddress: it was never sent
- * because its words held a web address, which no text may carry.
+ * because its words held a web address, which no text may carry. blocked: the text sender refused
+ * it because texts to her number are blocked: she opted out, and only she can undo it.
  */
-export type TextTrouble = 'failed' | 'unconfirmed' | 'tooLate' | 'noNumber' | 'webAddress';
+export type TextTrouble =
+  'failed' | 'unconfirmed' | 'tooLate' | 'noNumber' | 'webAddress' | 'blocked';
 
 /** What went wrong with a text, or null when nothing did, or it is still being sent. */
 export function troubleOf(text: Text): TextTrouble | null {
-  if (text.status === 'failed') return text.reason === 'unconfirmed' ? 'unconfirmed' : 'failed';
+  if (text.status === 'failed')
+    return text.reason === 'unconfirmed'
+      ? 'unconfirmed'
+      : text.reason === 'blocked'
+        ? 'blocked'
+        : 'failed';
   if (text.status !== 'notSent') return null;
   if (text.reason === 'tooLate') return 'tooLate';
   if (text.reason === 'noNumber') return 'noNumber';
@@ -132,9 +145,19 @@ const DID_NOT: Record<TextKind, string> = {
   test: 'It did not go to her phone.',
 };
 
+/** How texts being blocked is said, and the one way to undo it. */
+const BLOCKED = 'texts to her phone are blocked, because she opted out, as by replying STOP';
+const UNDO = "Only she can undo it, by replying START to a text from the calendar's number.";
+
 /** How each trouble is said: what became of the text, why, and what follows for Susan. */
 function said(trouble: TextTrouble, text: Text) {
   switch (trouble) {
+    case 'blocked':
+      return {
+        became: 'was not sent',
+        why: BLOCKED,
+        after: `${(text.attempts > 1 ? MAY_NOT : DID_NOT)[text.kind]} ${UNDO}`,
+      };
     case 'failed':
       return { became: 'failed', why: failedBecause(text), after: MAY_NOT[text.kind] };
     case 'unconfirmed':
@@ -219,17 +242,21 @@ export function alertFor(text: Text, appointment: Appointment | null, timeZone: 
       : null;
   const opens = appointment ? `/appointments/${appointment.id}` : OPENS[text.kind];
   const subject =
-    trouble === 'noNumber'
-      ? `Susan's Calendar alert: ${a} was not sent, because Susan's mobile number was not set`
-      : trouble === 'webAddress'
-        ? `Susan's Calendar alert: ${a} was not sent, because it held a web address`
-        : `Susan's Calendar alert: ${a} ${became}`;
+    trouble === 'blocked'
+      ? `Susan's Calendar alert: ${a} was not sent, because texts to Susan are blocked`
+      : trouble === 'noNumber'
+        ? `Susan's Calendar alert: ${a} was not sent, because Susan's mobile number was not set`
+        : trouble === 'webAddress'
+          ? `Susan's Calendar alert: ${a} was not sent, because it held a web address`
+          : `Susan's Calendar alert: ${a} ${became}`;
   const about =
     which !== null
       ? `Appointment: ${which}`
       : text.kind === 'test'
         ? 'It was sent from Settings, to check that texts reach her phone. Its status is in Settings.'
-        : 'It concerns no Appointment.';
+        : text.kind === 'automaticAnswer'
+          ? 'It answered a text Susan sent. Her Replies are in the app.'
+          : 'It concerns no Appointment.';
   const body =
     `${A} to Susan ${became}: ${why}. ${after}\n\n` +
     `${about}\n` +
@@ -238,11 +265,13 @@ export function alertFor(text: Text, appointment: Appointment | null, timeZone: 
       ? 'You may want to call Susan.'
       : 'You may want to call Susan. The Appointment and its texts are in the app.');
   const short =
-    trouble === 'noNumber'
-      ? `${A} was not sent: Susan's mobile number was not set.${which ? ` ${which}.` : ''}`
-      : trouble === 'webAddress'
-        ? `${A} was not sent: its words held a web address.${which ? ` ${which}.` : ''}`
-        : `${A} ${became}${which ? `: ${which}.` : '.'} ${after}`;
+    trouble === 'blocked'
+      ? `${A} was not sent: texts to Susan are blocked.${which ? ` ${which}.` : ''} ${UNDO}`
+      : trouble === 'noNumber'
+        ? `${A} was not sent: Susan's mobile number was not set.${which ? ` ${which}.` : ''}`
+        : trouble === 'webAddress'
+          ? `${A} was not sent: its words held a web address.${which ? ` ${which}.` : ''}`
+          : `${A} ${became}${which ? `: ${which}.` : '.'} ${after}`;
   return {
     email: { subject, body, opens },
     notification: {
@@ -251,6 +280,125 @@ export function alertFor(text: Text, appointment: Appointment | null, timeZone: 
       opens,
       // Each Alert stands on its own on a device: a later one does not take its place.
       tag: `alert-${text.id}`,
+    },
+  };
+}
+
+export const CALENDAR_ALERT_KINDS = ['textsBlocked', 'lowCredit'] as const;
+/**
+ * An Alert about texts to Susan as a whole, rather than one text. textsBlocked: the text sender
+ * reported that she opted out, so no text reaches her until she undoes it. lowCredit: the prepaid
+ * credit for texts fell below LOW_CREDIT.
+ */
+export type CalendarAlertKind = (typeof CALENDAR_ALERT_KINDS)[number];
+
+/** A calendar Alert: what it is about, when the calendar learned it, and how far its sending got. */
+export interface CalendarAlert {
+  /** Made from what it is about, so the same news raises it once. */
+  id: string;
+  kind: CalendarAlertKind;
+  raisedAt: string;
+  /** For lowCredit, the credit left when it was raised; null otherwise. */
+  creditLeft: number | null;
+  progress: MessageProgress;
+}
+
+/**
+ * The credit for texts below which the Admins are told it is running low. Each text uses at least
+ * one: 20 is about two weeks of Reminders at the most the calendar expects to send.
+ */
+export const LOW_CREDIT = 20;
+
+/** When a text's credit reading was taken: when the sender answered its send. */
+const readAt = (text: Text) => text.sentAt ?? text.triedAt;
+
+/**
+ * The text whose credit reading began the current spell of low credit: the first below LOW_CREDIT
+ * since the last reading at or above it, or since the first reading. Null while the newest reading
+ * is not low. A spell ends, and the next can raise its own Alert, only once the credit is topped up
+ * to LOW_CREDIT or more, so readings that come back out of order never raise a second.
+ */
+export function lowCreditSpell(texts: readonly Text[]): Text | null {
+  const readings = texts
+    .filter((text) => text.creditLeft !== null)
+    .sort((a, b) => readAt(a).localeCompare(readAt(b)) || a.id.localeCompare(b.id));
+  let start: Text | null = null;
+  for (const text of readings) {
+    if (text.creditLeft! >= LOW_CREDIT) start = null;
+    else start ??= text;
+  }
+  return start;
+}
+
+/** The newest credit reading, or null when the text sender has never said. */
+export function creditLeft(texts: readonly Text[]): number | null {
+  const [newest] = texts
+    .filter((text) => text.creditLeft !== null)
+    .sort((a, b) => readAt(b).localeCompare(readAt(a)) || b.id.localeCompare(a.id));
+  return newest?.creditLeft ?? null;
+}
+
+/**
+ * Since when texts to Susan have been blocked, as far as the calendar knows: the latest report
+ * that she opted out, or send refused because of it, with no text delivered since. Null when no
+ * such thing has happened, or a text sent after the latest has been delivered.
+ */
+export function blockedSince(
+  texts: readonly Text[],
+  alerts: readonly CalendarAlert[],
+): string | null {
+  const moments = [
+    ...texts
+      .filter((text) => text.status === 'failed' && text.reason === 'blocked')
+      .map((text) => text.triedAt),
+    ...alerts.filter((alert) => alert.kind === 'textsBlocked').map((alert) => alert.raisedAt),
+  ].sort();
+  const latest = moments.at(-1);
+  if (!latest) return null;
+  const deliveredSince = texts.some(
+    (text) => text.status === 'delivered' && text.sentAt !== null && text.sentAt > latest,
+  );
+  return deliveredSince ? null : latest;
+}
+
+/** The words of a calendar Alert. Neither holds Susan's number nor any text's words. */
+export function calendarAlertFor(alert: CalendarAlert, timeZone: string): Alert {
+  const when = formatMoment(alert.raisedAt, timeZone);
+  if (alert.kind === 'textsBlocked')
+    return {
+      email: {
+        subject: "Susan's Calendar alert: texts to Susan are blocked",
+        body:
+          `Texts to Susan are blocked: the text service reported, ${when}, that she opted out, as by replying STOP. ` +
+          `No Reminder or other text reaches her phone until it is undone. ${UNDO}\n\n` +
+          'You may want to call Susan. Once she has replied START, send a test text from Settings: ' +
+          'the app shows that texts are blocked until a text is delivered again.',
+        opens: '/settings',
+      },
+      notification: {
+        title: "Susan's Calendar alert",
+        body: `Texts to Susan are blocked: she opted out. ${UNDO}`,
+        opens: '/settings',
+        tag: `alert-${alert.id}`,
+      },
+    };
+  const left = alert.creditLeft ?? 0;
+  const credit = `${left} text${left === 1 ? '' : 's'}`;
+  return {
+    email: {
+      subject: "Susan's Calendar alert: text credit is running low",
+      body:
+        `The prepaid credit for texts to Susan is down to ${credit}, below ${LOW_CREDIT}. ` +
+        'When it runs out, no Reminder or other text reaches her.\n\n' +
+        "Buy more credit for the text service (the owner's setup notes say how). " +
+        'You will not be told again until the credit has been topped up.',
+      opens: '/settings',
+    },
+    notification: {
+      title: "Susan's Calendar alert",
+      body: `Text credit is running low: ${credit} left. Buy more before it runs out.`,
+      opens: '/settings',
+      tag: `alert-${alert.id}`,
     },
   };
 }

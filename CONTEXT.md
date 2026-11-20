@@ -40,8 +40,12 @@ _Avoid_: Test message, ping, trial text
 A text message Susan sends back to the number her Reminders come from. A Reply is passed on to every Admin for a person to read; the calendar never acts on what it says.
 _Avoid_: Response, confirmation, inbound message
 
+**Automatic answer**:
+The text Susan is sent when she sends a Reply, saying texts to that number are not answered and who to call, from Settings. It goes at most once an hour. It is not a Reminder.
+_Avoid_: Auto-reply, acknowledgement, response
+
 **Alert**:
-A warning to every Admin that a text to Susan, such as a Reminder, a Change notice or a test text, did not reach her. Alerts go to Admins only, never to Susan.
+A warning to every Admin about texts to Susan: that one, such as a Reminder, a Change notice or a test text, did not reach her; that texts to her are blocked because she opted out; or that the prepaid credit for texts is running low. Alerts go to Admins only, never to Susan.
 _Avoid_: Notification, failure notice, warning
 
 **Activity update**:

@@ -22,8 +22,8 @@ glance, and Past lists the Appointments that have already happened. Anyone signe
 their own [calendar subscription](#calendar-subscription) link. Reminders go out on schedule
 through Textbelt, and each Appointment shows every text about it with its status, which moves on to
 delivered or failed as Textbelt reports. Until the Textbelt key is stored, a stand-in records each
-text instead of sending it (see [Texts to Susan](#texts-to-susan)). Replies arrive with a later
-ticket.
+text instead of sending it (see [Texts to Susan](#texts-to-susan)). What Susan texts back is
+passed on to every Admin and listed in the Replies tab (see [Replies](#replies)).
 
 ## Run it locally
 
@@ -109,7 +109,9 @@ Appointment it is about, its words, when it was due, and whether it is waiting, 
 failed or not sent. The Appointment's screen shows each Reminder's status and every text about it.
 
 - **Texts go through Textbelt** once its key is stored (below). Until then, and on sample data, a
-  stand-in records each text and sends nothing, and Settings says so.
+  stand-in records each text and sends nothing, and Settings says so. Every text Textbelt sends
+  names the calendar's [reply address](#replies), so that what Susan texts back comes to the
+  calendar.
 - **Delivery status.** Textbelt does not report delivery by itself, so each run asks it what became
   of every text that is sent but not yet settled. `DELIVERED` makes the text delivered, `FAILED`
   makes it failed, and anything else leaves it sent. A text with no confirmation 30 minutes after it
@@ -156,8 +158,10 @@ never written in the repository or kept in the calendar's data. Buy it as in
 - **On the Amplify app:** **Hosting → Secrets**, add `TEXTBELT_KEY` for all branches, then redeploy.
 - **In a sandbox:** `npx ampx sandbox secret set TEXTBELT_KEY`, and paste the key when asked.
 
-Removing the secret puts the stand-in back. Only the `calendar-commands` function (for the test
-text) and the `send-texts` function are given it, and `npm run synth` checks that.
+Removing the secret puts the stand-in back, and the reply address then takes nothing, since it
+cannot check that a Reply came from Textbelt. Only the `calendar-commands` function (for the test
+text), the `send-texts` function and the `text-replies` function (to check each Reply's signature)
+are given it, and `npm run synth` checks that.
 
 ### Try real texts on your own phone first
 
@@ -173,10 +177,40 @@ Nothing goes to Susan's phone before go-live (ticket 18). To see real texts befo
 
 Every text spends credit, the test text included.
 
+## Replies
+
+What Susan texts back to the number her texts come from is a Reply. The calendar never acts on
+one: no word in it changes, cancels or confirms anything. A person reads it.
+
+- **The reply address.** Every text the calendar sends names the `text-replies` function's public
+  address (a Lambda function URL), and Textbelt posts each Reply there. It takes only a request
+  Textbelt signed with the key (`X-textbelt-signature`, an HMAC-SHA256 of `X-textbelt-timestamp`
+  and the body), checked in constant time, whose timestamp is within 15 minutes of now; it refuses
+  everything else, and everything while no key is stored. It keeps the Reply and nothing more: it
+  may only read the settings and create a Reply in the data API. The same request arriving twice
+  is kept once. Requests at once are capped. `npm run synth` checks all of it.
+- **Passed on.** Within a minute the scheduled run sends each Reply to every Admin by email and app
+  notification, quoting what she wrote, once each, with the same retries as an Alert. Tapping the
+  notification opens the Replies tab.
+- **The automatic answer.** The same run texts her: "Susan's Calendar: Texts to this number are not
+  answered. If you need anything, please call" the contact name and number from **Settings →
+  Susan's phone and contact**. It goes at most once an hour, so a run of Replies gets one answer;
+  the Replies tab says which Replies had none. A Reply from a number that is not Susan's in
+  Settings is passed on but answered by no text. An answer that fails raises an Alert.
+- **The Replies tab** lists her Replies newest first, with when each came, what she wrote, and what
+  became of the automatic answer. The tab shows how many each person has not yet seen; opening it
+  counts them seen, on every device that person uses.
+- **STOP and HELP.** Textbelt handles STOP and START itself. If either, or HELP, reaches the reply
+  address, it is a Reply like any other. What Textbelt does with each has to be seen on a real
+  phone: [`docs/text-message-setup.md`](docs/text-message-setup.md), "Checking STOP and HELP".
+- Logs never hold her number, her words or the signature: a refused request logs only why
+  (unsigned, forged, stale or unreadable).
+
 ## Alerts
 
-When a text to Susan does not get through, every Admin is told by email and by app notification.
-Susan's account is not an Admin's, so she never gets one.
+When a text to Susan does not get through, when texts to her are blocked, or when the text credit
+runs low, every Admin is told by email and by app notification. Susan's account is not an Admin's,
+so she never gets one.
 
 - **When.** A text of any kind (a Reminder, a Change notice, a test text) fails: refused, sending
   did not go through after its tries, or reported not delivered. Or it is marked not confirmed
@@ -186,6 +220,13 @@ Susan's account is not an Admin's, so she never gets one.
   worded as a gap in the setup rather than a failure. Until her number is entered (ticket 18),
   that means an Alert for every Reminder that comes due. A Reminder held for review sends nothing
   and raises none. Texts recorded before Alerts existed raise none.
+- **Blocked texts.** When Textbelt refuses a send because Susan opted out, or reports that she
+  did, the Alert says texts to her are blocked and that only she can undo it, by replying START.
+  Textbelt does not document what either looks like, so until the owner's check
+  ([`docs/text-message-setup.md`](docs/text-message-setup.md), "Checking STOP and HELP") records
+  it, such a send is an ordinary refusal and its Alert says "failed".
+- **Low credit.** One Alert when the credit Textbelt says is left falls below 20, and not again
+  until a send shows it topped up to 20 or more.
 - **Who sends it.** The scheduled run, every minute, after its sends and after it has asked Textbelt
   about every text still only sent. A text that asking settles as not delivered, or not confirmed
   delivered, is settled once, by a conditional write that also marks its Alert due; the Alerts then
@@ -209,7 +250,9 @@ Susan's account is not an Admin's, so she never gets one.
   the notes. A phone number typed into an Appointment's name is left out of the Alert, which still
   names it by its date and time. The email ends with a link to the Appointment (or Settings), and tapping the app
   notification opens it.
-- **The banner.** While the most recent text to Susan, of any kind, failed or did not get through,
+- **The banner.** While texts to Susan are blocked, a banner on every screen says so until a text
+  sent afterwards is delivered: once she has replied START, send a test text from Settings. Otherwise,
+  while the most recent text to Susan, of any kind, failed or did not get through,
   a banner shows at the top of every screen, with a link to the text. It says what happened to
   that text, so after a missing number is entered it still reads "was not sent: her mobile number
   was not set". It clears once a later text goes: send a test text from Settings to clear it.

@@ -34,6 +34,7 @@ const COMMANDS = new Set([
   'switchOffSubscriptionLink',
   'changeSettings',
   'sendTestText',
+  'seeReplies',
 ]);
 
 /** Shown when the account has no usable name. The owner gives every account one. */
@@ -64,7 +65,7 @@ export function calendarCommandHandler({ core, nameOf, textSender }: CommandDepe
     const command = event.fieldName ?? event.info?.fieldName;
     // Not a command: it changes nothing, and says nothing about the calendar.
     if (command === 'textSender') return textSender();
-    const { id, details, changes, settings } = event.arguments;
+    const { id, details, changes, settings, upTo } = event.arguments;
     try {
       const by = await actor(event.identity, nameOf);
       const calendar = await core();
@@ -99,6 +100,8 @@ export function calendarCommandHandler({ core, nameOf, textSender }: CommandDepe
           return { settings: await calendar.changeSettings(by, fromJson(settings) as never) };
         case 'sendTestText':
           return { text: await calendar.sendTestText(by) };
+        case 'seeReplies':
+          return { repliesSeen: await calendar.seeReplies(by, upTo) };
         default:
           throw new Error(`Unknown calendar command: ${String(command)}`);
       }

@@ -14,12 +14,18 @@ import {
   type Text,
 } from '../../src/lib/calendar';
 import {
+  calendarAlertRow,
+  replyRow,
   SETTINGS_ID,
   toAppointment,
+  toCalendarAlert,
+  toReply,
   toSettings,
   textRow,
   toText,
   type AppointmentRow,
+  type CalendarAlertRow,
+  type ReplyRow,
   type TextRow,
 } from '../../src/lib/calendarApi';
 import type { Schema } from '../data/resource';
@@ -37,6 +43,9 @@ export interface DataClient {
     >;
     Text: Pick<Models['Text'], 'list' | 'create' | 'update' | 'textsByAppointment'>;
     CalendarSettings: Pick<Models['CalendarSettings'], 'get' | 'create' | 'update'>;
+    Reply: Pick<Models['Reply'], 'list' | 'create'>;
+    CalendarAlert: Pick<Models['CalendarAlert'], 'list' | 'create'>;
+    RepliesSeen: Pick<Models['RepliesSeen'], 'get' | 'create' | 'update'>;
   };
   /**
    * A raw data API operation, for a write that carries a condition: the models' own `update`
@@ -53,6 +62,27 @@ export interface DataClient {
 const CHANGE_TEXT = /* GraphQL */ `
   mutation ChangeText($input: UpdateTextInput!, $condition: ModelTextConditionInput!) {
     updateText(input: $input, condition: $condition) {
+      id
+    }
+  }
+`;
+
+/** The same, for a Reply: its answer and its passing on are changed only as `changeText`. */
+const CHANGE_REPLY = /* GraphQL */ `
+  mutation ChangeReply($input: UpdateReplyInput!, $condition: ModelReplyConditionInput!) {
+    updateReply(input: $input, condition: $condition) {
+      id
+    }
+  }
+`;
+
+/** The same, for a calendar Alert's sending. */
+const CHANGE_CALENDAR_ALERT = /* GraphQL */ `
+  mutation ChangeCalendarAlert(
+    $input: UpdateCalendarAlertInput!
+    $condition: ModelCalendarAlertConditionInput!
+  ) {
+    updateCalendarAlert(input: $input, condition: $condition) {
       id
     }
   }
@@ -102,18 +132,30 @@ const toLink = ({ personId, hash, madeAt }: SubscriptionLink): SubscriptionLink 
 });
 
 export function dataStore(client: DataClient): Store {
-  const { Appointment, ActivityRecord, SubscriptionLink, Text, CalendarSettings } = client.models;
+  const {
+    Appointment,
+    ActivityRecord,
+    SubscriptionLink,
+    Text,
+    CalendarSettings,
+    Reply,
+    CalendarAlert,
+    RepliesSeen,
+  } = client.models;
   /** Each Appointment as the core last read it here, until it is written. */
   const read = new Map<string, Appointment>();
 
-  /** Replaces a text's record only if the condition holds as it is written. Answers whether it did. */
-  async function changeTextIf(next: Text, condition: { and: Record<string, unknown>[] }) {
+  /** Replaces a row only if the condition holds as it is written. Answers whether it did. */
+  async function changeIf(
+    query: string,
+    input: Record<string, unknown>,
+    condition: { and: Record<string, unknown>[] },
+  ) {
     let answer: { errors?: readonly DataError[] };
     try {
-      answer = (await client.graphql({
-        query: CHANGE_TEXT,
-        variables: { input: textRow(next), condition },
-      })) as { errors?: readonly DataError[] };
+      answer = (await client.graphql({ query, variables: { input, condition } })) as {
+        errors?: readonly DataError[];
+      };
     } catch (thrown) {
       if (!(thrown && typeof thrown === 'object' && 'errors' in thrown)) throw thrown;
       answer = thrown as { errors?: readonly DataError[] };
@@ -122,6 +164,14 @@ export function dataStore(client: DataClient): Store {
     if (alreadyThere(answer.errors)) return false;
     throw new Error(answer.errors.map((e) => e.message).join('; '));
   }
+  const changeTextIf = (next: Text, condition: { and: Record<string, unknown>[] }) =>
+    changeIf(CHANGE_TEXT, textRow(next), condition);
+  /** Creates a row only if none has its ID, in one step. Answers whether it did. */
+  const created = (result: { errors?: readonly DataError[]; data: unknown }) => {
+    if (alreadyThere(result.errors)) return false;
+    check(result);
+    return true;
+  };
 
   return {
     async appointment(id) {
@@ -160,10 +210,7 @@ export function dataStore(client: DataClient): Store {
     },
     // The data API creates a row only if none has its ID, in one step: the claim.
     async claimText(text) {
-      const result = await Text.create(textRow(text));
-      if (alreadyThere(result.errors)) return false;
-      check(result);
-      return true;
+      return created(await Text.create(textRow(text)));
     },
     // Only if no other run has taken it up since it was read: still waiting, after the same tries.
     async retakeText(next, current) {
@@ -226,6 +273,46 @@ export function dataStore(client: DataClient): Store {
     },
     async removeSubscriptionLink(personId) {
       check(await SubscriptionLink.delete({ personId }));
+    },
+    async everyReply() {
+      return (await everyRow<ReplyRow>((options) => Reply.list(options))).map(toReply);
+    },
+    async claimReply(reply) {
+      return created(await Reply.create(replyRow(reply)));
+    },
+    // Only if no other run has changed it since it was read: answered it, or taken up its passing on.
+    async changeReply(next, current) {
+      return changeIf(CHANGE_REPLY, replyRow(next), {
+        and: [
+          { answer: { eq: current.answer } },
+          { passOn: { eq: current.passOn.state } },
+          ...(current.passOn.triedAt ? [{ passOnTriedAt: { eq: current.passOn.triedAt } }] : []),
+        ],
+      });
+    },
+    async everyCalendarAlert() {
+      return (await everyRow<CalendarAlertRow>((options) => CalendarAlert.list(options))).map(
+        toCalendarAlert,
+      );
+    },
+    async claimCalendarAlert(alert) {
+      return created(await CalendarAlert.create(calendarAlertRow(alert)));
+    },
+    async changeCalendarAlert(next, current) {
+      return changeIf(CHANGE_CALENDAR_ALERT, calendarAlertRow(next), {
+        and: [
+          { state: { eq: current.progress.state } },
+          ...(current.progress.triedAt ? [{ triedAt: { eq: current.progress.triedAt } }] : []),
+        ],
+      });
+    },
+    async repliesSeen(personId) {
+      return check(await RepliesSeen.get({ personId }))?.seenUpTo ?? null;
+    },
+    async keepRepliesSeen(personId, seenUpTo) {
+      const had = check(await RepliesSeen.get({ personId }));
+      const row = { personId, seenUpTo };
+      check(await (had ? RepliesSeen.update(row) : RepliesSeen.create(row)));
     },
   };
 }

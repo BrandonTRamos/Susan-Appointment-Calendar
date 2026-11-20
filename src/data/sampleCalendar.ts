@@ -94,6 +94,21 @@ export function createSampleCalendar(
       await core.addAppointment(by, { ...details, date: addDays(day, days) });
   })();
 
+  /** Tells `listener` what `read` finds once the samples are in, and again after every change. */
+  function watchStore<T>(read: () => T, listener: (found: T) => void, onError: (e: Error) => void) {
+    let stop: (() => void) | undefined;
+    let stopped = false;
+    ready.then(() => {
+      if (stopped) return;
+      listener(read());
+      stop = store.subscribe(() => listener(read()));
+    }, onError);
+    return () => {
+      stopped = true;
+      stop?.();
+    };
+  }
+
   // While anyone is watching the texts, what is due is run every minute, as the backend's
   // scheduled run does.
   let watchingTexts = 0;
@@ -157,5 +172,10 @@ export function createSampleCalendar(
     },
     changeSettings: (changes) => core.changeSettings(YOU, changes),
     sendTestText: () => core.sendTestText(YOU),
+    watchReplies: (listener, onError) => watchStore(() => store.replies(), listener, onError),
+    watchCalendarAlerts: (listener, onError) =>
+      watchStore(() => store.calendarAlerts(), listener, onError),
+    repliesSeen: () => store.repliesSeen(YOU.person.id),
+    seeReplies: (upTo) => core.seeReplies(YOU, upTo),
   };
 }

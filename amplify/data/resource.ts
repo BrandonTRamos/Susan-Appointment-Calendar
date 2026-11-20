@@ -3,8 +3,10 @@ import {
   ACTIVITY_ACTIONS,
   ALERT_STATES,
   APPOINTMENT_STATES,
+  CALENDAR_ALERT_KINDS,
   REMINDER_SHAPES,
   REMINDER_UNITS,
+  REPLY_ANSWERS,
   TEXT_KINDS,
   TEXT_REASONS,
   TEXT_STATUSES,
@@ -12,6 +14,7 @@ import {
 import { appNotifications } from '../functions/app-notifications/resource';
 import { calendarCommands } from '../functions/calendar-commands/resource';
 import { sendTexts } from '../functions/send-texts/resource';
+import { textReplies } from '../functions/text-replies/resource';
 
 // Calendar data, and the only way to change it.
 //
@@ -150,6 +153,48 @@ const schema = a
         lastChanged: a.ref('Stamp'),
       })
       .authorization((allow) => [allow.authenticated().to(['read'])]),
+    // Each text Susan sent back (Reply in src/lib/calendar/replies.ts), kept by the reply address's
+    // function and passed on and answered by the scheduled run. Its passing on to every Admin is
+    // flat beside it, as a text's Alert is, so that a write can be conditioned on it.
+    Reply: a
+      .model({
+        words: a.string().required(),
+        receivedAt: a.datetime().required(),
+        fromSusan: a.boolean().required(),
+        answer: a.enum(REPLY_ANSWERS),
+        passOn: a.enum(ALERT_STATES),
+        passOnTries: a.integer(),
+        passOnTriedAt: a.datetime(),
+        passOnSent: a.string().array(),
+        passOnRefused: a.string().array(),
+      })
+      .authorization((allow) => [allow.authenticated().to(['read'])]),
+    // An Alert about texts to Susan as a whole (CalendarAlert in src/lib/calendar/alerts.ts): that
+    // they are blocked, or that the credit for them is running low. Its sending is flat beside it.
+    CalendarAlert: a
+      .model({
+        kind: a.enum(CALENDAR_ALERT_KINDS),
+        raisedAt: a.datetime().required(),
+        creditLeft: a.integer(),
+        state: a.enum(ALERT_STATES),
+        tries: a.integer(),
+        triedAt: a.datetime(),
+        sent: a.string().array(),
+        refused: a.string().array(),
+      })
+      .authorization((allow) => [allow.authenticated().to(['read'])]),
+    // When the newest Reply each person has seen arrived, so the Replies tab counts the ones they
+    // have not. Each person can read only their own; it is written by the seeReplies command.
+    RepliesSeen: a
+      .model({
+        personId: a.string().required(),
+        seenUpTo: a.datetime().required(),
+      })
+      .identifier(['personId'])
+      .authorization((allow) => [
+        allow.ownerDefinedIn('personId').identityClaim('sub').to(['read']),
+      ]),
+
     // The core's commands. Each answers with a CommandAnswer (src/lib/calendarApi.ts): the
     // Appointment as it now is, or the core's refusal. `removeAppointment` is the core's "delete":
     // the name deleteAppointment belongs to the model's own mutation, which only the function may
@@ -168,6 +213,8 @@ const schema = a
     // Each answers with a CommandAnswer: the settings as they now are, or the test text's record.
     changeSettings: command().arguments({ settings: a.json().required() }),
     sendTestText: command(),
+    // Answers with a CommandAnswer: when the newest Reply the person has seen arrived.
+    seeReplies: command().arguments({ upTo: a.datetime().required() }),
     // Which text sender the backend uses, TextSenderName in amplify/calendar/text-sender.ts:
     // 'textbelt', or 'stand-in' while no Textbelt key is stored. Settings says when texts are only
     // being recorded. Answered at the time asked, since the key is a secret stored after a deploy.
@@ -242,12 +289,13 @@ const schema = a
   })
   // Lets the functions write through the data API, so that every change reaches everyone looking at
   // the calendar (docs/adr/0003-the-core-writes-through-the-data-api.md). The scheduled run sends
-  // texts through it; the app-notifications function is narrowed to its own operations
-  // (amplify/backend.ts).
+  // texts through it; the app-notifications and text-replies functions are narrowed to their own
+  // operations (amplify/backend.ts).
   .authorization((allow) => [
     allow.resource(calendarCommands).to(['query', 'mutate']),
     allow.resource(appNotifications).to(['query', 'mutate']),
     allow.resource(sendTexts).to(['query', 'mutate']),
+    allow.resource(textReplies).to(['query', 'mutate']),
   ]);
 
 export type Schema = ClientSchema<typeof schema>;

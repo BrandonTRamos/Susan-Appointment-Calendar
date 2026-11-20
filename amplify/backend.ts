@@ -13,6 +13,8 @@ import { appNotifications } from './functions/app-notifications/resource';
 import { calendarCommands } from './functions/calendar-commands/resource';
 import { sendTexts } from './functions/send-texts/resource';
 import { subscriptionFeed } from './functions/subscription-feed/resource';
+import { textReplies } from './functions/text-replies/resource';
+import { REPLY_WEBHOOK_URL } from './calendar/text-sender';
 
 const backend = defineBackend({
   auth,
@@ -21,6 +23,7 @@ const backend = defineBackend({
   subscriptionFeed,
   appNotifications,
   sendTexts,
+  textReplies,
 });
 
 // COST_TAG keeps separate deployments apart in billing; main also tags its own Hosting app.
@@ -85,25 +88,21 @@ if (alertsFrom) {
   );
 }
 
-// The app-notifications function may reach the devices app notifications go to and the key that
-// signs them, and nothing else in the data API: Amplify would let it call every query and mutation,
-// the calendar's included. `npm run synth` checks it.
-const APP_NOTIFICATION_FIELDS = {
-  Query: ['getAppNotificationKey'],
-  Mutation: [
-    'createAppNotificationDevice',
-    'updateAppNotificationDevice',
-    'deleteAppNotificationDevice',
-    'createAppNotificationKey',
-  ],
-};
-{
+/**
+ * Narrows what a function may call in the data API to these operations, by type: Amplify would let
+ * it call every query and mutation, the calendar's included. `npm run synth` checks each.
+ */
+function narrowDataApi(
+  lambda: typeof backend.appNotifications.resources.lambda,
+  allowed: Record<'Query' | 'Mutation', string[]>,
+  name: string,
+) {
   const api = backend.data.resources.graphqlApi;
   const dataStack = Stack.of(api);
-  const role = backend.appNotifications.resources.lambda.role?.node.defaultChild as CfnRole;
+  const role = lambda.role?.node.defaultChild as CfnRole;
   const roleRef = JSON.stringify(dataStack.resolve(role.ref));
-  const fields = Object.entries(APP_NOTIFICATION_FIELDS).flatMap(([type, names]) =>
-    names.map((name) => dataStack.resolve(`${api.arn}/types/${type}/fields/${name}`)),
+  const fields = Object.entries(allowed).flatMap(([type, names]) =>
+    names.map((field) => dataStack.resolve(`${api.arn}/types/${type}/fields/${field}`)),
   );
   const access = dataStack.node
     .findAll()
@@ -112,7 +111,7 @@ const APP_NOTIFICATION_FIELDS = {
     .filter((policy) =>
       JSON.stringify(dataStack.resolve(policy.policyDocument)).includes('appsync:GraphQL'),
     );
-  if (access.length !== 1) throw new Error('Could not find the app-notifications data API access.');
+  if (access.length !== 1) throw new Error(`Could not find the ${name} data API access.`);
   const document = dataStack.resolve(access[0].policyDocument) as {
     Statement: { Action: unknown; Resource: unknown }[];
   };
@@ -120,6 +119,31 @@ const APP_NOTIFICATION_FIELDS = {
     if (statement.Action === 'appsync:GraphQL') statement.Resource = fields;
   access[0].addPropertyOverride('PolicyDocument', document);
 }
+
+// The app-notifications function may reach the devices app notifications go to and the key that
+// signs them, and nothing else in the data API. `npm run synth` checks it.
+narrowDataApi(
+  backend.appNotifications.resources.lambda,
+  {
+    Query: ['getAppNotificationKey'],
+    Mutation: [
+      'createAppNotificationDevice',
+      'updateAppNotificationDevice',
+      'deleteAppNotificationDevice',
+      'createAppNotificationKey',
+    ],
+  },
+  'app-notifications',
+);
+
+// The reply address's function only keeps a Reply: it reads the settings, to tell whether it came
+// from Susan's number, and creates the Reply's record, and may do nothing else in the data API.
+// The scheduled run passes it on and answers her. `npm run synth` checks it.
+narrowDataApi(
+  backend.textReplies.resources.lambda,
+  { Query: ['getCalendarSettings'], Mutation: ['createReply'] },
+  'text-replies',
+);
 
 // When a write about a device is refused, the function reads whose the device is now straight from
 // its table, with a strongly consistent read, which the data API's reads are not
@@ -156,6 +180,18 @@ for (const [variable, table] of Object.entries(feedTables)) {
     }),
   );
 }
+
+// The calendar's reply address, where Textbelt sends each text Susan sends back. It is public, so
+// it takes only a request Textbelt signed with the key within 15 minutes (amplify/calendar/
+// textbelt.ts), and concurrent requests are capped: far more than she will ever send at once, and a
+// ceiling on cost if something floods it. Every text sent names it, so both functions that send
+// texts are told it.
+const repliesUrl = backend.textReplies.resources.lambda.addFunctionUrl({
+  authType: FunctionUrlAuthType.NONE,
+});
+backend.textReplies.resources.cfnResources.cfnFunction.reservedConcurrentExecutions = 3;
+backend.sendTexts.addEnvironment(REPLY_WEBHOOK_URL, repliesUrl.url);
+backend.calendarCommands.addEnvironment(REPLY_WEBHOOK_URL, repliesUrl.url);
 
 // The scheduled run never overlaps itself: only one may run at a time, and a run that cannot start
 // because the last is still going is dropped rather than queued or retried, since the next one is a

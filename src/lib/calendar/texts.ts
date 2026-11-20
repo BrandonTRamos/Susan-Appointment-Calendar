@@ -28,6 +28,7 @@ export const TEXT_REASONS = [
   'undelivered',
   'unconfirmed',
   'webAddress',
+  'blocked',
 ] as const;
 /**
  * Why a text failed or was not sent. noNumber: Susan's mobile number is not set. tooLate: the
@@ -36,7 +37,9 @@ export const TEXT_REASONS = [
  * refused: the text sender would not take it. gaveUp: sending failed every time it was tried.
  * undelivered: the text sender reported that it was not delivered. unconfirmed: no confirmation
  * that it was delivered came within UNCONFIRMED_AFTER of its sending ("not confirmed delivered").
- * webAddress: its words held a web address, which no text may (holdsWebAddress).
+ * webAddress: its words held a web address, which no text may (holdsWebAddress). blocked: the
+ * text sender refused it because texts to her number are blocked: she has opted out, as by replying
+ * STOP, and only she can undo it.
  */
 export type TextReason = (typeof TEXT_REASONS)[number];
 
@@ -87,11 +90,11 @@ export const ALERT_STATES = ['due', 'sending', 'raised'] as const;
 export type AlertState = (typeof ALERT_STATES)[number];
 
 /**
- * The one Alert about a text, and how far it has got. It goes to each Admin by each channel; each
- * of those deliveries is named by the Admin messenger, and one known to have gone is never sent
- * again.
+ * How far a message to every Admin has got: the Alert about a text, a calendar Alert (alerts.ts),
+ * or a Reply passed on (replies.ts). It goes to each Admin by each channel; each of those
+ * deliveries is named by the Admin messenger, and one known to have gone is never sent again.
  */
-export interface TextAlert {
+export interface MessageProgress {
   state: AlertState;
   /** How many times a run has taken it up to send. */
   tries: number;
@@ -102,6 +105,9 @@ export interface TextAlert {
   /** Each delivery refused for good, such as by an address SES will not send to: never retried. */
   refused: string[];
 }
+
+/** The one Alert about a text, and how far it has got. */
+export type TextAlert = MessageProgress;
 
 /** How many times a run takes up an Alert whose deliveries keep failing, before giving them up. */
 export const ALERT_ATTEMPTS = 3;
@@ -225,14 +231,15 @@ export function reminderPlan(
 
 /**
  * Whether a text may have reached Susan: anything sent or being sent, and anything that failed
- * after it was tried, unless the text sender refused it outright on its only try. Only a text the
+ * after it was tried, unless the text sender refused it outright on its only try, blocked or not. Only a text the
  * calendar chose not to send, or one refused the first time, certainly did not. A text that waited
  * to be tried again and was then given up or refused, for whatever reason, counts as failed: its
  * earlier try may have gone.
  */
 export function mayHaveReachedSusan(text: Text): boolean {
   if (text.status === 'notSent') return false;
-  return !(text.status === 'failed' && text.reason === 'refused' && text.attempts <= 1);
+  const refused = text.reason === 'refused' || text.reason === 'blocked';
+  return !(text.status === 'failed' && refused && text.attempts <= 1);
 }
 
 /** The texts about an Appointment, newest due first. */

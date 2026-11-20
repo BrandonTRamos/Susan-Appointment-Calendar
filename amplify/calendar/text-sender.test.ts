@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { textSenderFor, textSenderName } from './text-sender';
+import { replyAddress, textSenderFor, textSenderName } from './text-sender';
 
 /** What Amplify leaves in a secret's variable until the secret is stored. */
 const UNSET = '<value will be resolved during runtime>';
@@ -46,6 +46,30 @@ describe('the text sender the backend uses', () => {
     env.TEXTBELT_KEY = 'invented-key-0000';
     await sender.send({ to: '+15555550123', words: 'Hello' });
     expect(request).toHaveBeenCalledOnce();
+  });
+
+  it("names the calendar's reply address in every text Textbelt sends", async () => {
+    const request = vi.fn(async (_url: string, init?: RequestInit) => {
+      void init;
+      return Response.json({ success: true, textId: 7 });
+    });
+    vi.stubGlobal('fetch', request);
+    const env = {
+      TEXTBELT_KEY: 'invented-key-0000',
+      REPLY_WEBHOOK_URL: 'https://replies.example.com/',
+    };
+    await textSenderFor(env).send({ to: '+15555550123', words: 'Hello' });
+    const sent = request.mock.calls[0][1]?.body as URLSearchParams;
+    expect(sent.get('replyWebhookUrl')).toBe('https://replies.example.com/');
+    expect(sent.get('message')).toBe('Hello');
+  });
+
+  it('takes only a web address as the reply address', () => {
+    expect(replyAddress({ REPLY_WEBHOOK_URL: 'https://replies.example.com/' })).toBe(
+      'https://replies.example.com/',
+    );
+    for (const value of [undefined, '', 'replies', 'http://replies.example.com/'])
+      expect(replyAddress({ REPLY_WEBHOOK_URL: value })).toBeNull();
   });
 
   it('asks Textbelt what became of a text it named', async () => {

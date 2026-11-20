@@ -111,6 +111,15 @@ export function feedStore(reader: TableReader, tables: FeedTables): Store {
     recordActivity: async () => readOnly(),
     keepSubscriptionLink: async () => readOnly(),
     removeSubscriptionLink: async () => readOnly(),
+    // Nor about Replies or calendar Alerts.
+    everyReply: async () => notRead(),
+    everyCalendarAlert: async () => notRead(),
+    repliesSeen: async () => notRead(),
+    claimReply: async () => readOnly(),
+    changeReply: async () => readOnly(),
+    claimCalendarAlert: async () => readOnly(),
+    changeCalendarAlert: async () => readOnly(),
+    keepRepliesSeen: async () => readOnly(),
   };
 }
 

@@ -21,7 +21,10 @@ function dataApi() {
     ActivityRecord: new Map<string, Row>(),
     Text: new Map<string, Row>(),
     CalendarSettings: new Map<string, Row>(),
+    Reply: new Map<string, Row>(),
+    CalendarAlert: new Map<string, Row>(),
   };
+  const seen = new Map<string, Row>();
   let failure: string | null = null;
   const answer = <T>(data: T) =>
     failure ? { data: null, errors: [{ message: failure }] } : { data };
@@ -112,15 +115,34 @@ function dataApi() {
         },
       },
       CalendarSettings: model(tables.CalendarSettings),
+      Reply: model(tables.Reply),
+      CalendarAlert: model(tables.CalendarAlert),
+      RepliesSeen: {
+        async get({ personId }: { personId: string }) {
+          return answer(seen.get(personId) ?? null);
+        },
+        async create(input: Row) {
+          seen.set(input.personId as string, input);
+          return answer(input);
+        },
+        async update(input: Row) {
+          seen.set(input.personId as string, { ...seen.get(input.personId as string), ...input });
+          return answer(seen.get(input.personId as string));
+        },
+      },
     },
-    // Only the conditional update of a text, as DynamoDB checks it: every `eq` in the condition
-    // must hold of the row as it is when written. The client throws an answer that has errors.
+    // Only the conditional update of a text, a Reply or a calendar Alert, as DynamoDB checks it:
+    // every `eq` in the condition must hold of the row as it is when written. The client throws
+    // an answer that has errors.
     async graphql({ query, variables }: { query: string; variables: Record<string, unknown> }) {
-      if (!query.includes('updateText(input: $input, condition: $condition)'))
-        throw new Error('This stand-in only answers a conditional updateText.');
+      const model =
+        /update(Text|Reply|CalendarAlert)\(input: \$input, condition: \$condition\)/.exec(
+          query,
+        )?.[1] as 'Text' | 'Reply' | 'CalendarAlert' | undefined;
+      if (!model) throw new Error('This stand-in only answers a conditional update.');
       const input = variables.input as Row;
       const { and } = variables.condition as { and: Record<string, { eq: unknown }>[] };
-      const row = tables.Text.get(input.id);
+      const row = tables[model].get(input.id);
       const holds =
         row && and.every((each) => Object.entries(each).every(([f, { eq }]) => row[f] === eq));
       if (!holds)
@@ -133,8 +155,8 @@ function dataApi() {
             },
           ],
         };
-      tables.Text.set(input.id, { ...row, ...input });
-      return { data: { updateText: { id: input.id } } };
+      tables[model].set(input.id, { ...row, ...input });
+      return { data: { [`update${model}`]: { id: input.id } } };
     },
   } as unknown as DataClient;
   return {
@@ -143,6 +165,8 @@ function dataApi() {
     activity: () => [...tables.ActivityRecord.values()],
     links: () => [...links.values()],
     texts: () => [...tables.Text.values()],
+    replies: () => [...tables.Reply.values()],
+    calendarAlerts: () => [...tables.CalendarAlert.values()],
     /** The index stops hearing of changes until it is told to catch up. */
     freezeIndex() {
       index = structuredClone([...links.values()]);
@@ -371,6 +395,72 @@ describe('the calendar kept in the data API', () => {
       alertSent: ['email:person-linda'],
       alertRefused: ['email:person-mark'],
     });
+  });
+
+  it('keeps each Reply once, and answers or passes it on only while it is as it was read', async () => {
+    const { api, store, core } = calendar();
+    await core.changeSettings(linda, { susansNumber: '555 555 0123' });
+    const reply = await core.receiveReply({ key: 'abc', words: 'On my way', from: '+15555550123' });
+    expect(await core.receiveReply({ key: 'abc', words: 'On my way', from: null })).toEqual(reply);
+    expect(await store.everyReply()).toEqual([reply]);
+    const answered = { ...reply, answer: 'sent' as const };
+    expect(await store.changeReply(answered, reply)).toBe(true);
+    // A second run read it as due too: it has been answered since, so its write is refused.
+    expect(await store.changeReply({ ...reply, answer: 'recent' }, reply)).toBe(false);
+    const taken = {
+      ...answered,
+      passOn: {
+        ...answered.passOn,
+        state: 'sending' as const,
+        tries: 1,
+        triedAt: '2026-11-19T20:01:00.000Z',
+      },
+    };
+    expect(await store.changeReply(taken, answered)).toBe(true);
+    expect(await store.changeReply(taken, answered)).toBe(false);
+    expect(await store.everyReply()).toEqual([taken]);
+    // Kept flat beside the rest, so that a write can be conditioned on it.
+    expect(api.replies()[0]).toMatchObject({
+      id: 'reply:abc',
+      words: 'On my way',
+      fromSusan: true,
+      answer: 'sent',
+      passOn: 'sending',
+      passOnTries: 1,
+      passOnTriedAt: '2026-11-19T20:01:00.000Z',
+    });
+  });
+
+  it('keeps each calendar Alert once, and sends it only while it is as it was read', async () => {
+    const { api, store, core } = calendar();
+    const alert = (await core.recordOptOut({ key: 'report-1' }))!;
+    expect(await core.recordOptOut({ key: 'report-1' })).toBeNull();
+    expect(await store.everyCalendarAlert()).toEqual([alert]);
+    const taken = {
+      ...alert,
+      progress: {
+        ...alert.progress,
+        state: 'sending' as const,
+        tries: 1,
+        triedAt: '2026-11-19T20:01:00.000Z',
+      },
+    };
+    expect(await store.changeCalendarAlert(taken, alert)).toBe(true);
+    expect(await store.changeCalendarAlert(taken, alert)).toBe(false);
+    expect(api.calendarAlerts()[0]).toMatchObject({
+      kind: 'textsBlocked',
+      state: 'sending',
+      tries: 1,
+    });
+  });
+
+  it('keeps which Replies each person has seen', async () => {
+    const { store, core } = calendar();
+    expect(await store.repliesSeen('person-linda')).toBeNull();
+    await core.seeReplies(linda, '2026-11-19T20:00:00.000Z');
+    await core.seeReplies(linda, '2026-11-19T20:05:00.000Z');
+    expect(await store.repliesSeen('person-linda')).toBe('2026-11-19T20:05:00.000Z');
+    expect(await store.repliesSeen('person-mark')).toBeNull();
   });
 
   it('reads a text kept before Alerts as having none', async () => {

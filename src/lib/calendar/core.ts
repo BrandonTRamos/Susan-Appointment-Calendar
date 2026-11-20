@@ -8,7 +8,17 @@
 import { failureKind } from '../failure';
 import { formatDate, formatTime, isDate, isTime, momentOf } from '../localTime';
 import { activityUpdate } from './activityUpdate';
-import { alertFor, alertMarked, deliveredText, type DeliveryOutcome } from './alerts';
+import {
+  alertFor,
+  alertMarked,
+  calendarAlertFor,
+  deliveredText,
+  lowCreditSpell,
+  NEW_ALERT,
+  type Alert,
+  type CalendarAlert,
+  type DeliveryOutcome,
+} from './alerts';
 import {
   DETAIL_NAMES as NAMES,
   DETAILS,
@@ -37,6 +47,15 @@ import type {
   TextSender,
 } from './ports';
 import { reminderDue, reminderWords, STARTING_REMINDER } from './reminders';
+import {
+  AUTOMATIC_ANSWER_GAP,
+  automaticAnswerId,
+  automaticAnswerWords,
+  REPLY_WORDS_LIMIT,
+  replyPassedOn,
+  type IncomingReply,
+  type Reply,
+} from './replies';
 import { holdsWebAddress } from './webAddress';
 import {
   isSubscriptionSecret,
@@ -57,6 +76,7 @@ import {
   UNCONFIRMED_AFTER,
   usPhoneNumber,
   type CalendarSettings,
+  type MessageProgress,
   type Text,
   type TextReason,
 } from './texts';
@@ -162,6 +182,11 @@ export interface CalendarCore {
    * marked delivered or failed as the sender says, and one with no confirmation of delivery by
    * `unconfirmedAfter` after it was sent is marked failed as not confirmed delivered. A text the
    * sender gave no name to cannot be asked about, and stays sent.
+   *
+   * It sends the automatic answer to each Reply not yet answered, at most once in
+   * AUTOMATIC_ANSWER_GAP, and passes each Reply on to every Admin. Last, one delivery at a time, it
+   * sends the Alerts: about texts that did not get through, and calendar Alerts, such as one for
+   * each spell of low credit.
    */
   runDue(): Promise<Text[]>;
   /**
@@ -172,6 +197,26 @@ export interface CalendarCore {
    * through raises an Alert, sent at once. Answers with its record as it now is.
    */
   recordDelivery(report: { textId: string; outcome: DeliveryOutcome }): Promise<Text | null>;
+
+  /**
+   * A text Susan sent back, as the text sender's inbound side hands it over: kept with its words and
+   * when it came, and nothing else is done with it here. The scheduled run passes it on to every
+   * Admin and sends her the automatic answer. Its words are never read for meaning: no word in it
+   * changes, cancels or confirms anything. The same Reply arriving again is kept once, and answers
+   * with the one already kept.
+   */
+  receiveReply(reply: IncomingReply): Promise<Reply>;
+  /**
+   * The text sender's report that Susan opted out of texts, so none reaches her until she undoes
+   * it. Raises a calendar Alert, sent by the next scheduled run; the same report arriving again
+   * raises none, and answers null. Only she can undo it, by replying START.
+   */
+  recordOptOut(report: { key: string | null }): Promise<CalendarAlert | null>;
+  /**
+   * Records that the person has seen every Reply that came up to `upTo`, so that the Replies tab
+   * counts only newer ones as not yet seen. Never goes back. Answers the moment now recorded.
+   */
+  seeReplies(by: Actor, upTo: unknown): Promise<string | null>;
 }
 
 export interface CalendarCoreOptions {
@@ -338,6 +383,25 @@ async function fewAtATime<T>(
     while (next < items.length) await each(items[next++]);
   };
   await Promise.all(Array.from({ length: Math.min(atOnce, items.length) }, worker));
+}
+
+/** Writes a message's sending as `next`, only if it is still as `current`; answers whether it did. */
+type Change = (next: MessageProgress, current: MessageProgress) => Promise<boolean>;
+
+/**
+ * Whether a message to the Admins is ready to be sent: due and not tried, due again RETRY_AFTER
+ * after a try in which a delivery failed, or taken up by a run that stopped on it.
+ */
+function ready(progress: MessageProgress | null, now: number): boolean {
+  if (!progress || progress.state === 'raised') return false;
+  if (progress.triedAt === null) return progress.state === 'due';
+  return Date.parse(progress.triedAt) <= now - RETRY_AFTER;
+}
+
+/** What Susan wrote, as it is kept: nothing nobody can see, and no more than REPLY_WORDS_LIMIT. */
+function replyWords(sent: unknown): string {
+  if (typeof sent !== 'string') return '';
+  return sent.replace(UNSEEN, '').replace(/\r\n?/g, '\n').trim().slice(0, REPLY_WORDS_LIMIT);
 }
 
 /** A contact's name: one line, kept short. */
@@ -665,11 +729,14 @@ export function createCalendarCore({
     async runDue() {
       const now = clock.now();
       const at = now.toISOString();
-      const [appointments, texts, { susansNumber }] = await Promise.all([
+      const [appointments, texts, settings, replies, calendarAlerts] = await Promise.all([
         store.everyAppointment(),
         store.everyText(),
         store.settings(),
+        store.everyReply(),
+        store.everyCalendarAlert(),
       ]);
+      const { susansNumber } = settings;
       const kept = new Map(texts.map((text) => [text.id, text]));
       const done: Text[] = [];
 
@@ -733,6 +800,52 @@ export function createCalendarCore({
         done.push(await attempt(text, susansNumber, { startsAt: appointment.startsAt, tried: 0 }));
       }
 
+      // The automatic answer to each Reply that has had none decided, the oldest first: at most one
+      // in AUTOMATIC_ANSWER_GAP. Its text is claimed before the Reply is marked, so a run that
+      // stops between the two leaves the next run nothing to send twice.
+      const answers = texts.filter((text) => text.kind === 'automaticAnswer');
+      let lastAnswer =
+        answers
+          .map((text) => text.dueAt)
+          .sort()
+          .at(-1) ?? null;
+      const repliesNow = new Map(replies.map((reply) => [reply.id, reply]));
+      const toAnswer = replies
+        .filter((reply) => reply.answer === 'due')
+        .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt) || a.id.localeCompare(b.id));
+      for (const reply of toAnswer) {
+        const recent =
+          lastAnswer !== null &&
+          Date.parse(reply.receivedAt) - Date.parse(lastAnswer) < AUTOMATIC_ANSWER_GAP;
+        if (!recent) {
+          const id = automaticAnswerId(reply);
+          const text = newText({
+            id,
+            kind: 'automaticAnswer',
+            appointmentId: null,
+            reminderId: null,
+            words: automaticAnswerWords(settings),
+            dueAt: reply.receivedAt,
+          });
+          lastAnswer = reply.receivedAt;
+          if (!kept.has(id)) {
+            if (!susansNumber) {
+              const notSent = alertMarked({
+                ...text,
+                status: 'notSent',
+                reason: 'noNumber',
+                attempts: 0,
+              });
+              if (await store.claimText(notSent)) done.push(notSent);
+            } else if (await store.claimText(text)) {
+              done.push(await attempt(text, susansNumber, { startsAt: null, tried: 0 }));
+            }
+          }
+        }
+        const answered: Reply = { ...reply, answer: recent ? 'recent' : 'sent' };
+        if (await store.changeReply(answered, reply)) repliesNow.set(reply.id, answered);
+      }
+
       // Texts sent and not yet settled: what became of each, as the text sender now says. Only
       // after every send, which go one at a time; these are asked a few at a time, the oldest
       // first, and each is recorded as soon as its answer comes, so a slow answer holds up nothing
@@ -749,11 +862,99 @@ export function createCalendarCore({
         if (await store.changeText(settled, text)) done.push(settled);
       });
 
+      // Each Reply passed on to every Admin, then the Alerts, one delivery at a time.
+      const passOnAt = clock.now().getTime();
+      const toPassOn = [...repliesNow.values()]
+        .filter((reply) => ready(reply.passOn, passOnAt))
+        .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt) || a.id.localeCompare(b.id));
+      const textsNow = new Map(texts.map((text) => [text.id, text]));
+      for (const text of done) textsNow.set(text.id, text);
+      for (const reply of toPassOn)
+        await tellEveryAdmin(
+          reply.passOn,
+          replyPassedOn(reply, settings, timeZone, textsNow.get(automaticAnswerId(reply)) ?? null),
+          (next, current) =>
+            store.changeReply({ ...reply, passOn: next }, { ...reply, passOn: current }),
+          'Reply',
+        );
+
       // Alerts about the texts this run settled, and any left due or held by an earlier run.
-      const latest = new Map(texts.map((text) => [text.id, text]));
-      for (const text of done) latest.set(text.id, text);
+      const latest = textsNow;
+
+      // One Alert for each spell of low credit, from the credit the text sender last said is left.
+      const spell = lowCreditSpell([...latest.values()]);
+      const alertsNow = [...calendarAlerts];
+      if (spell) {
+        const lowCredit: CalendarAlert = {
+          id: `lowCredit:${spell.id}`,
+          kind: 'lowCredit',
+          raisedAt: at,
+          creditLeft: spell.creditLeft,
+          progress: NEW_ALERT,
+        };
+        if (!alertsNow.some((alert) => alert.id === lowCredit.id))
+          if (await store.claimCalendarAlert(lowCredit)) alertsNow.push(lowCredit);
+      }
+      const alertsAt = clock.now().getTime();
+      const calendarAlertsReady = alertsNow
+        .filter((alert) => ready(alert.progress, alertsAt))
+        .sort((a, b) => a.raisedAt.localeCompare(b.raisedAt) || a.id.localeCompare(b.id));
+      for (const alert of calendarAlertsReady)
+        await tellEveryAdmin(
+          alert.progress,
+          calendarAlertFor(alert, timeZone),
+          (next, current) =>
+            store.changeCalendarAlert(
+              { ...alert, progress: next },
+              { ...alert, progress: current },
+            ),
+          'Alert',
+        );
+
       await raiseAlerts([...latest.values()], appointments);
       return done;
+    },
+
+    async receiveReply({ key, words, from }) {
+      const kept = typeof key === 'string' && /^[\w:-]{1,128}$/.test(key) ? key : null;
+      const { susansNumber } = await store.settings();
+      const number = typeof from === 'string' ? usPhoneNumber(from) : null;
+      const fromSusan = susansNumber !== null && number === susansNumber;
+      const reply: Reply = {
+        id: `reply:${kept ?? crypto.randomUUID()}`,
+        words: replyWords(words),
+        receivedAt: clock.now().toISOString(),
+        fromSusan,
+        // Texts go to nobody but Susan, so another number is answered by no text.
+        answer: fromSusan ? 'due' : 'notSusan',
+        passOn: NEW_ALERT,
+      };
+      if (await store.claimReply(reply)) return reply;
+      return (await store.everyReply()).find((each) => each.id === reply.id) ?? reply;
+    },
+
+    async recordOptOut({ key }) {
+      const at = clock.now().toISOString();
+      const kept = typeof key === 'string' && /^[\w:-]{1,128}$/.test(key) ? key : at;
+      const alert: CalendarAlert = {
+        id: `textsBlocked:${kept}`,
+        kind: 'textsBlocked',
+        raisedAt: at,
+        creditLeft: null,
+        progress: NEW_ALERT,
+      };
+      return (await store.claimCalendarAlert(alert)) ? alert : null;
+    },
+
+    // Seeing Replies changes no Appointment, so it leaves no activity record.
+    async seeReplies(by, upTo) {
+      if (typeof upTo !== 'string' || Number.isNaN(Date.parse(upTo)))
+        invalid('Which Replies were seen could not be read.');
+      const at = new Date(upTo).toISOString();
+      const seen = await store.repliesSeen(by.person.id);
+      if (seen !== null && seen >= at) return seen;
+      await store.keepRepliesSeen(by.person.id, at);
+      return at;
     },
 
     async recordDelivery({ textId, outcome }) {
@@ -775,83 +976,84 @@ export function createCalendarCore({
    */
   async function raiseAlerts(texts: readonly Text[], appointments: readonly Appointment[]) {
     const now = clock.now().getTime();
-    const ready = texts
-      .filter(({ alert }) => {
-        if (!alert || alert.state === 'raised') return false;
-        if (alert.triedAt === null) return alert.state === 'due';
-        return Date.parse(alert.triedAt) <= now - RETRY_AFTER;
-      })
+    const due = texts
+      .filter(({ alert }) => ready(alert, now))
       .sort((a, b) => a.triedAt.localeCompare(b.triedAt) || a.id.localeCompare(b.id));
-    for (const text of ready) await raiseAlert(text, appointments);
+    for (const text of due) {
+      const appointment = appointments.find((each) => each.id === text.appointmentId) ?? null;
+      await tellEveryAdmin(
+        text.alert!,
+        alertFor(text, appointment, timeZone),
+        (next, current) => store.changeText({ ...text, alert: next }, { ...text, alert: current }),
+        'Alert',
+      );
+    }
   }
 
   /**
-   * Records an Alert as raised without sending anything, because a run already took it up
+   * Records a message as sent without sending anything, because a run already took it up
    * ALERT_ATTEMPTS times: the last of them stopped before it could say how it went. What had not
    * been recorded as sent by then is given up. Logged in fixed words: how many deliveries had gone
    * and how many were refused, never to whom.
    */
-  async function giveUpAlert(text: Text) {
-    const alert = text.alert!;
+  async function giveUp(progress: MessageProgress, change: Change, what: string) {
     try {
-      if (!(await store.changeText({ ...text, alert: { ...alert, state: 'raised' } }, text)))
-        return;
+      if (!(await change({ ...progress, state: 'raised' }, progress))) return;
       console.error(
-        `Alert gave up after ${alert.tries} tries, the last stopped part way (sent ${alert.sent.length}, refused ${alert.refused.length})`,
+        `${what} gave up after ${progress.tries} tries, the last stopped part way (sent ${progress.sent.length}, refused ${progress.refused.length})`,
       );
     } catch (error) {
-      console.error(`Alert record could not be sent (${failureKind(error)})`);
+      console.error(`${what} record could not be sent (${failureKind(error)})`);
     }
   }
 
   /**
-   * Sends one Alert to every Admin, by email and by app notification. Susan is not an Admin, so she
-   * is never told. The run takes it up by a write that finds it as it was read, so two runs cannot
-   * both send it, then sends each delivery the messenger has not already made, one Admin and one
-   * channel at a time, and records each that went, or was refused for good, as soon as it has. A
-   * delivery that failed is tried again by a later run, up to ALERT_ATTEMPTS take-ups in all, a run
-   * that stopped part way included; one refused for good, or with nothing to reach (a channel not
-   * set up, no device), is not. If the run stops part way, a later run takes it up and sends only
-   * what had not been recorded. The one repeat that can happen: a delivery the email or push
-   * service accepted just before the run stopped, before its record was written, is sent again by
-   * the run that takes over. What broke is logged in fixed words, without the Appointment or the
-   * text.
+   * Sends one message to every Admin, by email and by app notification: an Alert, or a Reply passed
+   * on. Susan is not an Admin, so she is never told. The run takes it up by a write that finds it as
+   * it was read (`change`), so two runs cannot both send it, then sends each delivery the messenger
+   * has not already made, one Admin and one channel at a time, and records each that went, or was
+   * refused for good, as soon as it has. A delivery that failed is tried again by a later run, up to
+   * ALERT_ATTEMPTS take-ups in all, a run that stopped part way included; one refused for good, or
+   * with nothing to reach (a channel not set up, no device), is not. If the run stops part way, a
+   * later run takes it up and sends only what had not been recorded. The one repeat that can
+   * happen: a delivery the email or push service accepted just before the run stopped, before its
+   * record was written, is sent again by the run that takes over. What broke is logged in fixed
+   * words, without the Appointment, the text or the Reply.
    */
-  async function raiseAlert(text: Text, appointments: readonly Appointment[]) {
-    const alert = text.alert!;
+  async function tellEveryAdmin(
+    progress: MessageProgress,
+    { email, notification }: Alert,
+    change: Change,
+    what: string,
+  ) {
     // The cap holds for a run that stopped part way too: a claim left at the last try is not taken
     // up a further time.
-    if (alert.tries >= ALERT_ATTEMPTS) return giveUpAlert(text);
-    let held: Text = {
-      ...text,
-      alert: {
-        ...alert,
-        state: 'sending',
-        tries: alert.tries + 1,
-        triedAt: clock.now().toISOString(),
-      },
+    if (progress.tries >= ALERT_ATTEMPTS) return giveUp(progress, change, what);
+    let held: MessageProgress = {
+      ...progress,
+      state: 'sending',
+      tries: progress.tries + 1,
+      triedAt: clock.now().toISOString(),
     };
-    const keep = async (next: Text) => {
-      if (!(await store.changeText(next, held))) return false;
+    const keep = async (next: MessageProgress) => {
+      if (!(await change(next, held))) return false;
       held = next;
       return true;
     };
-    const failed = (what: string, error: unknown) =>
-      console.error(`Alert ${what} could not be sent (${failureKind(error)})`);
+    const failed = (part: string, error: unknown) =>
+      console.error(`${what} ${part} could not be sent (${failureKind(error)})`);
     try {
-      if (!(await store.changeText(held, text))) return;
+      if (!(await change(held, progress))) return;
     } catch (error) {
       failed('record', error);
       return;
     }
-    const appointment = appointments.find((each) => each.id === text.appointmentId) ?? null;
-    const { email, notification } = alertFor(text, appointment, timeZone);
     let retry = false;
     try {
       for (const admin of [...new Set(await messenger.admins())]) {
         for (const channel of ['email', 'app notification'] as const) {
           // Leaves out what went, and what was refused for good: neither is sent again.
-          const skip = [...held.alert!.sent, ...held.alert!.refused];
+          const skip = [...held.sent, ...held.refused];
           let went: Deliveries;
           try {
             went =
@@ -864,32 +1066,29 @@ export function createCalendarCore({
             continue;
           }
           if (went.failed.length) {
-            console.error(`Alert ${channel} could not be sent (failed ${went.failed.length})`);
+            console.error(`${what} ${channel} could not be sent (failed ${went.failed.length})`);
             retry = true;
           }
           if (went.refused.length)
-            console.error(`Alert ${channel} was refused (refused ${went.refused.length})`);
+            console.error(`${what} ${channel} was refused (refused ${went.refused.length})`);
           if (went.sent.length === 0 && went.refused.length === 0) continue;
-          const { sent, refused } = held.alert!;
           const next = {
-            ...held.alert!,
-            sent: [...new Set([...sent, ...went.sent])],
-            refused: [...new Set([...refused, ...went.refused])],
+            ...held,
+            sent: [...new Set([...held.sent, ...went.sent])],
+            refused: [...new Set([...held.refused, ...went.refused])],
           };
           // Another run took it up: this one had stopped too long. It sends what is left.
-          if (!(await keep({ ...held, alert: next }))) return;
+          if (!(await keep(next))) return;
         }
       }
     } catch (error) {
       failed('delivery', error);
       retry = true;
     }
-    const giveUp = retry && held.alert!.tries >= ALERT_ATTEMPTS;
-    if (giveUp) console.error('Alert gave up on deliveries that kept failing');
-    const state = retry && !giveUp ? 'due' : 'raised';
-    await keep({ ...held, alert: { ...held.alert!, state } }).catch((error: unknown) =>
-      failed('record', error),
-    );
+    const givingUp = retry && held.tries >= ALERT_ATTEMPTS;
+    if (givingUp) console.error(`${what} gave up on deliveries that kept failing`);
+    const state = retry && !givingUp ? 'due' : 'raised';
+    await keep({ ...held, state }).catch((error: unknown) => failed('record', error));
   }
 
   /**
@@ -1003,7 +1202,7 @@ export function createCalendarCore({
             reference: result.reference,
             creditLeft,
           }
-        : { ...text, status: 'failed', reason: 'refused', creditLeft };
+        : { ...text, status: 'failed', reason: result.blocked ? 'blocked' : 'refused', creditLeft };
     } catch {
       if (text.attempts < SEND_ATTEMPTS) return text;
       next = { ...text, status: 'failed', reason: 'gaveUp' };

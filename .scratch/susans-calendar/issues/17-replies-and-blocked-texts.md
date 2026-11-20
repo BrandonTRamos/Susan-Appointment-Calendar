@@ -10,16 +10,18 @@
 
 **Status:** ready-for-agent
 
-- [ ] Every text the app sends names the app's reply address, so that her Replies come back to it.
-- [ ] Texts from Susan arrive at that public endpoint, which checks Textbelt's signature, rejects a call whose timestamp is more than 15 minutes old, and rejects anything else.
-- [ ] The core records each Reply with its words and time.
-- [ ] Each Reply is passed on to every Admin by email and by app notification, quoting what she wrote.
-- [ ] Susan gets the automatic answer, which names the contact person and phone number from Settings.
-- [ ] The automatic answer is sent at most once in a short period, so a run of Replies does not produce a run of answers.
-- [ ] The core never interprets a Reply: no word in it can change, cancel or confirm anything.
-- [ ] The Replies tab lists her Replies, newest first, and the tab shows a count of ones not yet seen.
+**Held for the owner:** everything but the real-phone STOP and HELP check is built on `ticket/17-replies-and-blocked-texts`. That check is the owner's, on the owner's own phone, with the steps in `docs/text-message-setup.md`, "Checking STOP and HELP"; its findings go in the spec's "Further Notes", and a refusal it finds goes in `TEXTBELT_OPTED_OUT_ERRORS`. This ticket is done once that is recorded.
+
+- [x] Every text the app sends names the app's reply address, so that her Replies come back to it.
+- [x] Texts from Susan arrive at that public endpoint, which checks Textbelt's signature, rejects a call whose timestamp is more than 15 minutes old, and rejects anything else.
+- [x] The core records each Reply with its words and time.
+- [x] Each Reply is passed on to every Admin by email and by app notification, quoting what she wrote.
+- [x] Susan gets the automatic answer, which names the contact person and phone number from Settings.
+- [x] The automatic answer is sent at most once in a short period, so a run of Replies does not produce a run of answers.
+- [x] The core never interprets a Reply: no word in it can change, cancel or confirm anything.
+- [x] The Replies tab lists her Replies, newest first, and the tab shows a count of ones not yet seen.
 - [ ] What Textbelt does with STOP and HELP has been tried on a real phone: whether a Reply of STOP reaches the reply address, what a send to a number that has opted out returns, and whether HELP gets an answer from Textbelt. The findings are written into the spec's "Further Notes", replacing the "to confirm" items they settle.
-- [ ] When the app learns that texts to Susan are blocked, from an opt-out report or from a blocked send, it raises an Alert saying so and explaining that only she can undo it, by replying START.
-- [ ] A banner shows on every screen while texts to Susan are blocked, and clears once a text is delivered again.
-- [ ] One Alert is raised when the text credit recorded by ticket 13 falls below a set number, starting at 20, and not again until the credit has been topped up.
-- [ ] Tests cover a forged inbound text being rejected, a stale one being rejected, a Reply being passed on, the limit on automatic answers, the blocked-texts Alert and banner, and the low-credit Alert.
+- [x] When the app learns that texts to Susan are blocked, from an opt-out report or from a blocked send, it raises an Alert saying so and explaining that only she can undo it, by replying START.
+- [x] A banner shows on every screen while texts to Susan are blocked, and clears once a text is delivered again.
+- [x] One Alert is raised when the text credit recorded by ticket 13 falls below a set number, starting at 20, and not again until the credit has been topped up.
+- [x] Tests cover a forged inbound text being rejected, a stale one being rejected, a Reply being passed on, the limit on automatic answers, the blocked-texts Alert and banner, and the low-credit Alert.

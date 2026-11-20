@@ -1,8 +1,8 @@
 // Synthesizes the Amplify backend with CDK locally, without AWS credentials. It catches CDK and
 // bundling errors before a deploy, then checks the sign-in rules, the rules about who may read and
-// write calendar data and subscription links, the feed's public address, the scheduled run that
-// sends texts and raises Alerts, the Textbelt key's secret, and the cost tags in what was
-// synthesized. Usage: npm run synth
+// write calendar data and subscription links, the two public addresses (the feed's and the reply
+// address), the scheduled run that sends texts, passes on Replies and raises Alerts, the Textbelt
+// key's secret, and the cost tags in what was synthesized. Usage: npm run synth
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -111,7 +111,10 @@ function onlyOwn(rules) {
 }
 
 /** The query that lists a model's rows, as Amplify names it: a plural, not doubled. */
-const listOf = (model) => `list${model}${model.endsWith('s') ? '' : 's'}`;
+const listOf = (model) =>
+  model.endsWith('y')
+    ? `list${model.slice(0, -1)}ies`
+    : `list${model}${model.endsWith('s') ? '' : 's'}`;
 
 /** The calendar core's commands (amplify/data/resource.ts): the only way to change the calendar. */
 const COMMANDS = [
@@ -121,6 +124,7 @@ const COMMANDS = [
   'changeSettings',
   'makeSubscriptionLink',
   'removeAppointment',
+  'seeReplies',
   'sendTestText',
   'switchOffSubscriptionLink',
 ];
@@ -128,9 +132,16 @@ const COMMANDS = [
  * The calendar, the record of texts, and the settings (amplify/data/resource.ts). Only the commands
  * function and the scheduled run write these directly.
  */
-const MODELS = ['Appointment', 'ActivityRecord', 'Text', 'CalendarSettings'];
+const MODELS = [
+  'Appointment',
+  'ActivityRecord',
+  'Text',
+  'CalendarSettings',
+  'Reply',
+  'CalendarAlert',
+];
 /** Kept per person, and read only by that person. Only the commands function writes these. */
-const OWN_MODELS = ['SubscriptionLink'];
+const OWN_MODELS = ['SubscriptionLink', 'RepliesSeen'];
 /**
  * Turning app notifications on and off for a device, and keeping it up to date: the only other
  * mutations anyone may call.
@@ -151,18 +162,21 @@ const APP_NOTIFICATION_FIELDS = [
   'Query/getAppNotificationKey',
 ];
 
+/** All the reply address's function may call in the data API (amplify/backend.ts). */
+const TEXT_REPLIES_FIELDS = ['Mutation/createReply', 'Query/getCalendarSettings'];
+
 /**
- * What the app-notifications function's role may call in the data API, as 'Type/field', or
- * 'Type/*' for a whole type. Its role is the one its own policies name.
+ * What a function's role may call in the data API, as 'Type/field', or 'Type/*' for a whole type.
+ * Its role is the one its own policies name, from the function's name ('appnotifications').
  */
-function appNotificationsAccess() {
+function dataApiAccess(name) {
   return stacks()
     .flatMap((stack) => Object.values(stack))
     .filter(
       (resource) =>
         resource.Type === 'AWS::IAM::Policy' &&
         resource.Properties.Roles?.some((each) =>
-          /^appnotificationslambdaServiceRole/.test(each.Ref ?? ''),
+          new RegExp(`^${name}lambdaServiceRole`).test(each.Ref ?? ''),
         ),
     )
     .flatMap((policy) => policy.Properties.PolicyDocument.Statement)
@@ -221,20 +235,31 @@ function appNotificationsFunction() {
   return { properties: lambda.Properties, statements, code };
 }
 
-/**
- * The subscription feed's function: the one its public address (a Lambda function URL) points at,
- * found by that address rather than by anything another function might share. Gives its
- * properties, what its role may do, the code it runs as bundled for the deploy, and how many public
- * addresses there are.
- */
-function feedFunction() {
-  const all = stacks();
-  const urls = all.flatMap((stack) =>
-    Object.values(stack).filter((resource) => resource.Type === 'AWS::Lambda::Url'),
+/** Every public address: each Lambda function URL, with the logical ID of the function it serves. */
+function publicAddresses() {
+  return stacks().flatMap((stack) =>
+    Object.entries(stack)
+      .filter(([, resource]) => resource.Type === 'AWS::Lambda::Url')
+      .map(([id, resource]) => ({
+        id,
+        properties: resource.Properties,
+        target: resource.Properties?.TargetFunctionArn?.['Fn::GetAtt']?.[0] ?? '',
+      })),
   );
-  const target = urls[0]?.Properties?.TargetFunctionArn?.['Fn::GetAtt']?.[0];
+}
+
+/**
+ * The function a public address serves, by the name its definition gives it ('subscriptionfeed',
+ * 'textreplies'): its address, its properties, what its role may do outside the data API, and the
+ * code it runs as bundled for the deploy.
+ */
+function publicFunction(name) {
+  const all = stacks();
+  const urls = publicAddresses().filter(({ target }) =>
+    new RegExp(`^${name}lambda[0-9A-F]+$`).test(target),
+  );
   const lambda = all
-    .map((stack) => stack[target])
+    .map((stack) => stack[urls[0]?.target])
     .find((resource) => resource?.Type === 'AWS::Lambda::Function');
   if (urls.length !== 1 || !lambda) return { urls, properties: {}, actions: [], code: '' };
   const role = lambda.Properties.Role?.['Fn::GetAtt']?.[0];
@@ -246,6 +271,7 @@ function feedFunction() {
         resource.Properties.Roles?.some((each) => each.Ref === role),
     )
     .flatMap((policy) => policy.Properties.PolicyDocument.Statement)
+    .filter((statement) => !String(statement.Action).startsWith('appsync:'))
     .flatMap((statement) => [statement.Action].flat());
   const asset = /^([0-9a-f]{64})\.zip$/.exec(lambda.Properties.Code?.S3Key ?? '')?.[1];
   const code = asset ? readFileSync(join(out, `asset.${asset}`, 'index.mjs'), 'utf8') : '';
@@ -373,10 +399,24 @@ function checks() {
   const client = clients[0] ?? {};
   const queries = openToSignedIn('Query');
   const queryRules = ruleSteps('Query');
-  const feed = feedFunction();
+  const feed = publicFunction('subscriptionfeed');
+  const replies = publicFunction('textreplies');
   const run = scheduledFunction();
   const claim = writeStep('Mutation', 'createText');
   const retake = writeStep('Mutation', 'updateText');
+  const replyClaim = writeStep('Mutation', 'createReply');
+  const replyChange = writeStep('Mutation', 'updateReply');
+  const alertClaim = writeStep('Mutation', 'createCalendarAlert');
+  const alertChange = writeStep('Mutation', 'updateCalendarAlert');
+  const conditional = (words) =>
+    words.includes('"operation": "UpdateItem"') &&
+    words.includes('$util.qr($ctx.stash.conditions.add($args.condition))') &&
+    words.includes('$util.qr($UpdateItem.put("condition", $Conditions))');
+  const createsOnce = (words) =>
+    /"id":\s*\{\s*"attributeExists":\s*false\s*\}/.test(words) &&
+    /"condition":\s*\$condition/.test(words);
+  /** The function URL a variable names, by the logical ID of its resource. */
+  const urlOf = (value) => JSON.stringify(value ?? '');
   const mutations = openToSignedIn('Mutation');
   const subscriptions = openToSignedIn('Subscription');
   const tables = resources('Custom::AmplifyDynamoDBTable');
@@ -438,6 +478,12 @@ function checks() {
       ['onCreate', 'onUpdate'].every((on) => subscriptions.get(`${on}Text`)),
     ],
     [
+      'anyone signed in is sent every new Reply and calendar Alert, and every change to one',
+      ['Reply', 'CalendarAlert'].every((model) =>
+        ['onCreate', 'onUpdate'].every((on) => subscriptions.get(`${on}${model}`)),
+      ),
+    ],
+    [
       "the calendar core's commands, and turning app notifications on and off, are the only " +
         'mutations a signed-in person can call',
       [...mutations]
@@ -466,7 +512,12 @@ function checks() {
     ],
     [
       'the app-notifications function may call only the device and key operations it needs',
-      appNotificationsAccess().join() === APP_NOTIFICATION_FIELDS.join(),
+      dataApiAccess('appnotifications').join() === APP_NOTIFICATION_FIELDS.join(),
+    ],
+    [
+      // It only keeps a Reply; the scheduled run passes it on and answers her.
+      "the reply address's function may only read the settings and create a Reply in the data API",
+      dataApiAccess('textreplies').join() === TEXT_REPLIES_FIELDS.join(),
     ],
     [
       'a device is deleted only if the condition it is deleted on holds when DynamoDB deletes it',
@@ -529,10 +580,21 @@ function checks() {
     ['anyone signed in can ask which text sender is in use', queries.get('textSender') === true],
     [
       // As a secret, never in the code or the data: only the commands function, for the test text,
-      // and the scheduled run are given it, and nothing else holds a TEXTBELT_KEY at all.
-      'only the commands function and the scheduled run get the Textbelt key, as a secret',
-      textbeltKeyHolders().join() === 'calendarcommands,sendtexts' &&
-        functions().filter(({ variables }) => 'TEXTBELT_KEY' in variables).length === 2,
+      // the scheduled run, and the reply address, to check Textbelt's signature, are given it, and
+      // nothing else holds a TEXTBELT_KEY at all.
+      'only the commands function, the scheduled run and the reply address get the Textbelt key, as a secret',
+      textbeltKeyHolders().join() === 'calendarcommands,sendtexts,textreplies' &&
+        functions().filter(({ variables }) => 'TEXTBELT_KEY' in variables).length === 3,
+    ],
+    [
+      // So that Susan's Replies come back to the calendar (amplify/calendar/textbelt.ts).
+      'both functions that send texts are told the reply address, to name in every text',
+      replies.urls.length === 1 &&
+        functions()
+          .filter(({ id }) => /^(calendarcommands|sendtexts)lambda[0-9A-F]+$/.test(id))
+          .map(({ variables }) => urlOf(variables.REPLY_WEBHOOK_URL))
+          .filter((value) => value.includes(replies.urls[0].id) && value.includes('FunctionUrl'))
+          .length === 2,
     ],
     [
       'the scheduled run is told how long a text may go unconfirmed, in minutes',
@@ -546,10 +608,14 @@ function checks() {
     ],
     [
       "a signed-in person can read their own subscription link and nobody else's",
-      OWN_MODELS.every((model) =>
-        [`get${model}`, `list${model}s`, `${model[0].toLowerCase()}${model.slice(1)}ByHash`].every(
-          (query) => onlyOwn(queryRules.get(query) ?? []),
-        ),
+      ['getSubscriptionLink', 'listSubscriptionLinks', 'subscriptionLinkByHash'].every((query) =>
+        onlyOwn(queryRules.get(query) ?? []),
+      ),
+    ],
+    [
+      "a signed-in person can read which Replies they have seen and nobody else's",
+      ['getRepliesSeen', listOf('RepliesSeen')].every((query) =>
+        onlyOwn(queryRules.get(query) ?? []),
       ),
     ],
     [
@@ -559,10 +625,10 @@ function checks() {
       ),
     ],
     [
-      "the commands, feed and scheduled run functions are told Susan's time zone",
+      "the commands, feed, scheduled run and reply address functions are told Susan's time zone",
       resources('AWS::Lambda::Function').filter(
         (lambda) => lambda.Environment?.Variables?.SUSAN_TIME_ZONE,
-      ).length === 3 && Boolean(run.properties.Environment?.Variables?.SUSAN_TIME_ZONE),
+      ).length === 4 && Boolean(run.properties.Environment?.Variables?.SUSAN_TIME_ZONE),
     ],
     [
       // Every minute, in a cron expression, and one function for it.
@@ -651,11 +717,51 @@ function checks() {
         /\{\s*alertTriedAt:\s*\{\s*eq:/.test(run.code),
     ],
     [
-      // The feed has the only public address. Its link is checked inside the function.
-      'the subscription feed has the only public address, with a cap on requests at once',
-      feed.urls.length === 1 &&
-        feed.urls[0].Properties.AuthType === 'NONE' &&
-        feed.properties.ReservedConcurrentExecutions > 0,
+      // The feed's link is checked inside the function, as is the reply address's signature.
+      'the only public addresses are the subscription feed and the reply address, each capped',
+      publicAddresses().length === 2 &&
+        [feed, replies].every(
+          (fn) =>
+            fn.urls.length === 1 &&
+            fn.urls[0].properties.AuthType === 'NONE' &&
+            fn.properties.ReservedConcurrentExecutions > 0,
+        ),
+    ],
+    [
+      // amplify/calendar/textbelt.ts: Textbelt's HMAC over the timestamp and the raw body, compared
+      // in constant time, and a timestamp no more than 15 minutes from now.
+      "the reply address checks Textbelt's signature, in constant time, and the timestamp",
+      replies.code.includes('timingSafeEqual') &&
+        replies.code.includes('x-textbelt-signature') &&
+        replies.code.includes('x-textbelt-timestamp') &&
+        replies.code.includes('createHmac'),
+    ],
+    [
+      // The reply address keeps nothing itself and reads no table: it goes through the data API.
+      'the reply address may not reach any table, email or the user pool directly',
+      replies.actions.every(
+        (action) =>
+          action === 'ssm:GetParameters' ||
+          action === 's3:GetObject' ||
+          String(action).startsWith('logs:'),
+      ),
+    ],
+    [
+      // The claim (claimReply in amplify/calendar/data-store.ts): the same Reply arriving twice is
+      // kept once, and so is the same calendar Alert.
+      'a Reply and a calendar Alert are each created once, by a write that fails when it is there',
+      createsOnce(replyClaim) && createsOnce(alertClaim),
+    ],
+    [
+      // As a text's Alert: answered and passed on, or sent, only by the run whose write finds it as
+      // it read it (changeReply and changeCalendarAlert in amplify/calendar/data-store.ts).
+      'a Reply and a calendar Alert are each sent by one run at a time, by conditional writes',
+      conditional(replyChange) &&
+        conditional(alertChange) &&
+        run.code.includes('updateReply(input: $input, condition: $condition)') &&
+        run.code.includes('updateCalendarAlert(input: $input, condition: $condition)') &&
+        /\{\s*passOnTriedAt:\s*\{\s*eq:/.test(run.code) &&
+        /\{\s*answer:\s*\{\s*eq:/.test(run.code),
     ],
     [
       // Its environment names the two tables it reads, from the tables' own stacks.

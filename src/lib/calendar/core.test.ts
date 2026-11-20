@@ -28,6 +28,10 @@ import {
   STATUS_READS_AT_ONCE,
   TEXT_KINDS,
   TEST_TEXT_WORDS,
+  blockedSince,
+  lowCreditSpell,
+  newestFirst,
+  repliesNotSeen,
 } from './index';
 
 const EASTERN = 'America/New_York';
@@ -3834,5 +3838,559 @@ describe('Alerts for a text holding a web address', () => {
     const said = JSON.stringify([messenger.emails(), alertNotifications(messenger)]);
     expect(said).toMatch(/an Appointment, Fri, Nov 20, 2026 at 2:00 pm/);
     expect(said).not.toMatch(/example\.com/);
+  });
+});
+
+describe('Replies', () => {
+  /** An invented number for the contact in Settings. */
+  const CONTACT = '+15555550187';
+
+  /** A calendar with Susan's number and the contact set, and the check-up added. */
+  async function withReplies(
+    settings: { contactName?: string | null; contactPhone?: string | null } = {},
+  ) {
+    const cal = calendar();
+    await cal.core.changeSettings(linda, {
+      susansNumber: SUSANS_NUMBER,
+      contactName: 'Linda',
+      contactPhone: CONTACT,
+      ...settings,
+    });
+    const added = await cal.core.addAppointment(mark, everyDetail);
+    return { ...cal, added };
+  }
+  /** Moves the clock on by minutes. */
+  const after = ({ clock }: ReturnType<typeof calendar>, minutes: number) =>
+    clock.set(new Date(clock.now().getTime() + minutes * 60_000).toISOString());
+  /** A Reply from Susan's number, as the text sender's inbound side hands it over. */
+  const fromSusan = (words: string, key: string | null = null) => ({
+    key,
+    words,
+    from: SUSANS_NUMBER,
+  });
+  const ANSWER =
+    "Susan's Calendar: Texts to this number are not answered. If you need anything, please call Linda at (555) 555-0187.";
+  /** Each Reply passed on so far, by channel, as [person ID, words]. */
+  const passedOn = (messenger: MemoryMessenger) => ({
+    email: messenger
+      .emails()
+      .filter(({ email }) => email.opens === '/replies' && !email.subject.includes('alert'))
+      .flatMap(({ to, email }) => to.map((id) => [id, email.body])),
+    app: messenger
+      .appNotifications()
+      .filter(({ notification }) => notification.tag.startsWith('reply-'))
+      .flatMap(({ to, notification }) => to.map((id) => [id, notification.body])),
+  });
+
+  it('are kept with their words and when they came, and change nothing in the calendar', async () => {
+    const { core, store, sender, clock } = await withReplies();
+    const before = store.appointments();
+    const activity = store.activity();
+    clock.set('2026-11-19T20:02:00.000Z');
+    const reply = await core.receiveReply(fromSusan("I can't go, I'm not well", 'abc123'));
+    expect(store.replies()).toEqual([reply]);
+    expect(reply).toMatchObject({
+      id: 'reply:abc123',
+      words: "I can't go, I'm not well",
+      receivedAt: '2026-11-19T20:02:00.000Z',
+      fromSusan: true,
+      answer: 'due',
+    });
+    expect(store.appointments()).toEqual(before);
+    expect(store.activity()).toEqual(activity);
+    // Nothing is sent and nobody is told until the scheduled run.
+    expect(sender.taken()).toEqual([]);
+  });
+
+  it('are passed on to every Admin by email and app notification, quoting what she wrote', async () => {
+    const cal = await withReplies();
+    const { core, messenger, clock } = cal;
+    clock.set('2026-11-19T20:02:00.000Z');
+    await core.receiveReply(fromSusan("I can't go, I'm not well"));
+    after(cal, 1);
+    await core.runDue();
+    const { email, app } = passedOn(messenger);
+    expect(email.map(([id]) => id)).toEqual(ADMINS);
+    expect(app.map(([id]) => id)).toEqual(ADMINS);
+    expect(JSON.stringify([email, app])).not.toContain(susan.person.id);
+    const [{ email: sent }] = messenger.emails();
+    expect(sent).toEqual({
+      subject: "Susan's Calendar: Susan texted back",
+      body:
+        "Susan texted back to the calendar's number, Thu, Nov 19, 2026 at 3:02 pm:\n\n" +
+        '"I can\'t go, I\'m not well"\n\n' +
+        'The calendar does not act on what she writes: nothing was changed, cancelled or confirmed. ' +
+        'She was sent the automatic answer, saying texts to this number are not answered and to call Linda.\n\n' +
+        'Her Replies are in the app.',
+      opens: '/replies',
+    });
+    const replyNotifications = messenger
+      .appNotifications()
+      .filter(({ notification }) => notification.tag.startsWith('reply-'));
+    expect(replyNotifications[0].notification).toMatchObject({
+      title: 'Susan texted back',
+      body: '"I can\'t go, I\'m not well"',
+      opens: '/replies',
+    });
+    // Each is passed on once, however many runs follow.
+    after(cal, 5);
+    await core.runDue();
+    expect(passedOn(messenger).email).toHaveLength(ADMINS.length);
+  });
+
+  it('get her the automatic answer, naming the contact person and number from Settings', async () => {
+    const cal = await withReplies();
+    await cal.core.receiveReply(fromSusan('Who is this?'));
+    after(cal, 1);
+    await cal.core.runDue();
+    expect(cal.sender.taken()).toEqual([{ to: SUSANS_NUMBER, words: ANSWER }]);
+    const answer = cal.store.texts().find((text) => text.kind === 'automaticAnswer');
+    expect(answer).toMatchObject({ status: 'sent', words: ANSWER, appointmentId: null });
+    expect(cal.store.replies()[0].answer).toBe('sent');
+  });
+
+  it('send the automatic answer at most once an hour, however many Replies come', async () => {
+    const cal = await withReplies();
+    const { core, sender, store } = cal;
+    await core.receiveReply(fromSusan('Hello?'));
+    after(cal, 1);
+    await core.receiveReply(fromSusan('Is anyone there'));
+    await core.runDue();
+    after(cal, 10);
+    await core.receiveReply(fromSusan('Hello??'));
+    await core.runDue();
+    after(cal, 40);
+    await core.receiveReply(fromSusan('HELP'));
+    await core.runDue();
+    expect(sender.taken()).toHaveLength(1);
+    expect(store.replies().map((reply) => reply.answer)).toEqual([
+      'sent',
+      'recent',
+      'recent',
+      'recent',
+    ]);
+    // An hour after the last answer, the next Reply gets one again.
+    after(cal, 15);
+    await core.receiveReply(fromSusan('Thank you'));
+    await core.runDue();
+    expect(sender.taken()).toHaveLength(2);
+    // Each was still passed on.
+    expect(passedOn(cal.messenger).email).toHaveLength(5 * ADMINS.length);
+  });
+
+  it('tell the Admins when she was not answered again, and why', async () => {
+    const cal = await withReplies();
+    await cal.core.receiveReply(fromSusan('One'));
+    after(cal, 1);
+    await cal.core.receiveReply(fromSusan('Two'));
+    await cal.core.runDue();
+    const bodies = cal.messenger.emails().map(({ email }) => email.body);
+    expect(bodies.filter((body) => body.includes('"Two"'))[0]).toContain(
+      'She was not sent the automatic answer again: she had it less than an hour before.',
+    );
+  });
+
+  it('are never read for meaning: no word in one changes, cancels or confirms anything', async () => {
+    const cal = await withReplies({});
+    const { core, store, sender, added } = cal;
+    const before = store.appointments();
+    const words = [
+      'Cancel',
+      'CANCEL MY APPOINTMENT',
+      'Yes',
+      'C',
+      'Move it to 3pm',
+      'STOP',
+      'START',
+      'HELP',
+      'Delete',
+    ];
+    for (const each of words) {
+      await core.receiveReply(fromSusan(each));
+      after(cal, 61);
+      await core.runDue();
+    }
+    expect(store.appointments()).toEqual(before);
+    expect(store.activity()).toHaveLength(1);
+    // Every word is passed on and answered the same way, STOP and HELP included.
+    expect(store.replies().map((reply) => [reply.words, reply.answer])).toEqual(
+      words.map((each) => [each, 'sent']),
+    );
+    const answers = store.texts().filter((text) => text.kind === 'automaticAnswer');
+    expect(answers.map((text) => text.words)).toEqual(words.map(() => ANSWER));
+    // Her Reminder still went at its time, as it was set.
+    const [reminder] = store.texts().filter((text) => text.kind === 'reminder');
+    expect(reminder).toMatchObject({ status: 'sent', dueAt: added.reminders[0].dueAt });
+    expect(sender.taken().map((text) => text.words)).toContain(reminder.words);
+  });
+
+  it('are kept, passed on and answered once when the same Reply arrives twice', async () => {
+    const cal = await withReplies();
+    const first = await cal.core.receiveReply(fromSusan('Running late', 'same'));
+    const again = await cal.core.receiveReply(fromSusan('Running late', 'same'));
+    expect(again).toEqual(first);
+    after(cal, 1);
+    await cal.core.runDue();
+    expect(cal.store.replies()).toHaveLength(1);
+    expect(cal.sender.taken()).toHaveLength(1);
+    expect(passedOn(cal.messenger).email).toHaveLength(ADMINS.length);
+  });
+
+  it("from a number that is not Susan's are passed on, but answered by no text", async () => {
+    const cal = await withReplies();
+    const reply = await cal.core.receiveReply({
+      key: null,
+      words: 'Who is this?',
+      from: '+15555550199',
+    });
+    expect(reply).toMatchObject({ fromSusan: false, answer: 'notSusan' });
+    after(cal, 1);
+    await cal.core.runDue();
+    expect(cal.sender.taken()).toEqual([]);
+    const [{ email }] = cal.messenger.emails();
+    expect(email.subject).toBe("Susan's Calendar: a text came back from another number");
+    expect(email.body).toContain('No automatic answer was sent: texts go only to Susan.');
+    // The number it came from is kept nowhere.
+    expect(JSON.stringify(cal.store.replies())).not.toContain('5550199');
+  });
+
+  it('are taken as from Susan however her number is written', async () => {
+    const cal = await withReplies();
+    for (const from of ['+1 (555) 555-0123', '5555550123', '15555550123'])
+      expect((await cal.core.receiveReply({ key: null, words: 'Hi', from })).fromSusan).toBe(true);
+    expect((await cal.core.receiveReply({ key: null, words: 'Hi', from: null })).fromSusan).toBe(
+      false,
+    );
+  });
+
+  it('without a contact in Settings, still say texts here are not answered', async () => {
+    const cal = await withReplies({ contactName: null, contactPhone: null });
+    await cal.core.receiveReply(fromSusan('Hello'));
+    after(cal, 1);
+    await cal.core.runDue();
+    expect(cal.sender.taken()[0].words).toBe(
+      "Susan's Calendar: Texts to this number are not answered. If you need anything, please call someone who helps you.",
+    );
+  });
+
+  it('name only the contact person, or only the number, when only one is set', async () => {
+    const named = await withReplies({ contactPhone: null });
+    await named.core.receiveReply(fromSusan('Hello'));
+    await named.core.runDue();
+    expect(named.sender.taken()[0].words).toMatch(/please call Linda\.$/);
+    const numbered = await withReplies({ contactName: null });
+    await numbered.core.receiveReply(fromSusan('Hello'));
+    await numbered.core.runDue();
+    expect(numbered.sender.taken()[0].words).toMatch(/please call \(555\) 555-0187\.$/);
+  });
+
+  it('get an automatic answer that holds no web address, and none is sent if the contact holds one', async () => {
+    const plain = await withReplies();
+    await plain.core.receiveReply(fromSusan('Hello'));
+    await plain.core.runDue();
+    expect(holdsWebAddress(plain.sender.taken()[0].words)).toBe(false);
+    const linked = await withReplies({ contactName: 'Linda at linda.example.de' });
+    await linked.core.receiveReply(fromSusan('Hello'));
+    await linked.core.runDue();
+    expect(linked.sender.taken()).toEqual([]);
+    const [answer] = linked.store.texts();
+    expect(answer).toMatchObject({
+      kind: 'automaticAnswer',
+      status: 'notSent',
+      reason: 'webAddress',
+    });
+    // The Admins are told, as for any text that was not sent.
+    const alert = linked.messenger.emails().find(({ email }) => email.subject.includes('alert'));
+    expect(alert?.email.subject).toBe(
+      "Susan's Calendar alert: an automatic answer was not sent, because it held a web address",
+    );
+  });
+
+  it('raise an Alert, opening Replies, when the automatic answer fails', async () => {
+    const cal = await withReplies();
+    await cal.core.receiveReply(fromSusan('Hello'));
+    cal.sender.refuseNext();
+    await cal.core.runDue();
+    const alert = cal.messenger.emails().find(({ email }) => email.subject.includes('alert'));
+    expect(alert?.email).toMatchObject({
+      subject: "Susan's Calendar alert: an automatic answer failed",
+      opens: '/replies',
+    });
+    expect(alert?.email.body).toContain(
+      'It answered a text Susan sent. Her Replies are in the app.',
+    );
+  });
+
+  it('are passed on again, a little later, only where a delivery failed', async () => {
+    const cal = await withReplies();
+    cal.messenger.failFor('email', mark.person.id);
+    await cal.core.receiveReply(fromSusan('Hello'));
+    await cal.core.runDue();
+    expect(passedOn(cal.messenger).email.map(([id]) => id)).toEqual([
+      linda.person.id,
+      ann.person.id,
+    ]);
+    after(cal, 3);
+    await cal.core.runDue();
+    expect(passedOn(cal.messenger).email.map(([id]) => id)).toEqual([
+      linda.person.id,
+      ann.person.id,
+      mark.person.id,
+    ]);
+    expect(passedOn(cal.messenger).app).toHaveLength(ADMINS.length);
+    expect(cal.store.replies()[0].passOn.state).toBe('raised');
+  });
+
+  it('keep what she wrote, without characters nobody can see, up to a limit', async () => {
+    const cal = await withReplies();
+    const reply = await cal.core.receiveReply(fromSusan('  On my​ way\r\nsee you\u0007 '));
+    expect(reply.words).toBe('On my way\nsee you');
+    const long = await cal.core.receiveReply(fromSusan('a'.repeat(5000)));
+    expect(long.words).toHaveLength(1600);
+    const odd = await cal.core.receiveReply({ key: null, words: 42, from: SUSANS_NUMBER });
+    expect(odd.words).toBe('');
+  });
+
+  it('cut a long Reply short in the app notification, but not in the email', async () => {
+    const cal = await withReplies();
+    await cal.core.receiveReply(fromSusan('word '.repeat(100).trim()));
+    await cal.core.runDue();
+    const [{ notification }] = cal.messenger
+      .appNotifications()
+      .filter((each) => each.notification.tag.startsWith('reply-'));
+    expect(notification.body.length).toBeLessThan(260);
+    expect(notification.body).toMatch(/\.\.\."$/);
+    expect(cal.messenger.emails()[0].email.body).toContain('word '.repeat(99).trim());
+  });
+
+  it('are counted as not yet seen until the person has seen them, each person apart', async () => {
+    const cal = await withReplies();
+    await cal.core.receiveReply(fromSusan('One'));
+    after(cal, 1);
+    const second = await cal.core.receiveReply(fromSusan('Two'));
+    const replies = cal.store.replies();
+    expect(repliesNotSeen(replies, await cal.store.repliesSeen(linda.person.id))).toBe(2);
+    expect(await cal.core.seeReplies(linda, second.receivedAt)).toBe(second.receivedAt);
+    expect(repliesNotSeen(replies, await cal.store.repliesSeen(linda.person.id))).toBe(0);
+    expect(repliesNotSeen(replies, await cal.store.repliesSeen(mark.person.id))).toBe(2);
+    // Seeing an older one later does not take back what was seen.
+    expect(await cal.core.seeReplies(linda, replies[0].receivedAt)).toBe(second.receivedAt);
+    after(cal, 1);
+    await cal.core.receiveReply(fromSusan('Three'));
+    expect(repliesNotSeen(cal.store.replies(), second.receivedAt)).toBe(1);
+  });
+
+  it('refuse to be marked seen up to something that is not a moment', async () => {
+    const cal = await withReplies();
+    await refused(cal.core.seeReplies(linda, 'yesterday'), 'invalid');
+  });
+
+  it('are listed newest first', async () => {
+    const cal = await withReplies();
+    await cal.core.receiveReply(fromSusan('One'));
+    after(cal, 1);
+    await cal.core.receiveReply(fromSusan('Two'));
+    expect(newestFirst(cal.store.replies()).map((reply) => reply.words)).toEqual(['Two', 'One']);
+  });
+});
+
+describe('blocked texts', () => {
+  /** Every Alert delivery so far, by channel, as [person ID, subject or body]. */
+  const alertSubjects = (messenger: MemoryMessenger) =>
+    messenger
+      .emails()
+      .filter(({ email }) => email.subject.includes('alert'))
+      .map(({ to, email }) => [to, email.subject]);
+
+  async function ready() {
+    const cal = calendar();
+    await cal.core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    const added = await cal.core.addAppointment(mark, everyDetail);
+    cal.clock.set(added.reminders[0].dueAt);
+    return { ...cal, added };
+  }
+
+  it('raise an Alert when a send is refused because she opted out, saying only she can undo it by replying START', async () => {
+    const { core, sender, store, messenger, added } = await ready();
+    sender.blockNext();
+    await core.runDue();
+    const [text] = store.texts();
+    expect(text).toMatchObject({ status: 'failed', reason: 'blocked' });
+    const [{ email }] = messenger.emails();
+    expect(email).toEqual({
+      subject:
+        "Susan's Calendar alert: a Reminder was not sent, because texts to Susan are blocked",
+      body:
+        'A Reminder to Susan was not sent: texts to her phone are blocked, because she opted out, as by replying STOP. ' +
+        "She was not reminded. Only she can undo it, by replying START to a text from the calendar's number.\n\n" +
+        'Appointment: Cardiology check-up, Fri, Nov 20, 2026 at 2:00 pm\n' +
+        'Text: the Reminder due Thu, Nov 19, 2026 at 6:00 pm\n\n' +
+        'You may want to call Susan. The Appointment and its texts are in the app.',
+      opens: `/appointments/${added.id}`,
+    });
+    const alertNotifications = messenger
+      .appNotifications()
+      .filter(({ notification }) => notification.tag.startsWith('alert-'));
+    expect(alertNotifications[0].notification.body).toBe(
+      "A Reminder was not sent: texts to Susan are blocked. Cardiology check-up, Fri, Nov 20, 2026 at 2:00 pm. Only she can undo it, by replying START to a text from the calendar's number.",
+    );
+    expect(
+      messenger
+        .emails()
+        .map(({ to }) => to)
+        .flat(),
+    ).toEqual(ADMINS);
+    // A refused text did not reach her: the Appointment can still be deleted.
+    await core.deleteAppointment(linda, added.id);
+  });
+
+  it('are blocked from a blocked send until a text sent later is delivered', async () => {
+    const cal = calendar();
+    const sender = createStandInSender({ reportsDelivery: true });
+    const core = createCalendarCore({ ...cal, textSender: sender, timeZone: EASTERN });
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    sender.blockNext();
+    const blocked = await core.sendTestText(linda);
+    expect(blockedSince(cal.store.texts(), [])).toBe(blocked.triedAt);
+    // Still blocked while a later text is only sent, or fails for another reason.
+    cal.clock.set('2026-11-19T20:05:00.000Z');
+    const sent = await core.sendTestText(linda);
+    cal.clock.set('2026-11-19T20:06:00.000Z');
+    sender.refuseNext();
+    await core.sendTestText(linda);
+    expect(blockedSince(cal.store.texts(), [])).toBe(blocked.triedAt);
+    // Clears once it is delivered.
+    sender.report(sent.reference!, 'delivered');
+    await core.runDue();
+    expect(blockedSince(cal.store.texts(), [])).toBeNull();
+  });
+
+  it('are blocked from an opt-out report, which raises one Alert, by the next run, to every Admin', async () => {
+    const { core, store, messenger, clock } = await ready();
+    clock.set('2026-11-19T20:30:00.000Z');
+    const alert = await core.recordOptOut({ key: 'report-1' });
+    expect(alert).toMatchObject({ kind: 'textsBlocked', raisedAt: '2026-11-19T20:30:00.000Z' });
+    expect(await core.recordOptOut({ key: 'report-1' })).toBeNull();
+    expect(blockedSince(store.texts(), store.calendarAlerts())).toBe('2026-11-19T20:30:00.000Z');
+    // Nobody is told until the scheduled run, which alone sends email.
+    expect(messenger.emails()).toEqual([]);
+    clock.set('2026-11-19T20:31:00.000Z');
+    await core.runDue();
+    expect(alertSubjects(messenger)).toEqual(
+      ADMINS.map((id) => [[id], "Susan's Calendar alert: texts to Susan are blocked"]),
+    );
+    const [{ email }] = messenger.emails();
+    expect(email.body).toContain(
+      "Only she can undo it, by replying START to a text from the calendar's number.",
+    );
+    expect(email.opens).toBe('/settings');
+    expect(
+      messenger
+        .appNotifications()
+        .filter(({ notification }) => notification.tag.startsWith('alert-'))
+        .flatMap(({ to }) => to),
+    ).toEqual(ADMINS);
+    // Once, however many runs follow.
+    clock.set('2026-11-19T20:40:00.000Z');
+    await core.runDue();
+    expect(alertSubjects(messenger)).toHaveLength(ADMINS.length);
+    expect(store.calendarAlerts()[0].progress.state).toBe('raised');
+  });
+
+  it('show as trouble with the most recent text, apart from failures', async () => {
+    const { core, sender, store } = await ready();
+    sender.blockNext();
+    await core.runDue();
+    expect(textTrouble(store.texts())?.trouble).toBe('blocked');
+  });
+});
+
+describe('the credit left for texts running low', () => {
+  async function ready() {
+    const cal = calendar();
+    await cal.core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    return cal;
+  }
+  /** Sends a test text a minute on, then runs what is due, as the next scheduled run would. */
+  async function sendOne({ core, clock }: ReturnType<typeof calendar>) {
+    clock.set(new Date(clock.now().getTime() + 60_000).toISOString());
+    await core.sendTestText(linda);
+    await core.runDue();
+  }
+  const lowCreditAlerts = (messenger: MemoryMessenger) =>
+    messenger.emails().filter(({ email }) => email.subject.includes('text credit'));
+
+  it('raises one Alert when the credit falls below 20, and not again until it is topped up', async () => {
+    const cal = await ready();
+    cal.sender.haveCredit(21);
+    await sendOne(cal); // 20 left
+    expect(lowCreditAlerts(cal.messenger)).toEqual([]);
+    await sendOne(cal); // 19 left
+    expect(lowCreditAlerts(cal.messenger)).toHaveLength(ADMINS.length);
+    const [{ email }] = lowCreditAlerts(cal.messenger);
+    expect(email).toEqual({
+      subject: "Susan's Calendar alert: text credit is running low",
+      body:
+        'The prepaid credit for texts to Susan is down to 19 texts, below 20. ' +
+        'When it runs out, no Reminder or other text reaches her.\n\n' +
+        "Buy more credit for the text service (the owner's setup notes say how). " +
+        'You will not be told again until the credit has been topped up.',
+      opens: '/settings',
+    });
+    await sendOne(cal); // 18
+    await sendOne(cal); // 17
+    expect(lowCreditAlerts(cal.messenger)).toHaveLength(ADMINS.length);
+    // Topped up, then low again: one more.
+    cal.sender.haveCredit(101);
+    await sendOne(cal); // 100
+    expect(lowCreditAlerts(cal.messenger)).toHaveLength(ADMINS.length);
+    cal.sender.haveCredit(12);
+    await sendOne(cal); // 11
+    expect(lowCreditAlerts(cal.messenger)).toHaveLength(2 * ADMINS.length);
+    expect(cal.store.calendarAlerts().map((alert) => alert.creditLeft)).toEqual([19, 11]);
+  });
+
+  it('is told from a refused send too, as when the credit has run out', async () => {
+    const cal = await ready();
+    cal.sender.haveCredit(0);
+    cal.sender.refuseNext();
+    await sendOne(cal);
+    expect(lowCreditAlerts(cal.messenger)).toHaveLength(ADMINS.length);
+    expect(lowCreditAlerts(cal.messenger)[0].email.body).toContain('down to 0 texts');
+  });
+
+  it('raises none while the text sender says nothing about credit', async () => {
+    const cal = await ready();
+    await sendOne(cal);
+    await sendOne(cal);
+    expect(lowCreditAlerts(cal.messenger)).toEqual([]);
+    expect(cal.store.calendarAlerts()).toEqual([]);
+  });
+
+  it('is not raised twice by credit readings that come back out of order', () => {
+    const reading = (id: string, sentAt: string, credit: number): Text => ({
+      id,
+      kind: 'test',
+      appointmentId: null,
+      reminderId: null,
+      words: TEST_TEXT_WORDS,
+      dueAt: sentAt,
+      status: 'sent',
+      reason: null,
+      attempts: 1,
+      triedAt: sentAt,
+      sentAt,
+      reference: null,
+      creditLeft: credit,
+      alert: null,
+    });
+    const texts = [
+      reading('a', '2026-11-19T20:00:00.000Z', 25),
+      reading('b', '2026-11-19T20:01:00.000Z', 18),
+      reading('c', '2026-11-19T20:02:00.000Z', 19),
+      reading('d', '2026-11-19T20:03:00.000Z', 17),
+    ];
+    expect(lowCreditSpell(texts)?.id).toBe('b');
+    expect(lowCreditSpell(texts.slice(0, 1))).toBeNull();
   });
 });

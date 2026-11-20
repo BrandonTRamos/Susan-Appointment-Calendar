@@ -20,6 +20,7 @@ export type {
   SettingsChanges,
 } from './core';
 export * from './reminders';
+export * from './replies';
 export * from './texts';
 export { holdsWebAddress } from './webAddress';
 export {

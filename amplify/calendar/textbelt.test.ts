@@ -1,6 +1,13 @@
+import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { failureKind } from '../../src/lib/failure';
-import { TEXTBELT_STATUSES, textbeltSender } from './textbelt';
+import {
+  readTextbeltReply,
+  TEXTBELT_OPTED_OUT_ERRORS,
+  TEXTBELT_STATUSES,
+  textbeltSender,
+  type TextbeltOptions,
+} from './textbelt';
 
 // Textbelt's answers as its documentation records them (docs.textbelt.com and textbelt.com, read
 // on 20 November 2026; docs/text-message-setup.md). No request here reaches Textbelt: each test
@@ -23,8 +30,14 @@ interface Asked {
   body: URLSearchParams | null;
 }
 
+type Answer = unknown | Error | { status: number; body: string };
+
 /** A stand-in for `fetch` that answers each request with the next answer, and keeps what it was asked. */
-function textbelt(...answers: (unknown | Error | { status: number; body: string })[]) {
+function textbelt(...answers: Answer[]) {
+  return textbeltWith({}, ...answers);
+}
+
+function textbeltWith(options: Partial<TextbeltOptions>, ...answers: Answer[]) {
   const asked: Asked[] = [];
   const request = async (url: string | URL | Request, init?: RequestInit) => {
     asked.push({
@@ -40,7 +53,7 @@ function textbelt(...answers: (unknown | Error | { status: number; body: string 
       });
     return Response.json(answer);
   };
-  const sender = textbeltSender({ key: KEY, fetch: request as typeof fetch });
+  const sender = textbeltSender({ key: KEY, ...options, fetch: request as typeof fetch });
   return { sender, asked };
 }
 
@@ -107,6 +120,43 @@ describe('the Textbelt sender', () => {
   it('answers any other refusal as refused, saying nothing of credit it was not told', async () => {
     const { sender } = textbelt(RECORDED.incomplete, { status: 400, body: '{"success":false}' });
     expect(await sender.send({ to: TO, words: WORDS })).toEqual({ sent: false, creditLeft: null });
+    expect(await sender.send({ to: TO, words: WORDS })).toEqual({ sent: false, creditLeft: null });
+  });
+
+  it("names the calendar's reply address in every text, as a field and not in the words", async () => {
+    const replyTo = 'https://replies.example.com/';
+    const { sender, asked } = textbeltWith({ replyTo }, RECORDED.sent);
+    await sender.send({ to: TO, words: WORDS });
+    expect(Object.fromEntries(asked[0].body ?? [])).toEqual({
+      phone: '5555550123',
+      message: WORDS,
+      key: KEY,
+      replyWebhookUrl: replyTo,
+    });
+  });
+
+  it('takes no refusal as texts being blocked while Textbelt documents none', async () => {
+    // Textbelt does not say what a send to a number that opted out returns (ticket 17). Until the
+    // owner's check finds out, every refusal is an ordinary one, these invented words included.
+    expect(TEXTBELT_OPTED_OUT_ERRORS).toEqual([]);
+    const { sender } = textbelt({ success: false, error: 'Invented: recipient opted out' });
+    expect(await sender.send({ to: TO, words: WORDS })).toEqual({ sent: false, creditLeft: null });
+  });
+
+  it('answers a refusal whose words are listed as opted out as blocked, and no other', async () => {
+    const optedOutErrors = ['Invented: recipient opted out'];
+    const { sender } = textbeltWith(
+      { optedOutErrors },
+      { success: false, quotaRemaining: 30, error: 'Invented: recipient opted out' },
+      RECORDED.outOfQuota,
+      { success: false, error: 'invented: recipient opted out, said differently' },
+    );
+    expect(await sender.send({ to: TO, words: WORDS })).toEqual({
+      sent: false,
+      blocked: true,
+      creditLeft: 30,
+    });
+    expect(await sender.send({ to: TO, words: WORDS })).toEqual({ sent: false, creditLeft: 0 });
     expect(await sender.send({ to: TO, words: WORDS })).toEqual({ sent: false, creditLeft: null });
   });
 
@@ -198,5 +248,139 @@ describe("Textbelt's delivery statuses", () => {
       { status: 200, body: '{}' },
     );
     for (let n = 0; n < 3; n += 1) await thrown(sender.delivery('12345'));
+  });
+});
+
+describe('Replies from Textbelt', () => {
+  /** When the requests below are read: 19 November 2026, 3:02 pm in New York. */
+  const NOW = new Date('2026-11-19T20:02:00.000Z');
+  const seconds = (at: Date) => String(Math.floor(at.getTime() / 1000));
+  /**
+   * A Reply as Textbelt's documentation shows one, with an invented number, signed as Textbelt
+   * signs it: the hex HMAC-SHA256, keyed with the key, of the timestamp followed by the raw body.
+   */
+  function signed({
+    text = "I can't go, I'm not well",
+    at = NOW,
+    key = KEY,
+    body,
+  }: { text?: string; at?: Date; key?: string; body?: string } = {}) {
+    const raw = body ?? JSON.stringify({ textId: '12345', fromNumber: '+15555550123', text });
+    const timestamp = seconds(at);
+    const signature = createHmac('sha256', key)
+      .update(timestamp + raw)
+      .digest('hex');
+    return {
+      headers: { 'x-textbelt-signature': signature, 'x-textbelt-timestamp': timestamp },
+      body: raw,
+      now: NOW,
+    };
+  }
+
+  it('are read from a request Textbelt signed with the key: its words and the number it came from', () => {
+    const read = readTextbeltReply(KEY, signed());
+    expect(read).toEqual({
+      reply: {
+        key: expect.stringMatching(/^[0-9a-f]{40}$/),
+        words: "I can't go, I'm not well",
+        from: '+15555550123',
+      },
+    });
+  });
+
+  it('are read whatever case the headers come in', () => {
+    const request = signed();
+    const headers = {
+      'X-Textbelt-Signature': request.headers['x-textbelt-signature'],
+      'X-TEXTBELT-TIMESTAMP': request.headers['x-textbelt-timestamp'],
+    };
+    expect(readTextbeltReply(KEY, { ...request, headers })).toHaveProperty('reply');
+  });
+
+  it('are told apart by their signature, so the same request twice is the same Reply', () => {
+    const once = readTextbeltReply(KEY, signed()) as { reply: { key: string } };
+    const again = readTextbeltReply(KEY, signed()) as { reply: { key: string } };
+    const later = readTextbeltReply(KEY, signed({ at: new Date(NOW.getTime() - 60_000) })) as {
+      reply: { key: string };
+    };
+    expect(again.reply.key).toBe(once.reply.key);
+    expect(later.reply.key).not.toBe(once.reply.key);
+  });
+
+  it('reject a forged request: signed with another key, or changed after signing', () => {
+    expect(readTextbeltReply(KEY, signed({ key: 'some-other-key' }))).toEqual({
+      rejected: 'forged',
+    });
+    const request = signed();
+    const changed = { ...request, body: request.body.replace('not well', 'fine') };
+    expect(readTextbeltReply(KEY, changed)).toEqual({ rejected: 'forged' });
+    const moved = {
+      ...request,
+      headers: {
+        ...request.headers,
+        'x-textbelt-timestamp': seconds(new Date(NOW.getTime() - 1000)),
+      },
+    };
+    expect(readTextbeltReply(KEY, moved)).toEqual({ rejected: 'forged' });
+  });
+
+  it("reject a request with no signature or timestamp, or one not in Textbelt's form", () => {
+    const { headers, body, now } = signed();
+    const signature = headers['x-textbelt-signature'];
+    const timestamp = headers['x-textbelt-timestamp'];
+    for (const each of [
+      {},
+      { 'x-textbelt-signature': signature },
+      { 'x-textbelt-timestamp': timestamp },
+      { 'x-textbelt-signature': 'not-hex', 'x-textbelt-timestamp': timestamp },
+      { 'x-textbelt-signature': signature.slice(2), 'x-textbelt-timestamp': timestamp },
+      { 'x-textbelt-signature': signature, 'x-textbelt-timestamp': '2026-11-19T20:02:00Z' },
+    ])
+      expect(readTextbeltReply(KEY, { headers: each, body, now })).toEqual({
+        rejected: 'unsigned',
+      });
+    // With no key stored, nothing can be checked, so nothing is taken.
+    expect(readTextbeltReply('', signed())).toEqual({ rejected: 'unsigned' });
+  });
+
+  it('reject a request whose timestamp is more than 15 minutes from now, either way', () => {
+    const minutes = (n: number) => new Date(NOW.getTime() + n * 60_000);
+    expect(readTextbeltReply(KEY, signed({ at: minutes(-16) }))).toEqual({ rejected: 'stale' });
+    expect(readTextbeltReply(KEY, signed({ at: minutes(16) }))).toEqual({ rejected: 'stale' });
+    expect(readTextbeltReply(KEY, signed({ at: minutes(-14) }))).toHaveProperty('reply');
+    expect(readTextbeltReply(KEY, signed({ at: minutes(-15) }))).toHaveProperty('reply');
+  });
+
+  it('reject a signed request that is not a Reply', () => {
+    for (const body of ['not JSON', '[]', 'null', '{"textId":"1","fromNumber":"+15555550123"}'])
+      expect(readTextbeltReply(KEY, signed({ body }))).toEqual({ rejected: 'unreadable' });
+  });
+
+  it('reject a request far larger than any Reply, before reading it', () => {
+    expect(readTextbeltReply(KEY, signed({ text: 'a'.repeat(20_000) }))).toEqual({
+      rejected: 'forged',
+    });
+  });
+
+  // Textbelt documents that it handles STOP and START itself, and not whether either, or HELP,
+  // also reaches the reply address (ticket 17). If one does, it is a Reply like any other: its
+  // words are kept and passed on, never read for meaning.
+  it.each(['STOP', 'stop', 'START', 'HELP', 'UNSUBSCRIBE'])(
+    'read %s, if it arrives, as an ordinary Reply',
+    (text) => {
+      expect(readTextbeltReply(KEY, signed({ text }))).toMatchObject({ reply: { words: text } });
+    },
+  );
+
+  it('keep the custom data Textbelt may add beside the Reply out of what is read', () => {
+    const body = JSON.stringify({
+      textId: '12345',
+      fromNumber: '+15555550123',
+      text: 'On my way',
+      data: 'invented custom data',
+    });
+    expect(readTextbeltReply(KEY, signed({ body }))).toEqual({
+      reply: { key: expect.any(String), words: 'On my way', from: '+15555550123' },
+    });
   });
 });
