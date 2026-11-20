@@ -83,15 +83,13 @@ Checked on 19 November 2026, and again on 20 November 2026 for the send and stat
 
 ### Checking Replies after a deploy (ticket 17)
 
-The live check for this release, done by the owner on the deployed app with the owner's own phone, which Settings hold in Susan's place until go-live. It needs the key stored (README, "The Textbelt key"), and spends two or three credits. Record nothing from it in the project.
+The one live check for this release, done by the owner on the deployed app with the owner's own phone, which Settings hold in Susan's place until go-live. It needs the key stored (README, "The Textbelt key"), and spends about two credits. Record nothing from it in the project.
 
-Settings saved before ticket 17 hold the number with no destination ID, so the order matters:
+1. Open **Settings → Susan's phone and contact**, with the owner's number and the contact name and number already there, and press **Save** once, changing nothing.
+2. Press **Send a test text**. When it arrives, reply once with a few ordinary words (not STOP, START or HELP).
+3. Within a minute: the Reply shows in the Replies tab, counted as not seen; every Admin is told by email and app notification, quoting it; and the phone gets the automatic answer, naming the contact person and number from Settings.
 
-1. **Before saving Settings.** Open **Settings → Susan's phone and contact**: it says to save once to confirm her number for automatic answers. Press **Send a test text**, and when it arrives, reply with a few ordinary words (not STOP, START or HELP). Within a minute the Reply shows in the Replies tab, counted as not seen, and every Admin is told by email and app notification, quoting it. No automatic answer comes: the Reply says her number had not been confirmed when it came.
-2. **Save Settings once,** with the number as it is. The note goes away.
-3. **After saving.** Send a test text again and reply once more with ordinary words. This Reply is passed on the same way, and within a minute the phone gets the automatic answer, naming the contact person and number in Settings. The earlier Reply stays without an answer.
-
-On Settings first saved after ticket 17, such as a fresh sandbox, step 1 already gets the automatic answer.
+Settings saved before ticket 17 need that one save before Replies get an automatic answer; a Reply that comes before it is still passed on, with no answer.
 
 ### Checking STOP and HELP (deferred by the owner)
 

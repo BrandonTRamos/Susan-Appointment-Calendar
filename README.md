@@ -280,8 +280,8 @@ one: no word in it changes, cancels or confirms anything. A person reads it.
   address, it is a Reply like any other. Whether Textbelt passes them on at all is unverified: the
   owner deferred the real-phone check for this release
   ([`docs/text-message-setup.md`](docs/text-message-setup.md), "Checking STOP and HELP").
-- **Checking it after a deploy.** One test text to the phone in Settings and one ordinary reply,
-  before and after saving older Settings once:
+- **Checking it after a deploy.** Save Settings once, then one test text to the phone in Settings
+  and one ordinary reply:
   [`docs/text-message-setup.md`](docs/text-message-setup.md), "Checking Replies after a deploy".
 - Logs never hold her number, her words or the signature: a refused request logs only why
   (unsigned, forged, stale or unreadable).
