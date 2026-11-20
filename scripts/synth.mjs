@@ -50,6 +50,9 @@ function stepWords(step, which) {
 // between them means a signed-in person may not call it.
 const SIGNED_IN = '#if( $util.authType() == "User Pool Authorization" )';
 const AFTER_SIGNED_IN = '#if( !$isAuthorized';
+const DYNAMIC_FILTERS = '## Apply dynamic roles auth';
+const NO_FILTERS =
+  /#set\( \$(hasValidOwnerArgument = false|authRuntimeFilter = \[\]|authOwnerRuntimeFilter = \[\]|authGroupRuntimeFilter = \[\]) \)/g;
 
 /**
  * The data API's operations of one kind ('Query', 'Mutation' or 'Subscription'), by name, each
@@ -66,7 +69,15 @@ function openToSignedIn(kind) {
         .flatMap((step) => [stepWords(step, 'Request'), stepWords(step, 'Response')])
         .filter((words) => words.includes(SIGNED_IN));
       const allows = (words) =>
-        words.split(SIGNED_IN)[1].split(AFTER_SIGNED_IN)[0].replace('#end', '').trim() !== '';
+        words
+          .split(SIGNED_IN)[1]
+          .split(AFTER_SIGNED_IN)[0]
+          // A subscription's rule always ends by applying the owner and group filters set above it,
+          // and always starts with no filters. Neither lets anyone in by itself.
+          .split(DYNAMIC_FILTERS)[0]
+          .replace(NO_FILTERS, '')
+          .replace('#end', '')
+          .trim() !== '';
       open.set(Properties.FieldName, rules.length === 0 || rules.some(allows));
     }
   }
@@ -75,8 +86,12 @@ function openToSignedIn(kind) {
 
 /** The calendar core's commands (amplify/data/resource.ts): the only way to change the calendar. */
 const COMMANDS = ['addAppointment', 'cancelAppointment', 'changeAppointment', 'removeAppointment'];
+/** Turning app notifications on and off for a device: the only other mutations anyone may call. */
+const DEVICE_MUTATIONS = ['turnOffAppNotifications', 'turnOnAppNotifications'];
 /** What is kept (amplify/data/resource.ts). Only the commands function writes these directly. */
 const MODELS = ['Appointment', 'ActivityRecord'];
+/** Kept for app notifications, and closed to everyone signed in: only the backend reaches them. */
+const CLOSED_MODELS = ['AppNotificationDevice', 'AppNotificationKey'];
 
 /** What the synthesized backend must say. Each entry is [what is being checked, whether it holds]. */
 function checks() {
@@ -143,12 +158,37 @@ function checks() {
       ['onCreate', 'onUpdate', 'onDelete'].every((on) => subscriptions.get(`${on}Appointment`)),
     ],
     [
-      "the calendar core's commands are the only mutations a signed-in person can call",
+      "the calendar core's commands, and turning app notifications on and off, are the only " +
+        'mutations a signed-in person can call',
       [...mutations]
         .filter(([, open]) => open)
         .map(([name]) => name)
         .sort()
-        .join() === COMMANDS.join(),
+        .join() === [...COMMANDS, ...DEVICE_MUTATIONS].join(),
+    ],
+    [
+      'nobody signed in can read or write the devices app notifications go to, or their key',
+      CLOSED_MODELS.every(
+        (model) =>
+          queries.get(`get${model}`) === false &&
+          queries.get(`list${model}s`) === false &&
+          ['create', 'update', 'delete'].every(
+            (verb) => mutations.get(`${verb}${model}`) === false,
+          ) &&
+          ['onCreate', 'onUpdate', 'onDelete'].every(
+            (on) => subscriptions.get(`${on}${model}`) === false,
+          ),
+      ),
+    ],
+    [
+      'anyone signed in can ask for the public key a device subscribes with',
+      queries.get('appNotificationKey') === true,
+    ],
+    [
+      'the commands function can find out who the Admins are, to tell them',
+      resources('AWS::IAM::Policy').some((policy) =>
+        JSON.stringify(policy.PolicyDocument ?? {}).includes('cognito-idp:ListUsersInGroup'),
+      ),
     ],
     [
       'nobody signed in can write calendar data directly',
@@ -164,7 +204,7 @@ function checks() {
     ],
     [
       'every table can be restored to a point in time',
-      tables.length === MODELS.length &&
+      tables.length === MODELS.length + CLOSED_MODELS.length &&
         tables.every(
           (table) => table.pointInTimeRecoverySpecification?.pointInTimeRecoveryEnabled === true,
         ),

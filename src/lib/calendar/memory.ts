@@ -2,7 +2,7 @@
 // runs on them when it has no backend (src/data/sampleCalendar.ts).
 
 import { inDateOrder, type ActivityRecord, type Appointment } from './appointment';
-import type { Clock, Store } from './ports';
+import type { AdminMessenger, AppNotification, Clock, Store } from './ports';
 
 export interface MemoryStore extends Store {
   /** Every Appointment in the calendar, in date order. */
@@ -79,6 +79,37 @@ export function createFixedClock(at: string): FixedClock {
     now: () => new Date(now),
     set(next) {
       now = new Date(next);
+    },
+  };
+}
+
+/** A messenger that keeps what it is asked to send. */
+export interface MemoryMessenger extends AdminMessenger {
+  /** Every app notification sent, oldest first, with the person IDs it went to. */
+  appNotifications(): { to: string[]; notification: AppNotification }[];
+  /** Makes the messenger fail, as when the push service or the user pool is not answering. */
+  fail(failing: boolean): void;
+}
+
+/** `admins` is the person ID of every Admin. */
+export function createMemoryMessenger(admins: readonly string[] = []): MemoryMessenger {
+  const sent: { to: string[]; notification: AppNotification }[] = [];
+  let failing = false;
+  const check = () => {
+    if (failing) throw new Error('The messenger is not answering');
+  };
+  return {
+    async admins() {
+      check();
+      return [...admins];
+    },
+    async sendAppNotification(to, notification) {
+      check();
+      sent.push(structuredClone({ to: [...to], notification }));
+    },
+    appNotifications: () => structuredClone(sent),
+    fail(next) {
+      failing = next;
     },
   };
 }

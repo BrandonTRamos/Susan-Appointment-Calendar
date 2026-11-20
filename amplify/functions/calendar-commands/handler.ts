@@ -1,17 +1,27 @@
 import { createCalendarCore, systemClock, type CalendarCore } from '../../../src/lib/calendar';
 import { resolveTimeZone } from '../../../src/lib/timeZone';
-import { createDataStore } from '../../calendar/data-store';
+import { adminMessenger, userPoolAdmins, webPushSender } from '../../calendar/admin-messenger';
+import { dataApiDevices, type DeviceClient } from '../../calendar/app-notification-devices';
+import { connectDataApi, dataStore, type DataClient } from '../../calendar/data-store';
 import { rememberedNames, userPoolNames } from '../../calendar/people';
 import { calendarCommandHandler } from './commands';
+
+const userPoolId = process.env.USER_POOL_ID ?? '';
 
 let core: Promise<CalendarCore> | undefined;
 
 function getCore() {
-  core ??= createDataStore()
-    .then((store) =>
+  core ??= connectDataApi()
+    .then((client: unknown) =>
       createCalendarCore({
-        store,
+        // The data API's own client type is too deep to compare against both narrow ones.
+        store: dataStore(client as DataClient),
         clock: systemClock,
+        messenger: adminMessenger({
+          admins: userPoolAdmins(userPoolId),
+          devices: dataApiDevices(client as DeviceClient),
+          push: webPushSender(process.env.APP_URL ?? 'mailto:noreply@example.com'),
+        }),
         timeZone: resolveTimeZone(process.env.SUSAN_TIME_ZONE),
       }),
     )
@@ -24,5 +34,5 @@ function getCore() {
 
 export const handler = calendarCommandHandler({
   core: getCore,
-  nameOf: rememberedNames(userPoolNames(process.env.USER_POOL_ID ?? '')),
+  nameOf: rememberedNames(userPoolNames(userPoolId)),
 });

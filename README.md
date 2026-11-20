@@ -64,9 +64,11 @@ GitHub runs lint, format check, type-check, tests, build and synth on every pull
 (`.github/workflows/ci.yml`).
 
 `npm run synth` fails if the backend it built would break a rule the calendar depends on: nobody can
-sign up, sign-in has no second step, anyone signed in can read everything, the calendar core's
-commands are the only way a signed-in person can change anything, no rule tells Susan from an Admin,
-every table can be restored to a point in time, and everything carries the cost tag.
+sign up, sign-in has no second step, anyone signed in can read everything in the calendar, the
+calendar core's commands (and turning app notifications on and off for a device) are the only way a
+signed-in person can change anything, nobody signed in can read the devices app notifications go to
+or the key that signs them, no rule tells Susan from an Admin, every table can be restored to a
+point in time, and everything carries the cost tag.
 
 ## How the calendar is kept
 
@@ -79,6 +81,9 @@ is the only thing that writes calendar data.
   call writes calendar data any other way.
 - Each command is carried out as the signed-in person. The Appointment shows who added it and who
   last changed it, and the calendar keeps a record of each change.
+- Adding, changing or cancelling an Appointment sends the other Admins an Activity update: an app
+  notification naming who did it and what changed, which opens the Appointment when tapped. The
+  person who made the change, and Susan, get none. See [App notifications](#app-notifications).
 - The tables can be restored to any moment in the last 35 days, and on `main` they cannot be deleted
   by accident.
 - On sample data the same core runs in the browser, over a store kept in memory.
@@ -102,6 +107,7 @@ Set these on the Amplify app under **Hosting → Environment variables**, for al
 | `COST_TAG`        | `susans-calendar`  | The `project` tag on every backend resource and on the Hosting app, so the app's cost shows on its own in billing. This is the default.                       |
 | `CONTACT_EMAIL`   | your email address | The contact address on the [public pages](#public-pages). They say none has been set if it is missing; a value that is not an email address fails the deploy. |
 | `OWNER_NAME`      | your full name     | Who the public pages say runs the calendar. They say "a private individual" if it is missing.                                                                 |
+| `APP_URL`         | (leave unset)      | The address app notifications give the push services as their sender. It is worked out from the Amplify app; set it only if the app moves to its own domain.  |
 
 A change to any of these takes effect at the next deploy. Later tickets add to this table.
 
@@ -169,3 +175,19 @@ attribute, then add it to the `Admins` group.
 Open the app's address in Safari on an iPhone (or Chrome on Android), then **Share → Add to Home
 Screen**. It then opens like an app. When a new version has been deployed, a bar at the top offers
 **Refresh**.
+
+## App notifications
+
+An Admin turns them on for each phone or laptop in **Settings → App notifications → Turn on for this
+device**. On an iPhone the app must be added to the home screen first, and opened from there; the
+section says so. From then on that device gets an Activity update whenever someone else adds,
+changes or cancels an Appointment. Alerts will arrive the same way (ticket 15).
+
+- They are web push, as in Wellbeing. The key pair that signs them is made by the backend the first
+  time anyone turns them on and kept in the data API, so there is no secret to set up. The private
+  half never leaves the backend.
+- Each device is kept against the account of whoever turned it on. Turning them off, or signing out,
+  forgets the device; so does a device whose push service says its subscription is gone.
+- Who is an Admin comes from the `Admins` group (see [Accounts](#accounts)). Susan's account is not in
+  it, so she never gets them, even on a device she turned them on for.
+- Deleting an Appointment entered by mistake sends no Activity update.

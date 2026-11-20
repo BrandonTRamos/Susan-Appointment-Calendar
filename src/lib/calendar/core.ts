@@ -6,7 +6,9 @@
 // code: it runs the same in a backend function, in the browser on sample data, and in a test.
 
 import { formatDate, formatTime, isDate, isTime, momentOf } from '../localTime';
+import { activityUpdate } from './activityUpdate';
 import {
+  DETAIL_NAMES as NAMES,
   DETAILS,
   type ActivityAction,
   type ActivityRecord,
@@ -18,7 +20,7 @@ import {
   type NewAppointment,
   type Stamp,
 } from './appointment';
-import type { Clock, Store } from './ports';
+import type { AdminMessenger, AppNotification, Clock, Store } from './ports';
 
 /** Why a command was refused. */
 export type RefusalReason =
@@ -73,23 +75,10 @@ export interface CalendarCore {
 export interface CalendarCoreOptions {
   store: Store;
   clock: Clock;
+  messenger: AdminMessenger;
   /** Susan's time zone, from resolveTimeZone (src/lib/timeZone.ts). */
   timeZone: string;
 }
-
-/** How each detail is named to a person. */
-const NAMES: Record<Detail, string> = {
-  what: 'what it is',
-  date: 'the date',
-  time: 'the start time',
-  withWhom: 'who it is with',
-  placeName: "the place's name",
-  placeAddress: 'the address',
-  driverName: "the Driver's name",
-  pickupTime: 'the pickup time',
-  noteForSusan: 'the Note for Susan',
-  privateNotes: 'the Private notes',
-};
 
 /** The details that are words: how long each may be, and whether it may run over several lines. */
 const WORDS: Partial<Record<Detail, { limit: number; lines: boolean }>> = {
@@ -181,7 +170,12 @@ function checked(details: Record<Detail, string | null>): AppointmentDetails {
   return { ...details, what, date, time };
 }
 
-export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptions): CalendarCore {
+export function createCalendarCore({
+  store,
+  clock,
+  messenger,
+  timeZone,
+}: CalendarCoreOptions): CalendarCore {
   /** The moment an Appointment starts, in Susan's time zone. */
   function startOf({ date, time }: AppointmentDetails): string {
     const moment = momentOf(date, time, timeZone);
@@ -212,6 +206,25 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
       time: appointment.time,
     };
     return store.recordActivity(activity);
+  }
+
+  /**
+   * Sends the Activity update for one command to every Admin but the person who gave it, or whose
+   * agent did. Susan is not an Admin, so she is never told. The change has been made by now: one
+   * that cannot be told of still stands, and what broke is logged without the Appointment.
+   */
+  async function tellOtherAdmins(by: Actor, update: AppNotification) {
+    try {
+      const to = [...new Set(await messenger.admins())].filter((id) => id !== by.person.id);
+      if (to.length) await messenger.sendAppNotification(to, update);
+    } catch (error) {
+      const e = error instanceof Error ? error : null;
+      console.error(
+        'Activity update could not be sent',
+        e?.name ?? 'Unknown error',
+        e?.message.slice(0, 300) ?? '',
+      );
+    }
   }
 
   async function existing(id: unknown): Promise<Appointment> {
@@ -249,6 +262,7 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
       };
       await store.addAppointment(appointment);
       await record('added', appointment, by, at);
+      await tellOtherAdmins(by, activityUpdate({ action: 'added', by, appointment }));
       return appointment;
     },
 
@@ -270,6 +284,10 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
       };
       await store.replaceAppointment(appointment);
       await record('changed', appointment, by, at);
+      await tellOtherAdmins(
+        by,
+        activityUpdate({ action: 'changed', by, appointment, before: current }),
+      );
       return appointment;
     },
 
@@ -285,6 +303,7 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
       };
       await store.replaceAppointment(appointment);
       await record('cancelled', appointment, by, at);
+      await tellOtherAdmins(by, activityUpdate({ action: 'cancelled', by, appointment }));
       return appointment;
     },
 
@@ -296,6 +315,8 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
           'Susan has already been texted about this Appointment, so it cannot be deleted. Cancel it instead.',
         );
       await store.removeAppointment(current.id);
+      // Deleting sends no Activity update: it is for an Appointment entered by mistake, and the
+      // spec tells Admins only of adding, changing and cancelling.
       await record('deleted', current, by, clock.now().toISOString());
     },
   };

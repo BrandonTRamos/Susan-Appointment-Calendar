@@ -4,9 +4,10 @@ import { resolveTimeZone } from '../src/lib/timeZone';
 import { auth } from './auth/resource';
 import { configureProjectTags } from './cost-tags';
 import { data } from './data/resource';
+import { appNotifications } from './functions/app-notifications/resource';
 import { calendarCommands } from './functions/calendar-commands/resource';
 
-const backend = defineBackend({ auth, data, calendarCommands });
+const backend = defineBackend({ auth, data, calendarCommands, appNotifications });
 
 // COST_TAG keeps separate deployments apart in billing; main also tags its own Hosting app.
 configureProjectTags(backend.stack, process.env.COST_TAG || 'susans-calendar', {
@@ -35,9 +36,14 @@ for (const table of Object.values(backend.data.resources.cfnResources.amplifyDyn
 }
 
 // The data API tells the commands function who is calling but not their name, so it looks the
-// name up in the user pool (amplify/calendar/people.ts). It may read accounts and nothing more.
+// name up in the user pool (amplify/calendar/people.ts). To send Activity updates it lists the
+// Admins group (amplify/calendar/admin-messenger.ts). It may read accounts and nothing more.
 const { userPool } = backend.auth.resources;
-userPool.grant(backend.calendarCommands.resources.lambda, 'cognito-idp:AdminGetUser');
+userPool.grant(
+  backend.calendarCommands.resources.lambda,
+  'cognito-idp:AdminGetUser',
+  'cognito-idp:ListUsersInGroup',
+);
 backend.calendarCommands.addEnvironment('USER_POOL_ID', userPool.userPoolId);
 
 // For the app (src/config.ts): Susan's time zone, and the contact address and owner's name shown on

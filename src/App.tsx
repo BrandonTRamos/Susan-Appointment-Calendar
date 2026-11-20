@@ -12,7 +12,9 @@ import { Sidebar, TabBar } from './components/Navigation';
 import { Placeholder } from './components/Page';
 import { CalendarProvider } from './data/CalendarContext';
 import type { CalendarClient } from './data/calendarClient';
+import { forgetAtSignOut, type DeviceRegistry } from './lib/appNotifications';
 import { useDesktopWidth } from './lib/useDesktopWidth';
+import { useNotificationTaps } from './lib/useNotificationTaps';
 import { AppointmentDetail } from './routes/AppointmentDetail';
 import { EditAppointment, NewAppointment } from './routes/AppointmentForm';
 import { Month } from './routes/Month';
@@ -30,12 +32,20 @@ export interface AppProps {
   calendar: CalendarClient;
   /** No backend: the app shows sample data and nobody is signed in. */
   sampleData?: boolean;
+  /** Where this device is kept for app notifications. None on sample data. */
+  devices?: DeviceRegistry | null;
   /** Missing when there is nobody to sign out (sample data). */
   onSignOut?: () => Promise<unknown>;
 }
 
-function Layout({ displayName, sampleData, onSignOut }: Omit<AppProps, 'calendar'>) {
+function Layout({
+  displayName,
+  sampleData,
+  devices = null,
+  onSignOut,
+}: Omit<AppProps, 'calendar'>) {
   const desktop = useDesktopWidth();
+  useNotificationTaps(devices);
   // A new screen opens at the top; Back (a POP) returns to where you were.
   const { pathname } = useLocation();
   const navigation = useNavigationType();
@@ -71,7 +81,18 @@ function Layout({ displayName, sampleData, onSignOut }: Omit<AppProps, 'calendar
   );
 }
 
-export function App({ calendar, ...props }: AppProps) {
+export function App({ calendar, onSignOut, ...rest }: AppProps) {
+  // Signing out turns app notifications off for this device first, while there is still someone
+  // signed in to forget it for.
+  const props = {
+    ...rest,
+    onSignOut:
+      onSignOut &&
+      (async () => {
+        await forgetAtSignOut(rest.devices ?? null);
+        return onSignOut();
+      }),
+  };
   return (
     <CalendarProvider client={calendar} timeZone={props.timeZone}>
       <BrowserRouter>

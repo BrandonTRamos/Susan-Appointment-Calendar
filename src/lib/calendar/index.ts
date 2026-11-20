@@ -4,7 +4,7 @@
 export * from './appointment';
 export { CalendarRefusal, createCalendarCore } from './core';
 export type { CalendarCore, CalendarCoreOptions, RefusalReason } from './core';
-export { createFixedClock, createMemoryStore } from './memory';
-export type { FixedClock, MemoryStore } from './memory';
+export { createFixedClock, createMemoryMessenger, createMemoryStore } from './memory';
+export type { FixedClock, MemoryMessenger, MemoryStore } from './memory';
 export { systemClock } from './ports';
-export type { Clock, Store } from './ports';
+export type { AdminMessenger, AppNotification, Clock, Store } from './ports';

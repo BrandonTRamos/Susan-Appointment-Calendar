@@ -10,15 +10,22 @@ This ticket also establishes the Admin messenger, the port through which the cor
 
 **Parallel:** Yes, with 06, 07 and 09. It fills the "App notifications" section of Settings and nothing else there.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The core depends on an Admin messenger port with an app-notification channel, and an in-memory stand-in for tests.
-- [ ] App notifications use web push with the Wellbeing approach to key management, which needs no secret to be set up.
-- [ ] In the "App notifications" section of Settings, a person can turn notifications on and off for the device in hand. On an iPhone the section explains that the app must first be added to the home screen.
-- [ ] Each person's devices are stored against their account. A device that reports its subscription gone is forgotten. Signing out removes that device.
-- [ ] When an Appointment is added, changed or cancelled, the other Admins get one Activity update naming who did it and what changed.
-- [ ] The person who made the change gets none. When the change was made through an agent, the Admin who owns that agent's key gets none.
-- [ ] Susan never gets Activity updates.
-- [ ] One command produces one Activity update, however many records it touches.
-- [ ] Tapping an Activity update opens the Appointment it is about.
-- [ ] Tests through the core check who is and is not told for each kind of change.
+- [x] The core depends on an Admin messenger port with an app-notification channel, and an in-memory stand-in for tests.
+- [x] App notifications use web push with the Wellbeing approach to key management, which needs no secret to be set up.
+- [x] In the "App notifications" section of Settings, a person can turn notifications on and off for the device in hand. On an iPhone the section explains that the app must first be added to the home screen.
+- [x] Each person's devices are stored against their account. A device that reports its subscription gone is forgotten. Signing out removes that device.
+- [x] When an Appointment is added, changed or cancelled, the other Admins get one Activity update naming who did it and what changed.
+- [x] The person who made the change gets none. When the change was made through an agent, the Admin who owns that agent's key gets none.
+- [x] Susan never gets Activity updates.
+- [x] One command produces one Activity update, however many records it touches.
+- [x] Tapping an Activity update opens the Appointment it is about.
+- [x] Tests through the core check who is and is not told for each kind of change.
+
+## As built
+
+- The Admin messenger port is `AdminMessenger` in `src/lib/calendar/ports.ts`: `admins()` (from the `Admins` group) and `sendAppNotification()`. The in-memory stand-in is `createMemoryMessenger` in `memory.ts`. The core picks who is told and writes the words (`activityUpdate.ts`).
+- The key pair is made by the backend (`amplify/functions/app-notifications`) on first use and kept in the data API, closed to everyone signed in. Wellbeing makes it in the browser, which suits one owner but would hand the private half to every account here. No secret is set up either way.
+- Deleting an Appointment sends no Activity update: the spec names adding, changing and cancelling only.
+- An Activity update that cannot be sent does not undo or fail the command; what broke is logged without the Appointment.

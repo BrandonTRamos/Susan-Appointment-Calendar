@@ -430,6 +430,9 @@ p {
   flex-direction: column;
   gap: 10px;
 }
+.settings-section .btn {
+  align-self: flex-start;
+}
 .account {
   display: flex;
   flex-direction: column;

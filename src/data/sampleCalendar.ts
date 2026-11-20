@@ -3,6 +3,7 @@
 
 import {
   createCalendarCore,
+  createMemoryMessenger,
   createMemoryStore,
   systemClock,
   type Actor,
@@ -59,7 +60,10 @@ export function createSampleCalendar(
   { empty = false, clock = systemClock }: SampleCalendarOptions = {},
 ): SampleCalendar {
   const store = createMemoryStore();
-  const core = createCalendarCore({ store, clock, timeZone });
+  // Nobody is signed in on sample data, so no device has notifications on: Activity updates are
+  // worked out and go nowhere.
+  const messenger = createMemoryMessenger([LINDA, MARK].map((admin) => admin.person.id));
+  const core = createCalendarCore({ store, clock, messenger, timeZone });
 
   const day = today(timeZone, clock.now());
   const ready = (async () => {
