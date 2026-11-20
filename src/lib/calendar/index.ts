@@ -20,7 +20,25 @@ export type {
 } from './core';
 export * from './reminders';
 export * from './texts';
-export { createFixedClock, createMemoryStore, createStandInSender } from './memory';
-export type { FixedClock, MemoryStore, StandInSender, StandInText } from './memory';
-export { NO_TEXT_SENDER, systemClock } from './ports';
-export type { Clock, SendResult, Store, TextSender } from './ports';
+export {
+  createFixedClock,
+  createMemoryMessenger,
+  createMemoryStore,
+  createStandInSender,
+} from './memory';
+export type {
+  FixedClock,
+  MemoryMessenger,
+  MemoryStore,
+  StandInSender,
+  StandInText,
+} from './memory';
+export { NO_ADMIN_MESSENGER, NO_TEXT_SENDER, systemClock } from './ports';
+export type {
+  AdminMessenger,
+  AppNotification,
+  Clock,
+  SendResult,
+  Store,
+  TextSender,
+} from './ports';

@@ -1,7 +1,7 @@
 // What the calendar core needs from the outside world. The backend and the sample data each supply
 // their own (amplify/calendar/data-store.ts, memory.ts); tests use the in-memory ones.
 //
-// A later ticket adds the Admin messenger here.
+// The ports are the store, the clock, the text sender and the Admin messenger.
 
 import type { ActivityRecord, Appointment } from './appointment';
 import type { SubscriptionLink } from './subscription';
@@ -76,5 +76,43 @@ export interface TextSender {
 export const NO_TEXT_SENDER: TextSender = {
   send: async () => {
     throw new Error('This calendar only reads: it sends no texts.');
+  },
+};
+
+/**
+ * An app notification: a message that shows on a device, and opens a screen of the app when
+ * tapped. The core writes every word of it.
+ */
+export interface AppNotification {
+  title: string;
+  body: string;
+  /** The app's address that tapping it opens, such as '/appointments/<id>'. */
+  opens: string;
+  /** A newer notification with the same tag takes the place of an older one on a device. */
+  tag: string;
+}
+
+/**
+ * How the core tells Admins anything. For now it has one channel, app notifications; ticket 15
+ * adds email. The core decides who is told: this only knows who the Admins are and reaches them.
+ */
+export interface AdminMessenger {
+  /** The person ID of every Admin: every account marked as an Admin's. Susan is never one. */
+  admins(): Promise<string[]>;
+  /**
+   * Shows the notification on every device each of these people turned app notifications on for.
+   * A device that reports its subscription gone is forgotten.
+   */
+  sendAppNotification(to: readonly string[], notification: AppNotification): Promise<void>;
+}
+
+/**
+ * The messenger for a core that only reads, such as the subscription feed's: it knows no Admins,
+ * so nothing is ever sent through it.
+ */
+export const NO_ADMIN_MESSENGER: AdminMessenger = {
+  admins: async () => [],
+  sendAppNotification: async () => {
+    throw new Error('This calendar only reads: it tells nobody anything.');
   },
 };

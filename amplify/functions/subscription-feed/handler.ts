@@ -1,6 +1,7 @@
 import {
   createCalendarCore,
   NO_TEXT_SENDER,
+  NO_ADMIN_MESSENGER,
   systemClock,
   type CalendarCore,
 } from '../../../src/lib/calendar';
@@ -18,6 +19,8 @@ function getCore() {
         store: createFeedStore(),
         clock: systemClock,
         textSender: NO_TEXT_SENDER,
+        // The feed only reads, so it tells no Admin anything.
+        messenger: NO_ADMIN_MESSENGER,
         timeZone: resolveTimeZone(process.env.SUSAN_TIME_ZONE),
       }),
     )

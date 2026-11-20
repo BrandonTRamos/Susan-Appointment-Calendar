@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createCalendarCore,
   createFixedClock,
+  createMemoryMessenger,
   createMemoryStore,
   type Appointment,
+  createStandInSender,
 } from '../../../src/lib/calendar';
 import { calendarCommandHandler, type CommandEvent } from './commands';
 
@@ -13,9 +15,12 @@ const linda = { sub: 'person-linda', username: 'account-linda' };
 /** The commands as the data API would call them, over a calendar kept in memory. */
 function commands(names: Record<string, string | null> = { 'account-linda': 'Linda' }) {
   const store = createMemoryStore();
+  const messenger = createMemoryMessenger(['person-linda', 'person-mark']);
   const core = createCalendarCore({
     store,
     clock: createFixedClock('2026-11-19T20:00:00.000Z'),
+    messenger,
+    textSender: createStandInSender(),
     timeZone: 'America/New_York',
   });
   const nameOf = vi.fn(async (username: string) => names[username] ?? null);
@@ -31,7 +36,7 @@ function commands(names: Record<string, string | null> = { 'account-linda': 'Lin
     const answer = await call('addAppointment', { details: JSON.stringify(details) });
     return (answer as { appointment: Appointment }).appointment;
   };
-  return { store, call, add, handler, nameOf };
+  return { store, messenger, call, add, handler, nameOf };
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -74,6 +79,25 @@ describe('the commands, as the data API calls them', () => {
     expect(await call('addAppointment', sent)).toEqual(first);
     expect(store.appointments()).toMatchObject([{ id: sent.id, ...checkUp }]);
     expect(store.activity()).toHaveLength(1);
+  });
+
+  it('change the settings and send a test text, answering with each as it now is', async () => {
+    const { store, call } = commands();
+    expect(await call('sendTestText', {})).toMatchObject({ refusal: { reason: 'noNumber' } });
+    const changed = await call('changeSettings', {
+      settings: JSON.stringify({ susansNumber: '(555) 555-0123', contactName: 'Linda' }),
+    });
+    expect(changed).toMatchObject({
+      settings: {
+        susansNumber: '+15555550123',
+        contactName: 'Linda',
+        lastChanged: { personId: 'person-linda', personName: 'Linda' },
+      },
+    });
+    const sent = await call('sendTestText', {});
+    expect(sent).toMatchObject({ text: { kind: 'test', status: 'sent' } });
+    expect(store.texts()).toHaveLength(1);
+    expect(store.activity()).toEqual([]);
   });
 
   it("make and switch off the caller's own subscription link", async () => {
@@ -138,6 +162,14 @@ describe('who a command is carried out for', () => {
     });
   });
 
+  it('is left out of the Activity update the command sends to the other Admins', async () => {
+    const { add, messenger } = commands();
+    await add();
+    expect(messenger.appNotifications()).toMatchObject([
+      { to: ['person-mark'], notification: { body: expect.stringMatching(/^Linda added /) } },
+    ]);
+  });
+
   it('is "Someone" when the account has no name', async () => {
     const { add } = commands({ 'account-linda': '   ' });
     expect((await add()).added.personName).toBe('Someone');
@@ -174,8 +206,24 @@ describe('when a command cannot be carried out', () => {
     expect(await call('cancelAppointment', { id: 'no-such-appointment' })).toMatchObject({
       refusal: { reason: 'missing' },
     });
-    const { id } = await add();
-    store.noteTextSentAbout(id);
+    const added = await add();
+    const { id } = added;
+    // The record the scheduled run keeps once a Reminder has gone to Susan.
+    const [reminder] = added.reminders;
+    await store.claimText({
+      id: `reminder:${id}:${reminder.id}:${reminder.dueAt}`,
+      kind: 'reminder',
+      appointmentId: id,
+      reminderId: reminder.id,
+      words: "Susan's Calendar: Cardiology check-up.",
+      dueAt: reminder.dueAt,
+      status: 'sent',
+      reason: null,
+      attempts: 1,
+      triedAt: reminder.dueAt,
+      sentAt: reminder.dueAt,
+      reference: 'stand-in-1',
+    });
     expect(await call('removeAppointment', { id })).toMatchObject({
       refusal: { reason: 'texted', message: expect.stringMatching(/Cancel it instead/) },
     });

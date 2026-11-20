@@ -3,7 +3,13 @@
 import { render } from '@testing-library/react';
 import { App, type AppProps } from '../App';
 import { createSampleCalendar, type SampleCalendar } from '../data/sampleCalendar';
-import type { Actor } from '../lib/calendar';
+import {
+  reminderTextId,
+  reminderWords,
+  type Actor,
+  type Appointment,
+  type Text,
+} from '../lib/calendar';
 import { addDays, today } from '../lib/localTime';
 import { DESKTOP_WIDTH } from '../lib/useDesktopWidth';
 
@@ -40,4 +46,28 @@ export function renderApp(
     <App displayName="Linda" timeZone={EASTERN} calendar={calendar} {...props} />,
   );
   return { ...view, calendar };
+}
+
+/**
+ * Records the Appointment's first Reminder as sent, as the scheduled run does once it has gone to
+ * Susan's phone, and answers with the record.
+ */
+export async function sentReminder(calendar: SampleCalendar, appointment: Appointment) {
+  const [reminder] = appointment.reminders;
+  const text: Text = {
+    id: reminderTextId(appointment, reminder),
+    kind: 'reminder',
+    appointmentId: appointment.id,
+    reminderId: reminder.id,
+    words: reminderWords(appointment, reminder, EASTERN),
+    dueAt: reminder.dueAt,
+    status: 'sent',
+    reason: null,
+    attempts: 1,
+    triedAt: reminder.dueAt,
+    sentAt: reminder.dueAt,
+    reference: 'stand-in-1',
+  };
+  await calendar.store.claimText(text);
+  return text;
 }

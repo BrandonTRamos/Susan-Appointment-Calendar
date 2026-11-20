@@ -105,6 +105,9 @@ export function toText(row: Kept<TextRow, Text>): Text {
 
 export type SettingsRow = Schema['CalendarSettings']['type'];
 
+/** The ID of the one row of settings. */
+export const SETTINGS_ID = 'settings';
+
 /** The settings as the data API carries them. */
 export function toSettings(row: Kept<SettingsRow, CalendarSettings>): CalendarSettings {
   return {

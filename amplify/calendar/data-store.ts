@@ -14,6 +14,7 @@ import {
   type Text,
 } from '../../src/lib/calendar';
 import {
+  SETTINGS_ID,
   toAppointment,
   toSettings,
   toText,
@@ -37,9 +38,6 @@ export interface DataClient {
     CalendarSettings: Pick<Models['CalendarSettings'], 'get' | 'create' | 'update'>;
   };
 }
-
-/** The ID of the one row of settings. */
-export const SETTINGS_ID = 'settings';
 
 interface DataError {
   message: string;
@@ -170,12 +168,19 @@ export function dataStore(client: DataClient): Store {
   };
 }
 
-/** The store for a backend function that the data schema lets call the data API. */
-export async function createDataStore(env: NodeJS.ProcessEnv = process.env): Promise<Store> {
-  // The Lambda runtime sets the AWS credentials and AMPLIFY_DATA_* variables this reads.
+/**
+ * The data API, for a backend function that the data schema lets call it. The Lambda runtime sets
+ * the AWS credentials and AMPLIFY_DATA_* variables this reads.
+ */
+export async function connectDataApi(env: NodeJS.ProcessEnv = process.env) {
   const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(
     env as Parameters<typeof getAmplifyDataClientConfig>[0],
   );
   Amplify.configure(resourceConfig, libraryOptions);
-  return dataStore(generateClient<Schema>());
+  return generateClient<Schema>();
+}
+
+/** The store for a backend function that the data schema lets call the data API. */
+export async function createDataStore(env: NodeJS.ProcessEnv = process.env): Promise<Store> {
+  return dataStore(await connectDataApi(env));
 }

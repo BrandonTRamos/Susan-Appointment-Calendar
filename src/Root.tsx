@@ -2,6 +2,7 @@ import { signOut } from 'aws-amplify/auth';
 import { useState } from 'react';
 import { App } from './App';
 import { createAmplifyCalendar } from './data/amplifyCalendar';
+import { createAppNotificationDevices } from './data/appNotificationDevices';
 import { createSampleCalendar } from './data/sampleCalendar';
 import { publicPageAt } from './lib/publicPage';
 import { PublicPage } from './routes/PublicPage';
@@ -18,6 +19,8 @@ export interface RootProps {
   ownerName: string | null;
   /** The calendar subscription feed's address, or null when the backend has none. */
   subscriptionFeedUrl?: string | null;
+  /** Whether the backend's texts are only recorded and reach no phone (src/config.ts). */
+  textsRecordedOnly?: boolean;
 }
 
 /**
@@ -33,6 +36,7 @@ export function Root({
   contactEmail,
   ownerName,
   subscriptionFeedUrl = null,
+  textsRecordedOnly = true,
 }: RootProps) {
   const publicPage = publicPageAt(window.location.pathname);
   if (publicPage)
@@ -52,6 +56,7 @@ export function Root({
           displayName={person.displayName}
           timeZone={timeZone}
           subscriptionFeedUrl={subscriptionFeedUrl}
+          textsRecordedOnly={textsRecordedOnly}
         />
       )}
     </SignedIn>
@@ -72,17 +77,23 @@ function SignedInApp({
   displayName,
   timeZone,
   subscriptionFeedUrl,
+  textsRecordedOnly,
 }: {
   displayName: string | null;
   timeZone: string;
   subscriptionFeedUrl: string | null;
+  textsRecordedOnly: boolean;
 }) {
-  const [calendar] = useState(() => createAmplifyCalendar(subscriptionFeedUrl));
+  const [calendar] = useState(() =>
+    createAmplifyCalendar(subscriptionFeedUrl, { textsRecordedOnly }),
+  );
+  const [devices] = useState(createAppNotificationDevices);
   return (
     <App
       displayName={displayName}
       timeZone={timeZone}
       calendar={calendar}
+      devices={devices}
       onSignOut={() => signOut()}
     />
   );

@@ -1,5 +1,6 @@
 import { defineFunction } from '@aws-amplify/backend';
 import { resolveTimeZone } from '../../../src/lib/timeZone';
+import { appUrl } from '../../app-url';
 
 /**
  * Runs the calendar core's commands for the data API (amplify/data/resource.ts). It is the only
@@ -16,5 +17,7 @@ export const calendarCommands = defineFunction({
   environment: {
     // Susan's time zone. A value that isn't a time zone fails the deploy (src/lib/timeZone.ts).
     SUSAN_TIME_ZONE: resolveTimeZone(process.env.SUSAN_TIME_ZONE),
+    // Names the sender of app notifications to Apple's, Google's and the other push services.
+    APP_URL: appUrl(),
   },
 });

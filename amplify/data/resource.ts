@@ -8,15 +8,17 @@ import {
   TEXT_REASONS,
   TEXT_STATUSES,
 } from '../../src/lib/calendar';
+import { appNotifications } from '../functions/app-notifications/resource';
 import { calendarCommands } from '../functions/calendar-commands/resource';
 import { sendTexts } from '../functions/send-texts/resource';
 
 // Calendar data, and the only way to change it.
 //
 // Anyone signed in can read the calendar, with live updates, and their own subscription link; nobody
-// signed in can write a model directly. Writing goes through the calendar core (src/lib/calendar), whose commands are the
-// mutations at the end. `npm run synth` checks that those are the only mutations a signed-in
-// person can call (scripts/synth.mjs).
+// signed in can write a model directly. Writing goes through the calendar core (src/lib/calendar),
+// whose commands are the mutations at the end. `npm run synth` checks that those, and turning app
+// notifications on and off for a device, are the only mutations a signed-in person can call
+// (scripts/synth.mjs).
 
 /** Every command runs in the calendar-commands function, for anyone signed in. */
 const command = () =>
@@ -128,7 +130,7 @@ const schema = a
       .secondaryIndexes((index) => [index('appointmentId').queryField('textsByAppointment')])
       .authorization((allow) => [allow.authenticated().to(['read'])]),
     // Where texts go and who Susan is told to call (CalendarSettings in
-    // src/lib/calendar/texts.ts): one row, with the ID SETTINGS_ID in amplify/calendar/data-store.ts.
+    // src/lib/calendar/texts.ts): one row, with the ID SETTINGS_ID in src/lib/calendarApi.ts.
     CalendarSettings: a
       .model({
         susansNumber: a.string(),
@@ -155,12 +157,77 @@ const schema = a
     // Each answers with a CommandAnswer: the settings as they now are, or the test text's record.
     changeSettings: command().arguments({ settings: a.json().required() }),
     sendTestText: command(),
+
+    // App notifications (src/lib/appNotifications.ts). Each device someone turned them on for, kept
+    // against their account: the ID is the SHA-256 of its push endpoint. The calendar-commands
+    // function sends to these and forgets one whose subscription is gone. Nobody signed in can read
+    // or write them: they go through the operations below, run by the app-notifications function.
+    AppNotificationDevice: a
+      .model({
+        personId: a.string().required(),
+        endpoint: a.string().required(),
+        p256dh: a.string().required(),
+        auth: a.string().required(),
+        label: a.string(), // "iPhone"
+      })
+      .authorization((allow) => [allow.authenticated().to([])]),
+    // The key pair that signs app notifications (src/lib/vapid.ts): one row, ID "vapid", made the
+    // first time anyone turns notifications on. The private half never leaves the backend.
+    AppNotificationKey: a
+      .model({
+        publicKey: a.string().required(),
+        privateKey: a.string().required(),
+      })
+      .authorization((allow) => [allow.authenticated().to([])]),
+
+    // The public key a device subscribes with, made on first use.
+    appNotificationKey: a
+      .query()
+      .returns(a.string())
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(appNotifications)),
+    // Keeps this device against the signed-in person's account, or forgets it. Turning them on is
+    // the only way a device changes hands.
+    turnOnAppNotifications: a
+      .mutation()
+      .arguments({
+        endpoint: a.string().required(),
+        p256dh: a.string().required(),
+        auth: a.string().required(),
+        label: a.string(),
+      })
+      .returns(a.boolean())
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(appNotifications)),
+    // Keeps this device up to date when the app opens, only if it is the signed-in person's. Answers
+    // with what became of it (DeviceRenewal in src/lib/appNotifications.ts).
+    renewAppNotifications: a
+      .mutation()
+      .arguments({
+        endpoint: a.string().required(),
+        p256dh: a.string().required(),
+        auth: a.string().required(),
+        label: a.string(),
+      })
+      .returns(a.string())
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(appNotifications)),
+    // Answers with what became of it (DeviceRemoval in src/lib/appNotifications.ts): forgotten, not
+    // kept, kept for someone else and so left with them, or unconfirmed.
+    turnOffAppNotifications: a
+      .mutation()
+      .arguments({ endpoint: a.string().required() })
+      .returns(a.string())
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(appNotifications)),
   })
-  // Lets the commands function and the scheduled run write through the data API, so that every
-  // change reaches everyone looking at the calendar
-  // (docs/adr/0003-the-core-writes-through-the-data-api.md).
+  // Lets the functions write through the data API, so that every change reaches everyone looking at
+  // the calendar (docs/adr/0003-the-core-writes-through-the-data-api.md). The scheduled run sends
+  // texts through it; the app-notifications function is narrowed to its own operations
+  // (amplify/backend.ts).
   .authorization((allow) => [
     allow.resource(calendarCommands).to(['query', 'mutate']),
+    allow.resource(appNotifications).to(['query', 'mutate']),
     allow.resource(sendTexts).to(['query', 'mutate']),
   ]);
 

@@ -1,4 +1,9 @@
-import { createCalendarCore, systemClock, type CalendarCore } from '../../../src/lib/calendar';
+import {
+  createCalendarCore,
+  NO_ADMIN_MESSENGER,
+  systemClock,
+  type CalendarCore,
+} from '../../../src/lib/calendar';
 import { resolveTimeZone } from '../../../src/lib/timeZone';
 import { createDataStore } from '../../calendar/data-store';
 import { textSenderFor } from '../../calendar/text-sender';
@@ -13,6 +18,8 @@ function getCore() {
         store,
         clock: systemClock,
         textSender: textSenderFor(),
+        // The run tells no Admin anything yet: Alerts arrive with ticket 15.
+        messenger: NO_ADMIN_MESSENGER,
         timeZone: resolveTimeZone(process.env.SUSAN_TIME_ZONE),
       }),
     )

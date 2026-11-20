@@ -68,9 +68,12 @@ GitHub runs lint, format check, type-check, tests, build and synth on every pull
 (`.github/workflows/ci.yml`).
 
 `npm run synth` fails if the backend it built would break a rule the calendar depends on: nobody can
-sign up, sign-in has no second step, anyone signed in can read everything, the calendar core's
-commands are the only way a signed-in person can change anything, no rule tells Susan from an Admin,
-every table can be restored to a point in time, and everything carries the cost tag.
+sign up, sign-in has no second step, anyone signed in can read everything in the calendar, the
+calendar core's commands (and turning app notifications on and off for a device) are the only way a
+signed-in person can change anything, nobody signed in can read the devices app notifications go to
+or the key that signs them, the app-notifications function reaches nothing else, a device is only
+ever deleted on a condition checked as it is deleted, no rule tells Susan from an Admin, every table can be restored to a
+point in time, and everything carries the cost tag.
 
 ## How the calendar is kept
 
@@ -83,6 +86,9 @@ is the only thing that writes calendar data.
   call writes calendar data any other way.
 - Each command is carried out as the signed-in person. The Appointment shows who added it and who
   last changed it, and the calendar keeps a record of each change.
+- Adding, changing or cancelling an Appointment sends the other Admins an Activity update: an app
+  notification naming who did it and what changed, which opens the Appointment when tapped. The
+  person who made the change, and Susan, get none. See [App notifications](#app-notifications).
 - The tables can be restored to any moment in the last 35 days, and on `main` they cannot be deleted
   by accident.
 - On sample data the same core runs in the browser, over a store kept in memory.
@@ -132,6 +138,7 @@ Set these on the Amplify app under **Hosting → Environment variables**, for al
 | `COST_TAG`        | `susans-calendar`  | The `project` tag on every backend resource and on the Hosting app, so the app's cost shows on its own in billing. This is the default.                       |
 | `CONTACT_EMAIL`   | your email address | The contact address on the [public pages](#public-pages). They say none has been set if it is missing; a value that is not an email address fails the deploy. |
 | `OWNER_NAME`      | your full name     | Who the public pages say runs the calendar. They say "a private individual" if it is missing.                                                                 |
+| `APP_URL`         | (leave unset)      | The address app notifications give the push services as their sender. It is worked out from the Amplify app; set it only if the app moves to its own domain.  |
 
 A change to any of these takes effect at the next deploy. Later tickets add to this table.
 
@@ -199,3 +206,37 @@ attribute, then add it to the `Admins` group.
 Open the app's address in Safari on an iPhone (or Chrome on Android), then **Share → Add to Home
 Screen**. It then opens like an app. When a new version has been deployed, a bar at the top offers
 **Refresh**.
+
+## App notifications
+
+An Admin turns them on for each phone or laptop in **Settings → App notifications → Turn on for this
+device**. On an iPhone the app must be added to the home screen first, and opened from there; the
+section says so. From then on that device gets an Activity update whenever someone else adds,
+changes or cancels an Appointment. Alerts will arrive the same way (ticket 15).
+
+- They are web push, as in Wellbeing. The key pair that signs them is made by the backend the first
+  time anyone turns them on and kept in the data API, so there is no secret to set up. The private
+  half never leaves the backend.
+- Each device is kept against the account of whoever turned it on. Turning them on in Settings is
+  the only way a device changes hands, as when two people share a laptop: the one who turned them
+  on last gets them.
+- Opening the app only keeps its device up to date for the person who already has it. An older
+  session opened on a device someone else has turned them on for since takes nothing; Settings
+  there says notifications on this device are not coming to that person, and offers to turn them
+  on. Settings shows them as on only when the backend confirms the device is that person's.
+- Turning them off, or signing out, forgets the device, but only for that person: the delete is
+  made on condition that the device is still theirs at the moment it lands. If it is refused, the
+  device's table is read with a strongly consistent read to say why; the data API's own reads can
+  lag. Only a device that was forgotten, or that nobody has, lets the browser end its
+  subscription. One that is someone else's, or whose owner cannot be read, keeps it for them. If
+  the backend cannot be reached at all at sign-out, the subscription is ended anyway, so that this
+  person's notifications cannot reach whoever uses the device next.
+- A device whose push service says its subscription is gone is forgotten too, unless it was renewed
+  or moved since.
+- The app-notifications function may call only the device and key operations it needs, and may read
+  single devices from their table, and nothing else.
+- Tapping one opens its Appointment in the app's window, whatever that window was showing, or in a
+  new one.
+- Who is an Admin comes from the `Admins` group (see [Accounts](#accounts)). Susan's account is not in
+  it, so she never gets them, even on a device she turned them on for.
+- Deleting an Appointment entered by mistake sends no Activity update.
