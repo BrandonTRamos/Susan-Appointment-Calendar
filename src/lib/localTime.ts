@@ -110,6 +110,34 @@ export function formatDate(date: string, style: 'long' | 'short' = 'long'): stri
   return DATE_FORMATS[style].format(new Date(asIfUtc(date, '00:00')));
 }
 
+const BRIEF = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'UTC',
+  weekday: 'short',
+  month: 'short',
+  day: 'numeric',
+});
+
+/**
+ * A day as a person says it, from `today`: "Today · Thu, Nov 19", "Tomorrow · Fri, Nov 20", or
+ * just "Mon, Nov 23" further ahead. The year is added when it is not today's year.
+ */
+export function dayInWords(date: string, today: string): string {
+  const day =
+    date.slice(0, 4) === today.slice(0, 4)
+      ? BRIEF.format(new Date(asIfUtc(date, '00:00')))
+      : formatDate(date, 'short');
+  const word = date === today ? 'Today' : date === addDays(today, 1) ? 'Tomorrow' : null;
+  return word ? `${word} · ${day}` : day;
+}
+
+/** A date's weekday, month and day of the month, in short words: Tue, Dec, 1. */
+export function dateParts(date: string): { weekday: string; month: string; day: string } {
+  const part: Record<string, string> = {};
+  for (const { type, value } of BRIEF.formatToParts(new Date(asIfUtc(date, '00:00'))))
+    part[type] = value;
+  return { weekday: part.weekday, month: part.month, day: part.day };
+}
+
 /** A time as a person says it: "2:30 pm". */
 export function formatTime(time: string): string {
   const [hour, minute] = time.split(':');

@@ -4,6 +4,7 @@ import {
   createCalendarCore,
   createFixedClock,
   createMemoryStore,
+  overlappingAppointments,
   upcomingAppointments,
   type Actor,
   type NewAppointment,
@@ -537,6 +538,89 @@ describe('upcoming Appointments', () => {
       'Blood draw',
       'Eye exam',
     ]);
+  });
+
+  it('leave out cancelled ones', async () => {
+    const { core, store } = calendar();
+    const hair = await core.addAppointment(linda, { ...checkUp, what: 'Hair' });
+    await core.addAppointment(linda, { ...checkUp, what: 'Eye exam', date: '2026-12-01' });
+    await core.cancelAppointment(mark, hair.id);
+    expect(upcomingAppointments(store.appointments(), '2026-11-19').map((a) => a.what)).toEqual([
+      'Eye exam',
+    ]);
+  });
+});
+
+describe('overlapping Appointments', () => {
+  /** What the Appointments that overlap `id` are, taking each to be about an hour long. */
+  const overlapping = (store: ReturnType<typeof calendar>['store'], id: string) =>
+    overlappingAppointments(
+      store.appointments().find((a) => a.id === id)!,
+      store.appointments(),
+    ).map((a) => a.what);
+
+  it('are the others starting less than an hour before or after it', async () => {
+    const { core, store } = calendar();
+    const added = await core.addAppointment(linda, checkUp);
+    await core.addAppointment(mark, { ...checkUp, what: 'Blood draw', time: '13:01' });
+    await core.addAppointment(mark, { ...checkUp, what: 'Hair', time: '14:59' });
+    await core.addAppointment(mark, { ...checkUp, what: 'Lunch', time: '13:00' });
+    await core.addAppointment(mark, { ...checkUp, what: 'Eye exam', time: '15:00' });
+    await core.addAppointment(mark, { ...checkUp, what: 'Dentist', date: '2026-11-21' });
+    expect(overlapping(store, added.id)).toEqual(['Blood draw', 'Hair']);
+  });
+
+  it('include one on the next day, just after midnight', async () => {
+    const { core, store } = calendar();
+    const late = await core.addAppointment(linda, { ...checkUp, what: 'Late call', time: '23:30' });
+    await core.addAppointment(mark, {
+      ...checkUp,
+      what: 'Early call',
+      date: '2026-11-21',
+      time: '00:15',
+    });
+    expect(overlapping(store, late.id)).toEqual(['Early call']);
+  });
+
+  it('include one at the very same time', async () => {
+    const { core, store } = calendar();
+    const added = await core.addAppointment(linda, checkUp);
+    await core.addAppointment(mark, { ...checkUp, what: 'Hair' });
+    expect(overlapping(store, added.id)).toEqual(['Hair']);
+  });
+
+  it('leave out cancelled ones, and a cancelled one overlaps nothing', async () => {
+    const { core, store } = calendar();
+    const added = await core.addAppointment(linda, checkUp);
+    const hair = await core.addAppointment(mark, { ...checkUp, what: 'Hair' });
+    await core.cancelAppointment(mark, hair.id);
+    expect(overlapping(store, added.id)).toEqual([]);
+    expect(overlapping(store, hair.id)).toEqual([]);
+  });
+
+  it('are measured in real time across a clock change', async () => {
+    const { core, store } = calendar();
+    // The clocks go back at 2:00 am on 1 November 2026: 1:30 am happens an hour after 12:30 am,
+    // then again an hour later. The first one is meant, so 12:45 am is within the hour.
+    const early = await core.addAppointment(linda, {
+      ...checkUp,
+      what: 'Night nurse',
+      date: '2026-11-01',
+      time: '01:30',
+    });
+    await core.addAppointment(mark, {
+      ...checkUp,
+      what: 'Pill',
+      date: '2026-11-01',
+      time: '00:45',
+    });
+    await core.addAppointment(mark, {
+      ...checkUp,
+      what: 'Wake',
+      date: '2026-11-01',
+      time: '02:15',
+    });
+    expect(overlapping(store, early.id)).toEqual(['Pill']);
   });
 });
 

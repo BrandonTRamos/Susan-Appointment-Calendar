@@ -166,7 +166,9 @@ describe('deleting an Appointment entered by mistake', () => {
     expect(calendar.store.appointments()).toHaveLength(1);
 
     await userEvent.click(within(question).getByRole('button', { name: 'Yes, delete it' }));
-    expect(await screen.findByRole('heading', { level: 1, name: 'Upcoming' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { level: 1, name: "Susan's Calendar" }),
+    ).toBeInTheDocument();
     expect(await screen.findByText('No upcoming Appointments.')).toBeInTheDocument();
     expect(calendar.store.appointments()).toEqual([]);
   });
@@ -186,7 +188,9 @@ describe('deleting an Appointment entered by mistake', () => {
     await screen.findByRole('heading', { level: 1, name: 'Appointment' });
     expect(screen.queryByText(/not in the calendar/)).not.toBeInTheDocument();
     await act(async () => answer());
-    expect(await screen.findByRole('heading', { level: 1, name: 'Upcoming' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { level: 1, name: "Susan's Calendar" }),
+    ).toBeInTheDocument();
   });
 
   it('is refused once Susan has been texted about it, and says to cancel instead', async () => {
