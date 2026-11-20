@@ -2,7 +2,12 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Field } from '../../components/Field';
 import { TextStatus } from '../../components/TextStatus';
 import { useCalendar } from '../../data/CalendarContext';
-import { CalendarRefusal, formatPhone, type CalendarSettings } from '../../lib/calendar';
+import {
+  CalendarRefusal,
+  formatPhone,
+  type CalendarSettings,
+  type SettingsChanges,
+} from '../../lib/calendar';
 import { textStatus } from '../../lib/textStatus';
 import { SettingsSection } from './SettingsSection';
 
@@ -11,6 +16,22 @@ interface Typed {
   susansNumber: string;
   contactName: string;
   contactPhone: string;
+}
+
+/**
+ * What a save sends: only the settings the person changed from those this page read, so that a
+ * page left open never puts back what another page saved since. Her number as this page read it
+ * goes with them when it has no destination ID yet (Settings kept before Replies): saving confirms
+ * it, and the calendar binds it only if it is still that number.
+ */
+function settingsToSave(read: CalendarSettings, typed: Typed): SettingsChanges {
+  const was = typedFrom(read);
+  const changes: SettingsChanges = {};
+  for (const name of ['susansNumber', 'contactName', 'contactPhone'] as const)
+    if (typed[name].trim() !== was[name].trim()) changes[name] = typed[name];
+  if (read.susansNumber && read.numberId === null && changes.susansNumber === undefined)
+    changes.confirmSusansNumber = read.susansNumber;
+  return changes;
 }
 
 const typedFrom = (settings: CalendarSettings): Typed => ({
@@ -66,7 +87,7 @@ export function SusansPhoneAndContact() {
     setProblem(null);
     setSaved(false);
     try {
-      const changed = await client.changeSettings(typed);
+      const changed = await client.changeSettings(settingsToSave(settings!, typed));
       setSettings(changed);
       setTyped(typedFrom(changed));
       setSaved(true);
@@ -104,6 +125,12 @@ export function SusansPhoneAndContact() {
         <p className="warning" role="note">
           No mobile number is set, so no texts are sent to Susan. Reminders that come due are
           recorded as not sent.
+        </p>
+      )}
+      {settings?.susansNumber && settings.numberId === null && (
+        <p className="hint muted" role="note">
+          Save once to confirm Susan's number for automatic answers. Until then, a Reply she sends
+          is still passed on, but she gets no automatic answer.
         </p>
       )}
       {recordedOnly && (

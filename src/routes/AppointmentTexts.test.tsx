@@ -197,6 +197,7 @@ describe.each(['phone', 'desktop'] as const)(
           triedAt: added.reminders[0].dueAt,
           sentAt: added.reminders[0].dueAt,
           reference: null,
+          replyId: null,
           creditLeft: null,
           alert: null,
           told: { date: added.date, time: added.time, cancelled: false },

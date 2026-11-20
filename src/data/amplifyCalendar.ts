@@ -21,7 +21,7 @@ import {
   type AppointmentRow,
   type CommandAnswer,
 } from '../lib/calendarApi';
-import { liveTexts } from './amplifyTexts';
+import { liveCalendarAlerts, liveReplies, liveTexts } from './amplifyLive';
 import { newestFirst, NO_FEED, type AgentKeyListing, type CalendarClient } from './calendarClient';
 
 interface Watcher {
@@ -68,6 +68,8 @@ export function createAmplifyCalendar(
 ): CalendarClient {
   const client = generateClient<Schema>();
   const texts = liveTexts(client);
+  const replies = liveReplies(client);
+  const calendarAlerts = liveCalendarAlerts(client);
   const model = client.models.Appointment;
 
   /** Every Appointment, as last heard. */
@@ -270,6 +272,25 @@ export function createAmplifyCalendar(
       if (!('text' in said)) throw new Error(COMMAND_FAILED);
       texts.put(said.text);
       return said.text;
+    },
+
+    watchReplies: (listener, onError) => replies.watch(listener, onError),
+    watchCalendarAlerts: (listener, onError) => calendarAlerts.watch(listener, onError),
+    // A signed-in person can read only their own, so the first one found is theirs.
+    async repliesSeen() {
+      let nextToken: string | null | undefined;
+      do {
+        const page = await client.models.RepliesSeen.list({ nextToken });
+        if (page.errors?.length) throw new Error(page.errors.map((e) => e.message).join('; '));
+        if (page.data[0]) return page.data[0].seenUpTo;
+        nextToken = page.nextToken;
+      } while (nextToken);
+      return null;
+    },
+    async seeReplies(upTo) {
+      const said = await command(() => client.mutations.seeReplies({ upTo }));
+      if (!('repliesSeen' in said)) throw new Error(COMMAND_FAILED);
+      return said.repliesSeen;
     },
   };
 }

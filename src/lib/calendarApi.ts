@@ -6,13 +6,16 @@ import type { Schema } from '../../amplify/data/resource';
 import type {
   AgentKey,
   Appointment,
+  CalendarAlert,
   MadeAgentKey,
   CalendarSettings,
+  MessageProgress,
   MadeSubscriptionLink,
   RefusalField,
   RefusalReason,
   Reminder,
   ReminderTiming,
+  Reply,
   Repeat,
   Series,
   SeriesPlace,
@@ -32,6 +35,7 @@ export type CommandAnswer =
   | { agentKey: MadeAgentKey | null }
   | { settings: CalendarSettings }
   | { text: Text }
+  | { repliesSeen: string | null }
   | { refusal: { reason: RefusalReason; message: string; detail?: RefusalField } };
 
 /** Said when a command failed for a reason that is nobody's mistake. */
@@ -162,6 +166,7 @@ export function toText(row: Kept<TextRow, Text> & Partial<Pick<TextRow, AlertCol
     kind: row.kind ?? 'reminder',
     appointmentId: row.appointmentId ?? null,
     reminderId: row.reminderId ?? null,
+    replyId: row.replyId ?? null,
     words: row.words,
     dueAt: row.dueAt,
     status: row.status ?? 'waiting',
@@ -221,6 +226,85 @@ export function toSettings(row: Kept<SettingsRow, CalendarSettings>): CalendarSe
     susansNumber: row.susansNumber ?? null,
     contactName: row.contactName ?? null,
     contactPhone: row.contactPhone ?? null,
+    // Settings kept before ticket 17 have none: their number is bound to no destination until
+    // it is confirmed.
+    numberId: row.numberId ?? null,
     lastChanged: row.lastChanged ? toStamp(row.lastChanged) : null,
   };
+}
+
+/** How far a message to every Admin has got, from its flat fields; null when it has none. */
+function toProgress(
+  state: MessageProgress['state'] | null | undefined,
+  tries: number | null | undefined,
+  triedAt: string | null | undefined,
+  sent: readonly (string | null)[] | null | undefined,
+  refused: readonly (string | null)[] | null | undefined,
+): MessageProgress | null {
+  if (!state) return null;
+  const kept = (each: string | null): each is string => Boolean(each);
+  return {
+    state,
+    tries: tries ?? 0,
+    triedAt: triedAt ?? null,
+    sent: (sent ?? []).filter(kept),
+    refused: (refused ?? []).filter(kept),
+  };
+}
+
+/** A message to every Admin not yet tried, for a row that lost its own. */
+const NOT_TRIED: MessageProgress = { state: 'due', tries: 0, triedAt: null, sent: [], refused: [] };
+
+export type ReplyRow = Schema['Reply']['type'];
+
+/** A Reply as the data API carries it. */
+export function toReply(row: Kept<ReplyRow, Reply> & Partial<ReplyRow>): Reply {
+  return {
+    id: row.id,
+    words: row.words,
+    receivedAt: row.receivedAt,
+    numberId: row.numberId ?? null,
+    answer: row.answer ?? 'due',
+    answerTextId: row.answerTextId ?? null,
+    passOn:
+      toProgress(
+        row.passOn,
+        row.passOnTries,
+        row.passOnTriedAt,
+        row.passOnSent,
+        row.passOnRefused,
+      ) ?? NOT_TRIED,
+  };
+}
+
+/** A Reply as the data API keeps it: its passing on flat beside the rest. */
+export function replyRow({ passOn, ...reply }: Reply) {
+  return {
+    ...reply,
+    passOn: passOn.state,
+    passOnTries: passOn.tries,
+    passOnTriedAt: passOn.triedAt,
+    passOnSent: passOn.sent,
+    passOnRefused: passOn.refused,
+  };
+}
+
+export type CalendarAlertRow = Schema['CalendarAlert']['type'];
+
+/** A calendar Alert as the data API carries it. */
+export function toCalendarAlert(
+  row: Pick<CalendarAlertRow, 'id' | 'raisedAt'> & Partial<CalendarAlertRow>,
+): CalendarAlert {
+  return {
+    id: row.id,
+    kind: row.kind ?? 'textsBlocked',
+    raisedAt: row.raisedAt,
+    creditLeft: row.creditLeft ?? null,
+    progress: toProgress(row.state, row.tries, row.triedAt, row.sent, row.refused) ?? NOT_TRIED,
+  };
+}
+
+/** A calendar Alert as the data API keeps it: its sending flat beside the rest. */
+export function calendarAlertRow({ progress, ...alert }: CalendarAlert) {
+  return { ...alert, ...progress };
 }

@@ -18,6 +18,7 @@ afterEach(() => {
 async function calendarWithDueReminder({
   susansNumber = '+15555550123' as string | null,
   refuse = false,
+  block = false,
 } = {}) {
   const clock = createFixedClock(new Date().toISOString());
   const calendar = createSampleCalendar(EASTERN, { empty: true, clock, susansNumber });
@@ -29,6 +30,7 @@ async function calendarWithDueReminder({
   });
   clock.set(added.reminders[0].dueAt);
   if (refuse) calendar.sender.refuseNext();
+  if (block) calendar.sender.blockNext();
   await calendar.core.runDue();
   return { calendar, added, clock };
 }
@@ -112,6 +114,38 @@ describe.each(['phone', 'desktop'] as const)('the banner about texts, at %s widt
       'href',
       `/appointments/${added.id}`,
     );
+  });
+
+  const BLOCKED =
+    "Texts to Susan are blocked: she opted out, so none reaches her phone. Only she can undo it, by replying START to a text from the calendar's number.";
+
+  it('shows on every screen while texts to Susan are blocked, until a text is delivered again', async () => {
+    const { calendar, added, clock } = await calendarWithDueReminder({ block: true });
+    for (const path of ['/', '/replies', '/settings', `/appointments/${added.id}`]) {
+      renderApp(path, { calendar });
+      expect(await banner()).toHaveTextContent(BLOCKED);
+      expect(screen.getByRole('link', { name: 'Open Settings' })).toHaveAttribute(
+        'href',
+        '/settings',
+      );
+      cleanup();
+    }
+    renderApp('/', { calendar });
+    // A later text that is only sent, not yet delivered, does not clear it.
+    clock.set(new Date(clock.now().getTime() + 60_000).toISOString());
+    const test = await act(() => calendar.core.sendTestText(linda));
+    expect(await banner()).toHaveTextContent(BLOCKED);
+    await act(() => calendar.core.recordDelivery({ textId: test.id, outcome: 'delivered' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  });
+
+  it('shows when the text sender reports that she opted out', async () => {
+    const { calendar } = await calendarWithDueReminder();
+    renderApp('/month', { calendar });
+    expect((await screen.findAllByText('Eye exam')).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('alert')).toBeNull();
+    await act(() => calendar.core.recordOptOut({ key: 'report-1' }));
+    expect(await banner()).toHaveTextContent(BLOCKED);
   });
 
   it('does not show while texts to Susan are going', async () => {

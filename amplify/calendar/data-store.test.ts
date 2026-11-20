@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   createCalendarCore,
   createFixedClock,
@@ -26,11 +26,27 @@ function dataApi() {
     ActivityRecord: new Map<string, Row>(),
     Text: new Map<string, Row>(),
     CalendarSettings: new Map<string, Row>(),
+    Reply: new Map<string, Row>(),
+    CalendarAlert: new Map<string, Row>(),
   };
+  const seen = new Map<string, Row>();
+  const conditionFailed = () => ({
+    data: null,
+    errors: [
+      {
+        errorType: 'DynamoDB:ConditionalCheckFailedException',
+        message: 'The conditional request failed (Service: DynamoDb, Status Code: 400)',
+      },
+    ],
+  });
   let failure: string | null = null;
   const answer = <T>(data: T) =>
     failure ? { data: null, errors: [{ message: failure }] } : { data };
-  const model = (rows: Map<string, Row>) => ({
+  /**
+   * `removesNulls`: an update removes a field given as null, as the data API's own does; the
+   * settings' destination ID relies on it. The other models' tests keep nulls as written.
+   */
+  const model = (rows: Map<string, Row>, removesNulls = false) => ({
     async get({ id }: { id: string }) {
       return answer(rows.get(id) ?? null);
     },
@@ -62,9 +78,12 @@ function dataApi() {
       rows.set(input.id, row);
       return answer(row);
     },
+    // As the data API's own update does: only the fields given are written.
     async update(input: Row) {
       if (failure) return answer(null);
-      const row = { ...rows.get(input.id), ...input, updatedAt: '2026-11-19T21:00:01.000Z' };
+      const row: Row = { ...rows.get(input.id)!, ...input, updatedAt: '2026-11-19T21:00:01.000Z' };
+      if (removesNulls)
+        for (const [field, value] of Object.entries(input)) if (value === null) delete row[field];
       rows.set(input.id, row);
       return answer(row);
     },
@@ -140,10 +159,24 @@ function dataApi() {
           return { ...answer(rows), nextToken: null };
         },
       },
-      CalendarSettings: model(tables.CalendarSettings),
+      CalendarSettings: model(tables.CalendarSettings, true),
+      Reply: model(tables.Reply),
+      CalendarAlert: model(tables.CalendarAlert),
+      RepliesSeen: {
+        async get({ personId }: { personId: string }) {
+          return answer(seen.get(personId) ?? null);
+        },
+        // As the data API's own create does: only if the person has no mark yet, in one step.
+        async create(input: Row) {
+          if (seen.has(input.personId as string)) return conditionFailed();
+          seen.set(input.personId as string, input);
+          return answer(input);
+        },
+      },
     },
-    // Only the conditional update of a text, as DynamoDB checks it: every `eq` in the condition
-    // must hold of the row as it is when written. The client throws an answer that has errors.
+    // Only the conditional update of a text, a Reply or a calendar Alert, as DynamoDB checks it:
+    // every `eq` in the condition must hold of the row as it is when written. The client throws
+    // an answer that has errors.
     async graphql({ query, variables }: { query: string; variables: Record<string, unknown> }) {
       // A key is deleted only if, as DynamoDB deletes it, it is there and the condition holds of it.
       if (query.includes('deleteAgentKey(input: { hash: $hash }, condition: $condition)')) {
@@ -155,11 +188,45 @@ function dataApi() {
         agentKeys.delete(hash);
         return { data: { deleteAgentKey: { hash } } };
       }
-      if (!query.includes('updateText(input: $input, condition: $condition)'))
-        throw new Error('This stand-in only answers conditional writes.');
+      // Susan's number given its destination ID: only while the kept number is the one confirmed
+      // and has none, as DynamoDB checks `eq` and `attributeExists` when it writes.
+      if (query.includes('updateCalendarSettings(input: $input, condition: $condition)')) {
+        const input = variables.input as Row;
+        const { and } = variables.condition as {
+          and: Record<string, { eq?: unknown; attributeExists?: boolean }>[];
+        };
+        const row = tables.CalendarSettings.get(input.id);
+        const holds =
+          row &&
+          and.every((each) =>
+            Object.entries(each).every(([field, test]) =>
+              'attributeExists' in test
+                ? (field in row && row[field] !== undefined) === test.attributeExists
+                : row[field] === test.eq,
+            ),
+          );
+        if (!holds) throw conditionFailed();
+        tables.CalendarSettings.set(input.id, { ...row, ...input });
+        return { data: { updateCalendarSettings: { id: input.id } } };
+      }
+      // A person's mark of the Replies seen: moved on only while the kept one is earlier.
+      if (query.includes('updateRepliesSeen(input: $input, condition: $condition)')) {
+        const input = variables.input as Row;
+        const { and } = variables.condition as { and: Record<string, { lt: string }>[] };
+        const row = seen.get(input.personId as string);
+        if (!row || !and.every((each) => (row.seenUpTo as string) < each.seenUpTo.lt))
+          throw conditionFailed();
+        seen.set(input.personId as string, { ...row, ...input });
+        return { data: { updateRepliesSeen: { personId: input.personId } } };
+      }
+      const model =
+        /update(Text|Reply|CalendarAlert)\(input: \$input, condition: \$condition\)/.exec(
+          query,
+        )?.[1] as 'Text' | 'Reply' | 'CalendarAlert' | undefined;
+      if (!model) throw new Error('This stand-in only answers conditional writes.');
       const input = variables.input as Row;
       const { and } = variables.condition as { and: Record<string, { eq: unknown }>[] };
-      const row = tables.Text.get(input.id);
+      const row = tables[model].get(input.id);
       const holds =
         row && and.every((each) => Object.entries(each).every(([f, { eq }]) => row[f] === eq));
       if (!holds)
@@ -172,8 +239,8 @@ function dataApi() {
             },
           ],
         };
-      tables.Text.set(input.id, { ...row, ...input });
-      return { data: { updateText: { id: input.id } } };
+      tables[model].set(input.id, { ...row, ...input });
+      return { data: { [`update${model}`]: { id: input.id } } };
     },
   } as unknown as DataClient;
   return {
@@ -184,6 +251,13 @@ function dataApi() {
     links: () => [...links.values()],
     agentKeys: () => [...agentKeys.values()],
     texts: () => [...tables.Text.values()],
+    replies: () => [...tables.Reply.values()],
+    settingsRows: () => [...tables.CalendarSettings.values()],
+    /** Puts a row of settings in as one kept before a field existed. */
+    keepSettingsRow(row: Row) {
+      tables.CalendarSettings.set(row.id, row);
+    },
+    calendarAlerts: () => [...tables.CalendarAlert.values()],
     /** The index stops hearing of changes until it is told to catch up. */
     freezeIndex() {
       index = structuredClone([...links.values()]);
@@ -591,6 +665,7 @@ describe('the calendar kept in the data API', () => {
       triedAt: '2026-11-19T20:00:00.000Z',
       sentAt: null,
       reference: null,
+      replyId: null,
       creditLeft: null,
       alert: null,
       told: null,
@@ -660,6 +735,93 @@ describe('the calendar kept in the data API', () => {
     });
   });
 
+  it('keeps each Reply once, and answers or passes it on only while it is as it was read', async () => {
+    const { api, store, core } = calendar();
+    await core.changeSettings(linda, { susansNumber: '555 555 0123' });
+    const reply = (await core.receiveReply({
+      key: 'abc',
+      words: 'On my way',
+      from: '+15555550123',
+    }))!;
+    expect(
+      await core.receiveReply({ key: 'abc', words: 'On my way', from: '+15555550123' }),
+    ).toEqual(reply);
+    expect(await store.everyReply()).toEqual([reply]);
+    const answered = { ...reply, answer: 'sent' as const };
+    expect(await store.changeReply(answered, reply)).toBe(true);
+    // A second run read it as due too: it has been answered since, so its write is refused.
+    expect(await store.changeReply({ ...reply, answer: 'recent' }, reply)).toBe(false);
+    const taken = {
+      ...answered,
+      passOn: {
+        ...answered.passOn,
+        state: 'sending' as const,
+        tries: 1,
+        triedAt: '2026-11-19T20:01:00.000Z',
+      },
+    };
+    expect(await store.changeReply(taken, answered)).toBe(true);
+    expect(await store.changeReply(taken, answered)).toBe(false);
+    expect(await store.everyReply()).toEqual([taken]);
+    // Kept flat beside the rest, so that a write can be conditioned on it.
+    expect(api.replies()[0]).toMatchObject({
+      id: 'reply:abc',
+      words: 'On my way',
+      numberId: (await store.settings()).numberId,
+      answer: 'sent',
+      passOn: 'sending',
+      passOnTries: 1,
+      passOnTriedAt: '2026-11-19T20:01:00.000Z',
+    });
+  });
+
+  it('keeps each calendar Alert once, and sends it only while it is as it was read', async () => {
+    const { api, store, core } = calendar();
+    const alert = (await core.recordOptOut({ key: 'report-1' }))!;
+    expect(await core.recordOptOut({ key: 'report-1' })).toBeNull();
+    expect(await store.everyCalendarAlert()).toEqual([alert]);
+    const taken = {
+      ...alert,
+      progress: {
+        ...alert.progress,
+        state: 'sending' as const,
+        tries: 1,
+        triedAt: '2026-11-19T20:01:00.000Z',
+      },
+    };
+    expect(await store.changeCalendarAlert(taken, alert)).toBe(true);
+    expect(await store.changeCalendarAlert(taken, alert)).toBe(false);
+    expect(api.calendarAlerts()[0]).toMatchObject({
+      kind: 'textsBlocked',
+      state: 'sending',
+      tries: 1,
+    });
+  });
+
+  it('keeps which Replies each person has seen', async () => {
+    const { store, core } = calendar();
+    expect(await store.repliesSeen('person-linda')).toBeNull();
+    await core.seeReplies(linda, '2026-11-19T20:00:00.000Z');
+    await core.seeReplies(linda, '2026-11-19T20:05:00.000Z');
+    expect(await store.repliesSeen('person-linda')).toBe('2026-11-19T20:05:00.000Z');
+    expect(await store.repliesSeen('person-mark')).toBeNull();
+  });
+
+  it("never takes a person's mark back, whichever of two devices writes first", async () => {
+    const { store } = calendar();
+    // Two devices make the person's first mark at once: the later one wins, in either order.
+    await Promise.all([
+      store.advanceRepliesSeen('person-linda', '2026-11-19T20:05:00.000Z'),
+      store.advanceRepliesSeen('person-linda', '2026-11-19T20:01:00.000Z'),
+    ]);
+    expect(await store.repliesSeen('person-linda')).toBe('2026-11-19T20:05:00.000Z');
+    // A device that read an older mark, and marks less than is kept now, changes nothing.
+    await store.advanceRepliesSeen('person-linda', '2026-11-19T20:03:00.000Z');
+    expect(await store.repliesSeen('person-linda')).toBe('2026-11-19T20:05:00.000Z');
+    await store.advanceRepliesSeen('person-linda', '2026-11-19T20:09:00.000Z');
+    expect(await store.repliesSeen('person-linda')).toBe('2026-11-19T20:09:00.000Z');
+  });
+
   it('reads a text kept before Alerts as having none', async () => {
     const { api, store, core } = calendar();
     await core.changeSettings(linda, { susansNumber: '555 555 0123' });
@@ -685,6 +847,7 @@ describe('the calendar kept in the data API', () => {
       triedAt: reminder.dueAt,
       sentAt: reminder.dueAt,
       reference: null,
+      replyId: null,
       creditLeft: 12,
       alert: null,
       // What it told her goes in and comes back as it was.
@@ -701,11 +864,98 @@ describe('the calendar kept in the data API', () => {
       susansNumber: null,
       contactName: null,
       contactPhone: null,
+      numberId: null,
       lastChanged: null,
     });
     await core.changeSettings(linda, { susansNumber: '555 555 0123' });
     const changed = await core.changeSettings(linda, { contactName: 'Linda' });
     expect(await store.settings()).toEqual(changed);
+    expect(changed.numberId).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("writes her number and its destination ID together, and a contact's save neither", async () => {
+    const { api, core } = calendar();
+    const models = api.client.models.CalendarSettings;
+    const create = vi.spyOn(models, 'create');
+    const update = vi.spyOn(models, 'update');
+    await core.changeSettings(linda, { susansNumber: '555 555 0123', contactName: 'Linda' });
+    // The first save makes the row, with the number and its ID in the one write.
+    expect(create).toHaveBeenCalledTimes(1);
+    const made = create.mock.calls[0][0] as Record<string, unknown>;
+    expect(made).toMatchObject({
+      id: 'settings',
+      susansNumber: '+15555550123',
+      contactName: 'Linda',
+    });
+    expect(made.numberId).toMatch(/^[0-9a-f-]{36}$/);
+    // A save of the contact writes the contact alone.
+    await core.changeSettings(linda, { contactName: 'Mark', contactPhone: '5555550187' });
+    const contact = update.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(Object.keys(contact).sort()).toEqual(
+      ['contactName', 'contactPhone', 'id', 'lastChanged'].sort(),
+    );
+    // A new number writes the number and a new ID together, and nothing else of Settings.
+    await core.changeSettings(linda, { susansNumber: '5555550142' });
+    const number = update.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(Object.keys(number).sort()).toEqual(
+      ['id', 'lastChanged', 'numberId', 'susansNumber'].sort(),
+    );
+    expect(number.numberId).not.toBe(made.numberId);
+    // Clearing it removes both.
+    await core.changeSettings(linda, { susansNumber: null });
+    expect(api.settingsRows()[0]).not.toHaveProperty('susansNumber');
+    expect(api.settingsRows()[0]).not.toHaveProperty('numberId');
+    expect(api.settingsRows()[0]).toMatchObject({ contactName: 'Mark' });
+  });
+
+  it("never puts back a replaced number by a contact's save begun before it was replaced", async () => {
+    const { api, store, core } = calendar();
+    await core.changeSettings(linda, { susansNumber: '555 555 0123', contactName: 'Linda' });
+    // The contact's save read Settings before the number changed; its write lands after.
+    const stale = await store.settings();
+    await core.changeSettings(linda, { susansNumber: '5555550142' });
+    const replaced = await store.settings();
+    await store.keepSettings({ contactName: 'Ann', lastChanged: stale.lastChanged });
+    expect(api.settingsRows()[0]).toMatchObject({
+      susansNumber: '+15555550142',
+      numberId: replaced.numberId,
+      contactName: 'Ann',
+    });
+  });
+
+  it('reads Settings kept before ticket 17 as unbound, and binds the same number on condition', async () => {
+    const { api, store, core } = calendar();
+    // As production holds them: her number, saved before Replies, with no destination ID.
+    api.keepSettingsRow({ id: 'settings', susansNumber: '+15555550123', contactName: 'Linda' });
+    expect(await store.settings()).toMatchObject({ susansNumber: '+15555550123', numberId: null });
+    // A Reply is kept and passed on, but bound to nothing.
+    const reply = (await core.receiveReply({ key: 'r1', words: 'Hi', from: '+15555550123' }))!;
+    expect(reply).toMatchObject({ numberId: null, answer: 'unbound' });
+    expect(api.replies()[0]).not.toHaveProperty('susansNumber');
+    // Confirming another number binds nothing.
+    await core.changeSettings(linda, { confirmSusansNumber: '5555550142' });
+    expect(api.settingsRows()[0]).not.toHaveProperty('numberId');
+    // Confirming the number as it is gives it an ID, by a write conditioned on it.
+    const graphql = vi.spyOn(api.client, 'graphql');
+    const bound = await core.changeSettings(linda, { confirmSusansNumber: '(555) 555-0123' });
+    expect(bound.numberId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(api.settingsRows()[0]).toMatchObject({
+      susansNumber: '+15555550123',
+      numberId: bound.numberId,
+    });
+    expect(graphql.mock.calls[0][0].variables).toMatchObject({
+      input: { id: 'settings', numberId: bound.numberId },
+      condition: {
+        and: [{ susansNumber: { eq: '+15555550123' } }, { numberId: { attributeExists: false } }],
+      },
+    });
+    // Once bound, confirming again changes nothing.
+    await core.changeSettings(linda, { confirmSusansNumber: '5555550123' });
+    expect(api.settingsRows()[0].numberId).toBe(bound.numberId);
+    // A bind whose number was replaced meanwhile is refused as it is written.
+    expect(await store.bindSusansNumber('+15555550199', 'another-id', bound.lastChanged!)).toBe(
+      false,
+    );
   });
 
   it('fails the command when the data API reports an error', async () => {

@@ -6,9 +6,11 @@ import type {
   Appointment,
   AppointmentChanges,
   AgentKey,
+  CalendarAlert,
   CalendarSettings,
   MadeAgentKey,
   NewAppointment,
+  Reply,
   NewSeries,
   Series,
   SeriesChanges,
@@ -82,6 +84,19 @@ export interface CalendarClient {
    * that can be stored after a deploy.
    */
   textsRecordedOnly(): Promise<boolean>;
+
+  // Replies and calendar Alerts (src/lib/calendar/replies.ts, alerts.ts).
+  /** Keeps `listener` told of every Reply Susan sent, as `watchTexts` does texts. */
+  watchReplies(listener: (replies: Reply[]) => void, onError: (error: Error) => void): () => void;
+  /** Keeps `listener` told of every calendar Alert, such as that texts to Susan are blocked. */
+  watchCalendarAlerts(
+    listener: (alerts: CalendarAlert[]) => void,
+    onError: (error: Error) => void,
+  ): () => void;
+  /** When the newest Reply the signed-in person has seen arrived; null when they have seen none. */
+  repliesSeen(): Promise<string | null>;
+  /** Records that they have seen every Reply up to `upTo`, and answers what is now recorded. */
+  seeReplies(upTo: string): Promise<string | null>;
 }
 
 /** Said when a backend has no address for the feed, so a link cannot be made. */

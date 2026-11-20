@@ -15,14 +15,20 @@ import {
   type Text,
 } from '../../src/lib/calendar';
 import {
+  calendarAlertRow,
+  replyRow,
   SETTINGS_ID,
   toAgentKey,
   toAppointment,
+  toCalendarAlert,
+  toReply,
   toSeries,
   toSettings,
   textRow,
   toText,
   type AppointmentRow,
+  type CalendarAlertRow,
+  type ReplyRow,
   type SeriesRow,
   type TextRow,
 } from '../../src/lib/calendarApi';
@@ -43,6 +49,9 @@ export interface DataClient {
     AgentKey: Pick<Models['AgentKey'], 'get' | 'create'>;
     Text: Pick<Models['Text'], 'list' | 'create' | 'update' | 'textsByAppointment'>;
     CalendarSettings: Pick<Models['CalendarSettings'], 'get' | 'create' | 'update'>;
+    Reply: Pick<Models['Reply'], 'list' | 'create'>;
+    CalendarAlert: Pick<Models['CalendarAlert'], 'list' | 'create'>;
+    RepliesSeen: Pick<Models['RepliesSeen'], 'get' | 'create'>;
   };
   /**
    * A raw data API operation, for a write that carries a condition: the models' own `update`
@@ -59,6 +68,54 @@ export interface DataClient {
 const CHANGE_TEXT = /* GraphQL */ `
   mutation ChangeText($input: UpdateTextInput!, $condition: ModelTextConditionInput!) {
     updateText(input: $input, condition: $condition) {
+      id
+    }
+  }
+`;
+
+/** The same, for a Reply: its answer and its passing on are changed only as `changeText`. */
+const CHANGE_REPLY = /* GraphQL */ `
+  mutation ChangeReply($input: UpdateReplyInput!, $condition: ModelReplyConditionInput!) {
+    updateReply(input: $input, condition: $condition) {
+      id
+    }
+  }
+`;
+
+/**
+ * Gives Susan's number its destination ID, only if the kept number is still the one confirmed and
+ * has none: the data API adds `condition` to its own check that the row exists.
+ */
+const BIND_SUSANS_NUMBER = /* GraphQL */ `
+  mutation BindSusansNumber(
+    $input: UpdateCalendarSettingsInput!
+    $condition: ModelCalendarSettingsConditionInput!
+  ) {
+    updateCalendarSettings(input: $input, condition: $condition) {
+      id
+    }
+  }
+`;
+
+/** Moves a person's mark of the Replies they have seen on, only if it is still earlier. */
+const ADVANCE_REPLIES_SEEN = /* GraphQL */ `
+  mutation AdvanceRepliesSeen(
+    $input: UpdateRepliesSeenInput!
+    $condition: ModelRepliesSeenConditionInput!
+  ) {
+    updateRepliesSeen(input: $input, condition: $condition) {
+      personId
+    }
+  }
+`;
+
+/** The same, for a calendar Alert's sending. */
+const CHANGE_CALENDAR_ALERT = /* GraphQL */ `
+  mutation ChangeCalendarAlert(
+    $input: UpdateCalendarAlertInput!
+    $condition: ModelCalendarAlertConditionInput!
+  ) {
+    updateCalendarAlert(input: $input, condition: $condition) {
       id
     }
   }
@@ -140,6 +197,9 @@ export function dataStore(client: DataClient): Store {
     AgentKey,
     Text,
     CalendarSettings,
+    Reply,
+    CalendarAlert,
+    RepliesSeen,
   } = client.models;
   /** Each Appointment and Series as the core last read it here, until it is written. */
   const read = new Map<string, Appointment>();
@@ -158,6 +218,18 @@ export function dataStore(client: DataClient): Store {
     if (alreadyThere(answer.errors)) return false;
     throw new Error(answer.errors.map((e) => e.message).join('; '));
   }
+  /** Replaces a row only if the condition holds as it is written. Answers whether it did. */
+  const changeIf = (
+    query: string,
+    input: Record<string, unknown>,
+    condition: { and: Record<string, unknown>[] },
+  ) => writeIf(query, { input, condition });
+  /** Creates a row only if none has its ID, in one step. Answers whether it did. */
+  const created = (result: { errors?: readonly DataError[]; data: unknown }) => {
+    if (alreadyThere(result.errors)) return false;
+    check(result);
+    return true;
+  };
 
   /** Replaces a text's record only if the condition holds as it is written. Answers whether it did. */
   const changeTextIf = (next: Text, condition: { and: Record<string, unknown>[] }) =>
@@ -195,10 +267,7 @@ export function dataStore(client: DataClient): Store {
     },
     // The data API creates a row only if none has its ID, in one step: the claim.
     async claimText(text) {
-      const result = await Text.create(textRow(text));
-      if (alreadyThere(result.errors)) return false;
-      check(result);
-      return true;
+      return created(await Text.create(textRow(text)));
     },
     // Only if no other run has taken it up since it was read: still waiting, after the same tries.
     async retakeText(next, current) {
@@ -229,10 +298,22 @@ export function dataStore(client: DataClient): Store {
       const row = check(await CalendarSettings.get({ id: SETTINGS_ID }));
       return row ? toSettings(row) : NO_SETTINGS;
     },
-    async keepSettings(settings) {
-      const had = check(await CalendarSettings.get({ id: SETTINGS_ID }));
-      const row = { id: SETTINGS_ID, ...settings };
-      check(await (had ? CalendarSettings.update(row) : CalendarSettings.create(row)));
+    // Only the fields given, never a whole row read earlier: the data API's update writes just
+    // these, in one write, so another save's number and its ID stay as that save left them. The
+    // first save creates the row, which fails if another save made it first; then it updates.
+    async keepSettings(changes) {
+      const row = { id: SETTINGS_ID, ...changes };
+      const fresh = Object.fromEntries(Object.entries(row).filter(([, value]) => value !== null));
+      if (created(await CalendarSettings.create(fresh as typeof row))) return;
+      check(await CalendarSettings.update(row));
+    },
+    async bindSusansNumber(number, numberId, lastChanged) {
+      return writeIf(BIND_SUSANS_NUMBER, {
+        input: { id: SETTINGS_ID, numberId, lastChanged },
+        condition: {
+          and: [{ susansNumber: { eq: number } }, { numberId: { attributeExists: false } }],
+        },
+      });
     },
     async recordActivity(record) {
       check(await ActivityRecord.create(record));
@@ -283,6 +364,49 @@ export function dataStore(client: DataClient): Store {
     },
     async removeSubscriptionLink(personId) {
       check(await SubscriptionLink.delete({ personId }));
+    },
+    async everyReply() {
+      return (await everyRow<ReplyRow>((options) => Reply.list(options))).map(toReply);
+    },
+    async claimReply(reply) {
+      return created(await Reply.create(replyRow(reply)));
+    },
+    // Only if no other run has changed it since it was read: answered it, or taken up its passing on.
+    async changeReply(next, current) {
+      return changeIf(CHANGE_REPLY, replyRow(next), {
+        and: [
+          { answer: { eq: current.answer } },
+          { passOn: { eq: current.passOn.state } },
+          ...(current.passOn.triedAt ? [{ passOnTriedAt: { eq: current.passOn.triedAt } }] : []),
+        ],
+      });
+    },
+    async everyCalendarAlert() {
+      return (await everyRow<CalendarAlertRow>((options) => CalendarAlert.list(options))).map(
+        toCalendarAlert,
+      );
+    },
+    async claimCalendarAlert(alert) {
+      return created(await CalendarAlert.create(calendarAlertRow(alert)));
+    },
+    async changeCalendarAlert(next, current) {
+      return changeIf(CHANGE_CALENDAR_ALERT, calendarAlertRow(next), {
+        and: [
+          { state: { eq: current.progress.state } },
+          ...(current.progress.triedAt ? [{ triedAt: { eq: current.progress.triedAt } }] : []),
+        ],
+      });
+    },
+    async repliesSeen(personId) {
+      return check(await RepliesSeen.get({ personId }))?.seenUpTo ?? null;
+    },
+    // Never read and then written: the first mark is a create, which fails when another device
+    // made one first, and any later one an update conditioned on the mark still being earlier, so
+    // two devices marking at once can only move it on.
+    async advanceRepliesSeen(personId, seenUpTo) {
+      const row = { personId, seenUpTo };
+      if (created(await RepliesSeen.create(row))) return;
+      await changeIf(ADVANCE_REPLIES_SEEN, row, { and: [{ seenUpTo: { lt: seenUpTo } }] });
     },
     // The MCP server does not read through here: the data API's reads are not strongly consistent,
     // so it reads the table itself (agent-key-table.ts).

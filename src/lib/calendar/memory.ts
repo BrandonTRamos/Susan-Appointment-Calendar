@@ -2,6 +2,7 @@
 // runs on them when it has no backend (src/data/sampleCalendar.ts).
 
 import type { AgentKey } from './agentKeys';
+import type { CalendarAlert } from './alerts';
 import { inDateOrder, type ActivityRecord, type Appointment } from './appointment';
 import type {
   AdminEmail,
@@ -14,9 +15,10 @@ import type {
   Store,
   TextSender,
 } from './ports';
+import type { Reply } from './replies';
 import type { Series } from './series';
 import type { SubscriptionLink } from './subscription';
-import { NO_SETTINGS, type CalendarSettings, type Text } from './texts';
+import { NO_SETTINGS, type CalendarSettings, type MessageProgress, type Text } from './texts';
 
 export interface MemoryStore extends Store {
   /** Every Appointment in the calendar, in date order. */
@@ -31,12 +33,23 @@ export interface MemoryStore extends Store {
   agentKeys(): AgentKey[];
   /** The record of every text, oldest due first. */
   texts(): Text[];
+  /** Every Reply, oldest first. */
+  replies(): Reply[];
+  /** Every calendar Alert, oldest first. */
+  calendarAlerts(): CalendarAlert[];
   /** Calls `listener` after every change. Returns how to stop. */
   subscribe(listener: () => void): () => void;
 }
 
+/** Whether a message's sending is still as it was read: the same state, taken up at the same moment. */
+const sameProgress = (kept: MessageProgress, current: MessageProgress) =>
+  kept.state === current.state && kept.triedAt === current.triedAt;
+
 export function createMemoryStore(): MemoryStore {
   const appointments = new Map<string, Appointment>();
+  const replies = new Map<string, Reply>();
+  const calendarAlerts = new Map<string, CalendarAlert>();
+  const seen = new Map<string, string>();
   const activity: ActivityRecord[] = [];
   const texts = new Map<string, Text>();
   let settings: CalendarSettings = NO_SETTINGS;
@@ -112,9 +125,15 @@ export function createMemoryStore(): MemoryStore {
     async settings() {
       return structuredClone(settings);
     },
-    async keepSettings(next) {
-      settings = structuredClone(next);
+    async keepSettings(changes) {
+      settings = { ...settings, ...structuredClone(changes) };
       changed();
+    },
+    async bindSusansNumber(number, numberId, lastChanged) {
+      if (settings.susansNumber !== number || settings.numberId) return false;
+      settings = { ...settings, numberId, lastChanged: structuredClone(lastChanged) };
+      changed();
+      return true;
     },
     async recordActivity(record) {
       activity.push(structuredClone(record));
@@ -149,6 +168,48 @@ export function createMemoryStore(): MemoryStore {
     async removeSubscriptionLink(personId) {
       links.delete(personId);
     },
+    async everyReply() {
+      return structuredClone([...replies.values()]);
+    },
+    async claimReply(reply) {
+      if (replies.has(reply.id)) return false;
+      replies.set(reply.id, structuredClone(reply));
+      changed();
+      return true;
+    },
+    async changeReply(next, current) {
+      const kept = replies.get(next.id);
+      if (!kept || kept.answer !== current.answer || !sameProgress(kept.passOn, current.passOn))
+        return false;
+      replies.set(next.id, structuredClone(next));
+      changed();
+      return true;
+    },
+    async everyCalendarAlert() {
+      return structuredClone([...calendarAlerts.values()]);
+    },
+    async claimCalendarAlert(alert) {
+      if (calendarAlerts.has(alert.id)) return false;
+      calendarAlerts.set(alert.id, structuredClone(alert));
+      changed();
+      return true;
+    },
+    async changeCalendarAlert(next, current) {
+      const kept = calendarAlerts.get(next.id);
+      if (!kept || !sameProgress(kept.progress, current.progress)) return false;
+      calendarAlerts.set(next.id, structuredClone(next));
+      changed();
+      return true;
+    },
+    async repliesSeen(personId) {
+      return seen.get(personId) ?? null;
+    },
+    async advanceRepliesSeen(personId, upTo) {
+      const kept = seen.get(personId);
+      if (kept !== undefined && kept >= upTo) return;
+      seen.set(personId, upTo);
+      changed();
+    },
     async agentKeyByHash(hash) {
       const found = agentKeys.get(hash);
       return found ? structuredClone(found) : null;
@@ -168,6 +229,18 @@ export function createMemoryStore(): MemoryStore {
     activity: () => structuredClone(activity),
     everySeriesKept: () => structuredClone([...series.values()]),
     subscriptionLinks: () => structuredClone([...links.values()]),
+    replies: () =>
+      structuredClone(
+        [...replies.values()].sort(
+          (a, b) => a.receivedAt.localeCompare(b.receivedAt) || a.id.localeCompare(b.id),
+        ),
+      ),
+    calendarAlerts: () =>
+      structuredClone(
+        [...calendarAlerts.values()].sort(
+          (a, b) => a.raisedAt.localeCompare(b.raisedAt) || a.id.localeCompare(b.id),
+        ),
+      ),
     agentKeys: () => structuredClone([...agentKeys.values()]),
     texts: () =>
       structuredClone(
@@ -223,6 +296,11 @@ export interface StandInSender extends TextSender {
   breakNext(times?: number): void;
   /** The next `times` sends are refused. */
   refuseNext(times?: number): void;
+  /**
+   * The next `times` sends are refused because texts to the number are blocked: its owner opted
+   * out, as by replying STOP.
+   */
+  blockNext(times?: number): void;
   /** From now on it is asked about the text it named `reference`, it answers `report`. */
   report(reference: string, report: DeliveryReport): void;
   /** The next `times` times it is asked about a text, it throws, as when it cannot be reached. */
@@ -251,6 +329,7 @@ export function createStandInSender({
   const asked: string[] = [];
   let broken = 0;
   let refused = 0;
+  let blocked = 0;
   let brokenReports = 0;
   let credit: number | null = null;
   let holding: Set<string> | 'all' | null = null;
@@ -264,6 +343,10 @@ export function createStandInSender({
       if (refused > 0) {
         refused -= 1;
         return { sent: false, creditLeft: credit };
+      }
+      if (blocked > 0) {
+        blocked -= 1;
+        return { sent: false, blocked: true, creditLeft: credit };
       }
       taken.push({ to, words });
       if (credit !== null) credit = Math.max(0, credit - 1);
@@ -286,6 +369,9 @@ export function createStandInSender({
     },
     refuseNext(times = 1) {
       refused += times;
+    },
+    blockNext(times = 1) {
+      blocked += times;
     },
     report(reference, report) {
       reports.set(reference, report);

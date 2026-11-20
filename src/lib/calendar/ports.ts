@@ -4,7 +4,9 @@
 // The ports are the store, the clock, the text sender and the Admin messenger.
 
 import type { AgentKey } from './agentKeys';
-import type { ActivityRecord, Appointment } from './appointment';
+import type { ActivityRecord, Appointment, Stamp } from './appointment';
+import type { CalendarAlert } from './alerts';
+import type { Reply } from './replies';
 import type { Series } from './series';
 import type { SubscriptionLink } from './subscription';
 import type { CalendarSettings, Text } from './texts';
@@ -45,7 +47,17 @@ export interface Store {
   replaceText(text: Text): Promise<void>;
   /** Where texts go, and who Susan is told to call; NO_SETTINGS until someone sets them. */
   settings(): Promise<CalendarSettings>;
-  keepSettings(settings: CalendarSettings): Promise<void>;
+  /**
+   * Writes only the settings given, leaving the rest as they are when written, so that a save of
+   * the contact never puts back a number another save replaced. `susansNumber` and `numberId` are
+   * always given together, and written in the one write.
+   */
+  keepSettings(changes: Partial<CalendarSettings>): Promise<void>;
+  /**
+   * Gives her number its destination ID, only if, as it is written, the kept number is `number` and
+   * has none yet (Settings kept before ticket 17). In one step. Answers whether it did.
+   */
+  bindSusansNumber(number: string, numberId: string, lastChanged: Stamp): Promise<boolean>;
   recordActivity(record: ActivityRecord): Promise<void>;
   /** Every Appointment in the calendar, active and cancelled, in any order. */
   everyAppointment(): Promise<Appointment[]>;
@@ -65,6 +77,33 @@ export interface Store {
   keepSubscriptionLink(link: SubscriptionLink): Promise<void>;
   /** Removes the person's subscription link, if they have one. */
   removeSubscriptionLink(personId: string): Promise<void>;
+
+  /** Every Reply Susan sent, in any order. */
+  everyReply(): Promise<Reply[]>;
+  /**
+   * Keeps a new Reply, unless there is already one with its ID: in one step, so the same Reply
+   * arriving twice is kept once. Answers whether this one was kept.
+   */
+  claimReply(reply: Reply): Promise<boolean>;
+  /**
+   * Replaces a Reply with `next`, only if it is still as `current` has it: the same answer, and its
+   * passing on in the same state, last taken up at the same moment. In one step, as `changeText`.
+   */
+  changeReply(next: Reply, current: Reply): Promise<boolean>;
+  /** Every calendar Alert (alerts.ts), in any order. */
+  everyCalendarAlert(): Promise<CalendarAlert[]>;
+  /** Keeps a new calendar Alert, unless there is already one with its ID, in one step. */
+  claimCalendarAlert(alert: CalendarAlert): Promise<boolean>;
+  /** Replaces a calendar Alert with `next`, only if its sending is still as `current` has it. */
+  changeCalendarAlert(next: CalendarAlert, current: CalendarAlert): Promise<boolean>;
+  /** When the newest Reply the person has seen arrived, or null when they have seen none. */
+  repliesSeen(personId: string): Promise<string | null>;
+  /**
+   * Moves the person's mark on to `upTo`, only if it is later than the mark as it is when written:
+   * in one step, so that two devices marking at once, or a first mark made twice, never take it
+   * back.
+   */
+  advanceRepliesSeen(personId: string, upTo: string): Promise<void>;
   /** The agent key with this hash, as it is kept now, or null when there is none. */
   agentKeyByHash(hash: string): Promise<AgentKey | null>;
   /** Keeps a new agent key. */
@@ -92,8 +131,12 @@ export type SendResult =
    * what became of it; null when it gives none, and then nobody can be asked.
    */
   | { sent: true; reference: string | null; creditLeft?: number | null }
-  /** The text was refused and certainly did not go: there is no point trying it again. */
-  | { sent: false; creditLeft?: number | null };
+  /**
+   * The text was refused and certainly did not go: there is no point trying it again. `blocked`
+   * says the sender refused it because texts to that number are blocked: its owner opted out, as
+   * by replying STOP, and only they can undo it.
+   */
+  | { sent: false; blocked?: boolean; creditLeft?: number | null };
 // `creditLeft` on either is the credit left for texts afterwards, when the sender says.
 
 export const DELIVERY_REPORTS = ['delivered', 'failed', 'pending'] as const;

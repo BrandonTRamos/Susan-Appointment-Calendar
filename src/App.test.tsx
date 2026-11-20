@@ -112,11 +112,6 @@ describe('tabs and their URLs', () => {
     }
   });
 
-  it('shows a placeholder on tabs that have nothing yet', () => {
-    renderApp('/replies');
-    expect(screen.getByText(/will show here/)).toBeInTheDocument();
-  });
-
   it('opens Upcoming for an address that does not exist', () => {
     renderApp('/no-such-page');
     expect(screen.getByRole('heading', { level: 1, name: "Susan's Calendar" })).toBeInTheDocument();

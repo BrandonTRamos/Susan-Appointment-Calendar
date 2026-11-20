@@ -36,6 +36,7 @@ const COMMANDS = new Set([
   'revokeAgentKey',
   'changeSettings',
   'sendTestText',
+  'seeReplies',
 ]);
 
 /** The signed-in person, from the identity the data API checked. Nothing the caller sent is used. */
@@ -62,7 +63,7 @@ export function calendarCommandHandler({ core, nameOf, textSender }: CommandDepe
     const command = event.fieldName ?? event.info?.fieldName;
     // Not a command: it changes nothing, and says nothing about the calendar.
     if (command === 'textSender') return textSender();
-    const { id, details, changes, settings, name, hash } = event.arguments;
+    const { id, details, changes, settings, upTo, name, hash } = event.arguments;
     try {
       const by = await actor(event.identity, nameOf);
       const calendar = await core();
@@ -117,6 +118,8 @@ export function calendarCommandHandler({ core, nameOf, textSender }: CommandDepe
           return { settings: await calendar.changeSettings(by, fromJson(settings) as never) };
         case 'sendTestText':
           return { text: await calendar.sendTestText(by) };
+        case 'seeReplies':
+          return { repliesSeen: await calendar.seeReplies(by, upTo) };
         default:
           throw new Error(`Unknown calendar command: ${String(command)}`);
       }

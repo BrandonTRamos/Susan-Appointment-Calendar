@@ -156,6 +156,19 @@ describe('the commands, as the data API calls them', () => {
     expect(store.activity()).toEqual([]);
   });
 
+  it('record which Replies the caller has seen, as theirs alone, and leave no activity record', async () => {
+    const { store, call } = commands({ 'account-linda': 'Linda', 'account-mark': 'Mark' });
+    expect(await call('seeReplies', { upTo: '2026-11-19T20:00:00.000Z' })).toEqual({
+      repliesSeen: '2026-11-19T20:00:00.000Z',
+    });
+    expect(await store.repliesSeen('person-linda')).toBe('2026-11-19T20:00:00.000Z');
+    expect(await store.repliesSeen('person-mark')).toBeNull();
+    expect(await call('seeReplies', { upTo: 'soon' })).toMatchObject({
+      refusal: { reason: 'invalid' },
+    });
+    expect(store.activity()).toEqual([]);
+  });
+
   it("never touch another person's link, whatever was sent", async () => {
     const { store, call } = commands({ 'account-linda': 'Linda', 'account-mark': 'Mark' });
     const mark = { identity: { sub: 'person-mark', username: 'account-mark' } };
@@ -293,6 +306,7 @@ describe('when a command cannot be carried out', () => {
       triedAt: reminder.dueAt,
       sentAt: reminder.dueAt,
       reference: '12345',
+      replyId: null,
       creditLeft: 40,
       alert: null,
       told: { date: added.date, time: added.time, cancelled: false },

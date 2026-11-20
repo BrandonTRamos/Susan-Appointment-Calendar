@@ -1,9 +1,9 @@
 // Synthesizes the Amplify backend with CDK locally, without AWS credentials. It catches CDK and
 // bundling errors before a deploy, then checks the sign-in rules, the rules about who may read and
-// write calendar data, subscription links and agent keys, the public addresses of the feed and the
-// MCP server and what each may reach, the scheduled run that sends texts and raises Alerts, the
-// Textbelt key's secret, the daily Series top-up's schedule and access, and the cost tags in what
-// was synthesized. Usage: npm run synth
+// write calendar data, subscription links and agent keys, the public addresses of the feed, the
+// MCP server and the reply address and what each may reach, the scheduled run that sends texts,
+// passes on Replies and raises Alerts, the Textbelt key's secret, the daily Series top-up's
+// schedule and access, and the cost tags in what was synthesized. Usage: npm run synth
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -128,7 +128,10 @@ function onlyOwn(rules) {
 }
 
 /** The query that lists a model's rows, as Amplify names it: a plural, not doubled. */
-const listOf = (model) => `list${model}${model.endsWith('s') ? '' : 's'}`;
+const listOf = (model) =>
+  model.endsWith('y')
+    ? `list${model.slice(0, -1)}ies`
+    : `list${model}${model.endsWith('s') ? '' : 's'}`;
 
 /** The calendar core's commands (amplify/data/resource.ts): the only way to change the calendar. */
 const COMMANDS = [
@@ -143,6 +146,7 @@ const COMMANDS = [
   'makeSubscriptionLink',
   'revokeAgentKey',
   'removeAppointment',
+  'seeReplies',
   'sendTestText',
   'switchOffSubscriptionLink',
 ];
@@ -150,9 +154,17 @@ const COMMANDS = [
  * The calendar, its Series, the record of texts, and the settings (amplify/data/resource.ts). Only
  * the commands function, the scheduled run and the Series top-up write these directly.
  */
-const MODELS = ['Appointment', 'Series', 'ActivityRecord', 'Text', 'CalendarSettings'];
+const MODELS = [
+  'Appointment',
+  'Series',
+  'ActivityRecord',
+  'Text',
+  'CalendarSettings',
+  'Reply',
+  'CalendarAlert',
+];
 /** Kept per person, and read only by that person. Only the commands function writes these. */
-const OWN_MODELS = ['SubscriptionLink', 'AgentKey'];
+const OWN_MODELS = ['SubscriptionLink', 'RepliesSeen', 'AgentKey'];
 /**
  * Turning app notifications on and off for a device, and keeping it up to date: the only other
  * mutations anyone may call.
@@ -172,6 +184,9 @@ const APP_NOTIFICATION_FIELDS = [
   'Mutation/updateAppNotificationDevice',
   'Query/getAppNotificationKey',
 ];
+
+/** All the reply address's function may call in the data API (amplify/backend.ts). */
+const TEXT_REPLIES_FIELDS = ['Mutation/createReply', 'Query/getCalendarSettings'];
 
 /** The data API fields a function's access.ts lists, as 'Type/field', sorted. */
 function accessList(file) {
@@ -345,6 +360,19 @@ function statementsFor(service) {
     );
 }
 
+/** The code a function runs as bundled for the deploy, by the name its definition gives it. */
+function functionCode(name) {
+  const lambda = stacks()
+    .flatMap((stack) => Object.entries(stack))
+    .find(
+      ([id, resource]) =>
+        resource.Type === 'AWS::Lambda::Function' &&
+        new RegExp(`^${name}lambda[0-9A-F]+$`).test(id),
+    )?.[1];
+  const asset = /^([0-9a-f]{64})\.zip$/.exec(lambda?.Properties.Code?.S3Key ?? '')?.[1];
+  return asset ? readFileSync(join(out, `asset.${asset}`, 'index.mjs'), 'utf8') : '';
+}
+
 /** Every function, by the logical ID its definition gives it, with its environment. */
 function functions() {
   return stacks()
@@ -422,10 +450,37 @@ function checks() {
   const feed = publicFunction('subscriptionfeedlambda');
   const mcp = publicFunction('mcpserverlambda');
   const commandsFn = scheduledFunction('calendarcommandslambda');
+  const replies = publicFunction('textreplieslambda');
+  /** The logical ID of the reply address, the function URL that points at the text-replies function. */
+  const repliesUrlIds = stacks()
+    .flatMap((stack) => Object.entries(stack))
+    .filter(
+      ([, resource]) =>
+        resource.Type === 'AWS::Lambda::Url' &&
+        /^textreplieslambda[0-9A-F]+$/.test(
+          resource.Properties?.TargetFunctionArn?.['Fn::GetAtt']?.[0] ?? '',
+        ),
+    )
+    .map(([id]) => id);
   const run = scheduledFunction('sendtextslambda');
   const topUp = scheduledFunction('seriestopuplambda');
   const claim = writeStep('Mutation', 'createText');
   const retake = writeStep('Mutation', 'updateText');
+  const replyClaim = writeStep('Mutation', 'createReply');
+  const replyChange = writeStep('Mutation', 'updateReply');
+  const alertClaim = writeStep('Mutation', 'createCalendarAlert');
+  const alertChange = writeStep('Mutation', 'updateCalendarAlert');
+  const seenChange = writeStep('Mutation', 'updateRepliesSeen');
+  const commandsCode = functionCode('calendarcommands');
+  const conditional = (words) =>
+    words.includes('"operation": "UpdateItem"') &&
+    words.includes('$util.qr($ctx.stash.conditions.add($args.condition))') &&
+    words.includes('$util.qr($UpdateItem.put("condition", $Conditions))');
+  const createsOnce = (words) =>
+    /"id":\s*\{\s*"attributeExists":\s*false\s*\}/.test(words) &&
+    /"condition":\s*\$condition/.test(words);
+  /** The function URL a variable names, by the logical ID of its resource. */
+  const urlOf = (value) => JSON.stringify(value ?? '');
   const schema = schemaWords();
   const told = fieldsOf(schema, 'type', 'Told');
   const mutations = openToSignedIn('Mutation');
@@ -489,6 +544,12 @@ function checks() {
       ['onCreate', 'onUpdate'].every((on) => subscriptions.get(`${on}Text`)),
     ],
     [
+      'anyone signed in is sent every new Reply and calendar Alert, and every change to one',
+      ['Reply', 'CalendarAlert'].every((model) =>
+        ['onCreate', 'onUpdate'].every((on) => subscriptions.get(`${on}${model}`)),
+      ),
+    ],
+    [
       "the calendar core's commands, and turning app notifications on and off, are the only " +
         'mutations a signed-in person can call',
       [...mutations]
@@ -518,6 +579,11 @@ function checks() {
     [
       'the app-notifications function may call only the device and key operations it needs',
       dataApiAccess('appnotificationslambdaServiceRole').join() === APP_NOTIFICATION_FIELDS.join(),
+    ],
+    [
+      // It only keeps a Reply; the scheduled run passes it on and answers her.
+      "the reply address's function may only read the settings and create a Reply in the data API",
+      dataApiAccess('textreplieslambdaServiceRole').join() === TEXT_REPLIES_FIELDS.join(),
     ],
     [
       'a device is deleted only if the condition it is deleted on holds when DynamoDB deletes it',
@@ -580,10 +646,25 @@ function checks() {
     ['anyone signed in can ask which text sender is in use', queries.get('textSender') === true],
     [
       // As a secret, never in the code or the data: only the commands function, for the test text,
-      // and the scheduled run are given it, and nothing else holds a TEXTBELT_KEY at all.
-      'only the commands function and the scheduled run get the Textbelt key, as a secret',
-      textbeltKeyHolders().join() === 'calendarcommands,sendtexts' &&
-        functions().filter(({ variables }) => 'TEXTBELT_KEY' in variables).length === 2,
+      // the scheduled run, and the reply address, to check Textbelt's signature, are given it, and
+      // nothing else holds a TEXTBELT_KEY at all.
+      'only the commands function, the scheduled run and the reply address get the Textbelt key, as a secret',
+      textbeltKeyHolders().join() === 'calendarcommands,sendtexts,textreplies' &&
+        functions().filter(({ variables }) => 'TEXTBELT_KEY' in variables).length === 3,
+    ],
+    [
+      // So that Susan's Replies come back to the calendar (amplify/calendar/textbelt.ts).
+      'both functions that send texts are told the reply address, to name in every text',
+      replies.urls.length === 1 &&
+        functions()
+          .filter(({ id }) => /^(calendarcommands|sendtexts)lambda[0-9A-F]+$/.test(id))
+          .map(({ variables }) => urlOf(variables.REPLY_WEBHOOK_URL))
+          .filter(
+            (value) =>
+              repliesUrlIds.length === 1 &&
+              value.includes(repliesUrlIds[0]) &&
+              value.includes('FunctionUrl'),
+          ).length === 2,
     ],
     [
       'the scheduled run is told how long a text may go unconfirmed, in minutes',
@@ -598,6 +679,12 @@ function checks() {
     [
       "a signed-in person can read their own subscription link and nobody else's",
       ['getSubscriptionLink', 'listSubscriptionLinks', 'subscriptionLinkByHash'].every((query) =>
+        onlyOwn(queryRules.get(query) ?? []),
+      ),
+    ],
+    [
+      "a signed-in person can read which Replies they have seen and nobody else's",
+      ['getRepliesSeen', listOf('RepliesSeen')].every((query) =>
         onlyOwn(queryRules.get(query) ?? []),
       ),
     ],
@@ -627,10 +714,11 @@ function checks() {
       ),
     ],
     [
-      "the commands, feed, scheduled run, Series top-up and MCP server functions are told Susan's time zone",
+      "the commands, feed, scheduled run, Series top-up, MCP server and reply address functions are told Susan's time zone",
       resources('AWS::Lambda::Function').filter(
         (lambda) => lambda.Environment?.Variables?.SUSAN_TIME_ZONE,
-      ).length === 5 &&
+      ).length === 6 &&
+        Boolean(replies.properties.Environment?.Variables?.SUSAN_TIME_ZONE) &&
         Boolean(mcp.properties.Environment?.Variables?.SUSAN_TIME_ZONE) &&
         Boolean(run.properties.Environment?.Variables?.SUSAN_TIME_ZONE) &&
         Boolean(topUp.properties.Environment?.Variables?.SUSAN_TIME_ZONE),
@@ -769,11 +857,12 @@ function checks() {
         /\{\s*alertTriedAt:\s*\{\s*eq:/.test(run.code),
     ],
     [
-      // The feed and the MCP server have the only public addresses, one each. The feed's link and
-      // the MCP server's agent key are checked inside each function.
-      'the subscription feed and the MCP server have the only public addresses, each with a cap on requests at once',
-      publicAddresses().length === 2 &&
-        [feed, mcp].every(
+      // The feed, the MCP server and the reply address have the only public addresses, one each.
+      // The feed's link, the MCP server's agent key and the reply address's signature are checked
+      // inside each function.
+      'the subscription feed, the MCP server and the reply address have the only public addresses, each with a cap on requests at once',
+      publicAddresses().length === 3 &&
+        [feed, mcp, replies].every(
           (fn) =>
             fn.urls.length === 1 &&
             fn.urls[0].Properties.AuthType === 'NONE' &&
@@ -834,6 +923,73 @@ function checks() {
           !/ConsistentRead:\s*(?:!1|false)\b/.test(mcp.code)
         );
       })(),
+    ],
+    [
+      // amplify/calendar/textbelt.ts: Textbelt's HMAC over the timestamp and the raw body, compared
+      // in constant time, and a timestamp no more than 15 minutes from now.
+      "the reply address checks Textbelt's signature, in constant time, and the timestamp",
+      replies.code.includes('timingSafeEqual') &&
+        replies.code.includes('x-textbelt-signature') &&
+        replies.code.includes('x-textbelt-timestamp') &&
+        replies.code.includes('createHmac'),
+    ],
+    [
+      // The reply address keeps nothing itself and reads no table: it goes through the data API.
+      'the reply address may not reach any table, email or the user pool directly',
+      replies.statements
+        .flatMap((statement) => [statement.Action].flat())
+        .every(
+          (action) =>
+            action === 'ssm:GetParameters' ||
+            action === 's3:GetObject' ||
+            String(action).startsWith('logs:'),
+        ),
+    ],
+    [
+      // bindSusansNumber in amplify/calendar/data-store.ts: a number saved before ticket 17 gets
+      // its destination ID only by an update conditioned on the number still being that one with
+      // none, made by the commands function; the reply address writes no Settings.
+      'her number is given a destination ID only by a write conditioned on it, from the commands function',
+      conditional(writeStep('Mutation', 'updateCalendarSettings')) &&
+        commandsCode.includes('updateCalendarSettings(input: $input, condition: $condition)') &&
+        /\{\s*numberId:\s*\{\s*attributeExists:\s*(?:!1|false)\s*\}/.test(commandsCode) &&
+        !TEXT_REPLIES_FIELDS.some(
+          (field) => /CalendarSettings/.test(field) && /Mutation/.test(field),
+        ),
+    ],
+    [
+      // advanceRepliesSeen in amplify/calendar/data-store.ts: a first mark is a create that fails
+      // when one is there, and a later one an update conditioned on the kept mark being earlier.
+      "a person's mark of the Replies seen only ever moves on, by conditional writes",
+      conditional(seenChange) &&
+        // Keyed by person, the create's condition is that no row has the key (modelObjectKey).
+        (() => {
+          const create = writeStep('Mutation', 'createRepliesSeen');
+          return (
+            create.includes('"operation": "PutItem"') &&
+            create.includes('$ctx.stash.metadata.modelObjectKey') &&
+            /"attributeExists":\s*false/.test(create)
+          );
+        })() &&
+        commandsCode.includes('updateRepliesSeen(input: $input, condition: $condition)') &&
+        /\{\s*seenUpTo:\s*\{\s*lt:/.test(commandsCode),
+    ],
+    [
+      // The claim (claimReply in amplify/calendar/data-store.ts): the same Reply arriving twice is
+      // kept once, and so is the same calendar Alert.
+      'a Reply and a calendar Alert are each created once, by a write that fails when it is there',
+      createsOnce(replyClaim) && createsOnce(alertClaim),
+    ],
+    [
+      // As a text's Alert: answered and passed on, or sent, only by the run whose write finds it as
+      // it read it (changeReply and changeCalendarAlert in amplify/calendar/data-store.ts).
+      'a Reply and a calendar Alert are each sent by one run at a time, by conditional writes',
+      conditional(replyChange) &&
+        conditional(alertChange) &&
+        run.code.includes('updateReply(input: $input, condition: $condition)') &&
+        run.code.includes('updateCalendarAlert(input: $input, condition: $condition)') &&
+        /\{\s*passOnTriedAt:\s*\{\s*eq:/.test(run.code) &&
+        /\{\s*answer:\s*\{\s*eq:/.test(run.code),
     ],
     [
       // Its environment names the two tables it reads, from the tables' own stacks.

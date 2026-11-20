@@ -17,6 +17,8 @@ import { sendTexts } from './functions/send-texts/resource';
 import { SERIES_TOP_UP_FIELDS } from './functions/series-top-up/access';
 import { seriesTopUp } from './functions/series-top-up/resource';
 import { subscriptionFeed } from './functions/subscription-feed/resource';
+import { textReplies } from './functions/text-replies/resource';
+import { REPLY_WEBHOOK_URL } from './calendar/text-sender';
 
 const backend = defineBackend({
   auth,
@@ -26,6 +28,7 @@ const backend = defineBackend({
   subscriptionFeed,
   appNotifications,
   sendTexts,
+  textReplies,
   mcpServer,
 });
 
@@ -157,6 +160,14 @@ onlyDataApiFields(backend.appNotifications.resources.lambda, 'app-notifications'
 // amplify/functions/series-top-up/access.ts). `npm run synth` checks it.
 onlyDataApiFields(backend.seriesTopUp.resources.lambda, 'Series top-up', SERIES_TOP_UP_FIELDS);
 
+// The reply address's function only keeps a Reply: it reads the settings, to tell whether it came
+// from Susan's number, and creates the Reply's record, and may do nothing else in the data API.
+// The scheduled run passes it on and answers her. `npm run synth` checks it.
+onlyDataApiFields(backend.textReplies.resources.lambda, 'text-replies', {
+  Query: ['getCalendarSettings'],
+  Mutation: ['createReply'],
+});
+
 // When a write about a device is refused, the function reads whose the device is now straight from
 // its table, with a strongly consistent read, which the data API's reads are not
 // (amplify/calendar/app-notification-devices.ts). It may get one item from that table and nothing
@@ -219,6 +230,18 @@ for (const [variable, table] of Object.entries(feedTables)) {
     }),
   );
 }
+
+// The calendar's reply address, where Textbelt sends each text Susan sends back. It is public, so
+// it takes only a request Textbelt signed with the key within 15 minutes (amplify/calendar/
+// textbelt.ts), and concurrent requests are capped: far more than she will ever send at once, and a
+// ceiling on cost if something floods it. Every text sent names it, so both functions that send
+// texts are told it.
+const repliesUrl = backend.textReplies.resources.lambda.addFunctionUrl({
+  authType: FunctionUrlAuthType.NONE,
+});
+backend.textReplies.resources.cfnResources.cfnFunction.reservedConcurrentExecutions = 3;
+backend.sendTexts.addEnvironment(REPLY_WEBHOOK_URL, repliesUrl.url);
+backend.calendarCommands.addEnvironment(REPLY_WEBHOOK_URL, repliesUrl.url);
 
 // The scheduled run never overlaps itself: only one may run at a time, and a run that cannot start
 // because the last is still going is dropped rather than queued or retried, since the next one is a

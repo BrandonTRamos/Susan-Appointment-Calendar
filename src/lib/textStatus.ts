@@ -83,6 +83,8 @@ function failedBecause(text: Text): string {
       return 'Not confirmed delivered: no word came in time that her phone company accepted it.';
     case 'webAddress':
       return 'Its words held a web address, which texts to Susan cannot carry, so it was not sent again.';
+    case 'blocked':
+      return `Not sent: texts to Susan are blocked, because she opted out. ${UNDO_BLOCK}`;
     default:
       return `Sending did not go through after ${SEND_ATTEMPTS} tries.`;
   }
@@ -103,6 +105,10 @@ function notSentBecause(text: Text): string {
   }
 }
 
+/** The one way texts to Susan stop being blocked. */
+export const UNDO_BLOCK =
+  "Only she can undo it, by replying START to a text from the calendar's number.";
+
 /** A kind of text in the middle of a sentence. */
 const A_TEXT: Record<TextKind, string> = {
   reminder: 'a Reminder',
@@ -121,7 +127,9 @@ export function troubleWords(
 ): { words: string; opens: string; label: string } {
   const look = text.appointmentId
     ? { opens: `/appointments/${text.appointmentId}`, label: 'See the text' }
-    : { opens: '/settings', label: 'Open Settings' };
+    : text.kind === 'automaticAnswer'
+      ? { opens: '/replies', label: 'See Replies' }
+      : { opens: '/settings', label: 'Open Settings' };
   const kind = A_TEXT[text.kind];
   switch (trouble) {
     case 'failed':
@@ -149,8 +157,20 @@ export function troubleWords(
         words: `The last text to Susan, ${kind}, was not sent: its words held a web address.`,
         ...look,
       };
+    case 'blocked':
+      return { ...BLOCKED_BANNER, ...look };
   }
 }
+
+/**
+ * The banner's words while texts to Susan are blocked (blockedSince in src/lib/calendar/alerts.ts):
+ * it stands until a text is delivered again. Settings has the test text that proves it.
+ */
+export const BLOCKED_BANNER = {
+  words: `Texts to Susan are blocked: she opted out, so none reaches her phone. ${UNDO_BLOCK}`,
+  opens: '/settings',
+  label: 'Open Settings',
+};
 
 /** What the Reminder previews say when a text's words hold a web address. */
 export const WEB_ADDRESS_WARNING =
