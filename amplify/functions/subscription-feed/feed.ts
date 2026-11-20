@@ -19,7 +19,11 @@ const HEADERS = {
   'x-robots-tag': 'noindex',
 };
 
-const plain = (statusCode: number, words: string, headers: Record<string, string> = {}): Answer => ({
+const plain = (
+  statusCode: number,
+  words: string,
+  headers: Record<string, string> = {},
+): Answer => ({
   statusCode,
   headers: { ...HEADERS, 'content-type': 'text/plain; charset=utf-8', ...headers },
   body: `${words}\n`,

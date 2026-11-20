@@ -639,7 +639,7 @@ function events(feed: string) {
       current[line.slice(0, colon)] = line
         .slice(colon + 1)
         .replace(/\\n/g, '\n')
-        .replace(/\\([\;,])/g, '$1');
+        .replace(/\\([;,])/g, '$1');
     }
   }
   return found;
@@ -652,7 +652,11 @@ function seenIn(zone: string, feed: string) {
       timeZone: zone,
       dateStyle: 'medium',
       timeStyle: 'short',
-    }).format(new Date(value.replace(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/, '$1-$2-$3T$4:$5:$6Z')));
+    }).format(
+      new Date(
+        value.replace(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/, '$1-$2-$3T$4:$5:$6Z'),
+      ),
+    );
   return events(feed).map((each) => `${each.SUMMARY}: ${at(each.DTSTART)} to ${at(each.DTEND)}`);
 }
 
@@ -748,7 +752,10 @@ describe('calendar subscription', () => {
 
   it('writes words a calendar app reads back as they were, however long', async () => {
     const { core } = calendar();
-    const note = 'Fasting: no food, no coffee; water is fine.\nTake the 8:15 bus — Café Ñandú stop. '.repeat(3);
+    const note =
+      'Fasting: no food, no coffee; water is fine.\nTake the 8:15 bus — Café Ñandú stop. '.repeat(
+        3,
+      );
     await core.addAppointment(linda, { ...checkUp, noteForSusan: note });
     const feed = (await core.subscriptionFeed((await core.makeSubscriptionLink(linda)).secret))!;
     for (const line of feed.split('\r\n'))
@@ -764,7 +771,11 @@ describe('calendar subscription', () => {
     expect(made.secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(made.madeAt).toBe('2026-11-19T20:00:00.000Z');
     const kept = await store.subscriptionLinkOf(linda.person.id);
-    expect(kept).toEqual({ personId: linda.person.id, hash: expect.any(String), madeAt: made.madeAt });
+    expect(kept).toEqual({
+      personId: linda.person.id,
+      hash: expect.any(String),
+      madeAt: made.madeAt,
+    });
     expect(JSON.stringify(store.subscriptionLinks())).not.toContain(made.secret);
   });
 
@@ -774,7 +785,9 @@ describe('calendar subscription', () => {
     const { secret } = await core.makeSubscriptionLink(linda);
     await core.switchOffSubscriptionLink(linda);
     expect(await core.subscriptionFeed(secret)).toBeNull();
-    expect(await core.subscriptionFeed(secret.replace(/^./, (c) => (c === 'A' ? 'B' : 'A')))).toBeNull();
+    expect(
+      await core.subscriptionFeed(secret.replace(/^./, (c) => (c === 'A' ? 'B' : 'A'))),
+    ).toBeNull();
     for (const notOne of ['', 'not-a-link', null, 42, { secret }, `${secret}x`])
       expect(await core.subscriptionFeed(notOne)).toBeNull();
   });

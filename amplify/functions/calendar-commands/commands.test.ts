@@ -80,7 +80,10 @@ describe('the commands, as the data API calls them', () => {
     const { store, call } = commands();
     const made = await call('makeSubscriptionLink', {});
     expect(made).toEqual({
-      subscriptionLink: { secret: expect.stringMatching(/^[\w-]{43}$/), madeAt: expect.any(String) },
+      subscriptionLink: {
+        secret: expect.stringMatching(/^[\w-]{43}$/),
+        madeAt: expect.any(String),
+      },
     });
     expect(store.subscriptionLinks()).toMatchObject([{ personId: 'person-linda' }]);
     expect(await call('switchOffSubscriptionLink', {})).toEqual({ subscriptionLink: null });

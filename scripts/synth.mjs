@@ -183,7 +183,7 @@ function checks() {
         .join() === COMMANDS.join(),
     ],
     [
-        'a signed-in person can read their own subscription link and nobody else\'s',
+      "a signed-in person can read their own subscription link and nobody else's",
       OWN_MODELS.every((model) =>
         [`get${model}`, `list${model}s`, `${model[0].toLowerCase()}${model.slice(1)}ByHash`].every(
           (query) => onlyOwn(queryRules.get(query) ?? []),
@@ -209,7 +209,8 @@ function checks() {
         resources('AWS::Lambda::Url')[0].AuthType === 'NONE' &&
         resources('AWS::Lambda::Function').filter(
           (lambda) =>
-            lambda.ReservedConcurrentExecutions > 0 && lambda.Environment?.Variables?.SUSAN_TIME_ZONE,
+            lambda.ReservedConcurrentExecutions > 0 &&
+            lambda.Environment?.Variables?.SUSAN_TIME_ZONE,
         ).length === 1,
     ],
     [

@@ -17,7 +17,10 @@ export const FEED_NAME = "Susan's Calendar";
 
 /** A moment as iCalendar writes one in UTC: 20261120T190000Z. */
 const utc = (moment: string | number) =>
-  new Date(moment).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  new Date(moment)
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\.\d{3}/, '');
 
 /** Words as an iCalendar TEXT value: backslashes, semicolons, commas and line breaks escaped. */
 const text = (words: string) =>

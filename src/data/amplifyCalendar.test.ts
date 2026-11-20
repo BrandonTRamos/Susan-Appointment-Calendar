@@ -41,7 +41,10 @@ const api = vi.hoisted(() => {
 vi.mock('aws-amplify/data', async (original) => ({
   ...(await original<typeof import('aws-amplify/data')>()),
   generateClient: () => ({
-    models: { Appointment: { ...api.model, list: api.list }, SubscriptionLink: { list: api.links } },
+    models: {
+      Appointment: { ...api.model, list: api.list },
+      SubscriptionLink: { list: api.links },
+    },
     mutations: api.mutations,
   }),
 }));
@@ -350,11 +353,9 @@ describe("the signed-in person's subscription link", () => {
     const calendar = createAmplifyCalendar(FEED);
     api.links.mockResolvedValueOnce({ data: [] });
     expect(await calendar.subscriptionLink()).toBeNull();
-    api.links
-      .mockResolvedValueOnce({ data: [], nextToken: 'more' })
-      .mockResolvedValueOnce({
-        data: [{ personId: 'person-linda', hash: 'ab', madeAt: '2026-11-19T20:00:00.000Z' }],
-      });
+    api.links.mockResolvedValueOnce({ data: [], nextToken: 'more' }).mockResolvedValueOnce({
+      data: [{ personId: 'person-linda', hash: 'ab', madeAt: '2026-11-19T20:00:00.000Z' }],
+    });
     expect(await calendar.subscriptionLink()).toEqual({ madeAt: '2026-11-19T20:00:00.000Z' });
   });
 

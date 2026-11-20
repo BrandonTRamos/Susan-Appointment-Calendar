@@ -77,7 +77,9 @@ const schema = a
       })
       .identifier(['personId'])
       .secondaryIndexes((index) => [index('hash').queryField('subscriptionLinkByHash')])
-      .authorization((allow) => [allow.ownerDefinedIn('personId').identityClaim('sub').to(['read'])]),
+      .authorization((allow) => [
+        allow.ownerDefinedIn('personId').identityClaim('sub').to(['read']),
+      ]),
 
     // The core's commands. Each answers with a CommandAnswer (src/lib/calendarApi.ts): the
     // Appointment as it now is, or the core's refusal. `removeAppointment` is the core's "delete":

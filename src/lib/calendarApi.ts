@@ -3,13 +3,7 @@
 // backend.
 
 import type { Schema } from '../../amplify/data/resource';
-import type {
-  Appointment,
-  Detail,
-  MadeSubscriptionLink,
-  RefusalReason,
-  Stamp,
-} from './calendar';
+import type { Appointment, Detail, MadeSubscriptionLink, RefusalReason, Stamp } from './calendar';
 
 /**
  * What a command answers with: the Appointment as it now is (null once deleted), the subscription
