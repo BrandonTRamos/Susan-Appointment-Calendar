@@ -12,6 +12,7 @@ import { data } from './data/resource';
 import { appNotifications } from './functions/app-notifications/resource';
 import { calendarCommands } from './functions/calendar-commands/resource';
 import { sendTexts } from './functions/send-texts/resource';
+import { SERIES_TOP_UP_FIELDS } from './functions/series-top-up/access';
 import { seriesTopUp } from './functions/series-top-up/resource';
 import { subscriptionFeed } from './functions/subscription-feed/resource';
 
@@ -149,13 +150,9 @@ onlyDataApiFields(backend.appNotifications.resources.lambda, 'app-notifications'
   ],
 });
 
-// The Series top-up reads every Series and the Appointments, adds the Appointments a Series still
-// needs, and notes how far each Series is made. It may do nothing else in the data API: it cannot
-// change or remove an Appointment, or record activity. `npm run synth` checks it.
-onlyDataApiFields(backend.seriesTopUp.resources.lambda, 'Series top-up', {
-  Query: ['getAppointment', 'listAppointments', 'getSeries', 'listSeries'],
-  Mutation: ['createAppointment', 'updateSeries'],
-});
+// The Series top-up may call only the data API fields its code needs (SERIES_TOP_UP_FIELDS in
+// amplify/functions/series-top-up/access.ts). `npm run synth` checks it.
+onlyDataApiFields(backend.seriesTopUp.resources.lambda, 'Series top-up', SERIES_TOP_UP_FIELDS);
 
 // When a write about a device is refused, the function reads whose the device is now straight from
 // its table, with a strongly consistent read, which the data API's reads are not

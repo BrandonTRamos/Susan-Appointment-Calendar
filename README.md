@@ -79,9 +79,8 @@ or the key that signs them, the app-notifications function reaches nothing else,
 ever deleted on a condition checked as it is deleted, no rule tells Susan from an Admin, one
 scheduled run sends texts every minute and never overlaps itself, a text is claimed by creating its
 record, which fails when it is already there, and taken up again only by a conditional write, the
-Series top-up runs once a day, one run at a time with its retries bounded, and can only read the
-calendar, add Appointments and note how far a Series is made, and can send no text, Alert or
-email, the Textbelt key reaches only the
+Series top-up runs once a day, one run at a time with its retries bounded, may call only the data
+API fields in its access list, and can send no text, Alert or email, the Textbelt key reaches only the
 commands function and the scheduled run, and only as a secret, an Alert is taken up and recorded
 only by conditional writes, only the scheduled run may send email, only from its configured address
 and only through its own account and region, every table can be restored to a point in time, and

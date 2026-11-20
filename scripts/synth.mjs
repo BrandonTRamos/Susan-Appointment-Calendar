@@ -154,16 +154,15 @@ const APP_NOTIFICATION_FIELDS = [
   'Query/getAppNotificationKey',
 ];
 
-/** All the Series top-up may call in the data API (amplify/backend.ts). */
-const SERIES_TOP_UP_FIELDS = [
-  'Mutation/createAppointment',
-  'Mutation/updateSeries',
-  'Query/getAppointment',
-  'Query/getSeries',
-  'Query/listAppointments',
-  'Query/listSeries',
-];
-
+/** All the Series top-up may call in the data API: SERIES_TOP_UP_FIELDS in its access.ts. */
+const SERIES_TOP_UP_FIELDS = (() => {
+  const words = readFileSync('amplify/functions/series-top-up/access.ts', 'utf8');
+  const of = (type) =>
+    [...(new RegExp(`${type}: \\[([^\\]]*)\\]`).exec(words)?.[1] ?? '').matchAll(/'(\w+)'/g)].map(
+      ([, field]) => `${type}/${field}`,
+    );
+  return [...of('Query'), ...of('Mutation')].sort();
+})();
 /**
  * What a function's role may call in the data API, as 'Type/field', or 'Type/*' for a whole type.
  * Its role is the one its own policies name, found by the start of its ID.
@@ -594,9 +593,12 @@ function checks() {
         topUp.invoke[0].MaximumRetryAttempts === 0,
     ],
     [
-      // It makes Appointments and notes how far each Series is made, and changes nothing else.
-      'the Series top-up may only read the calendar, add Appointments and note how far a Series is made',
-      dataApiAccess('seriestopuplambdaServiceRole').join() === SERIES_TOP_UP_FIELDS.join(),
+      // Its list in access.ts, which a test proves is what its code calls, and nothing more: no
+      // activity record, and no text written.
+      'the Series top-up may call only the data API fields its access list names',
+      SERIES_TOP_UP_FIELDS.length === 9 &&
+        dataApiAccess('seriestopuplambdaServiceRole').join() === SERIES_TOP_UP_FIELDS.join() &&
+        !SERIES_TOP_UP_FIELDS.some((field) => /ActivityRecord|Text$|Texts$|Settings/.test(field)),
     ],
     [
       // Outside the data API it reads only what the data API client needs to start: no email, no
