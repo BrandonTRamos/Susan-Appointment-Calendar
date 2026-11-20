@@ -1,25 +1,39 @@
 /* Hand-built styles: no component library. Type is large and controls are plain throughout, for
    Susan as much as anyone; there is no separate simplified mode.
 
-   Colours follow the sibling apps. Dark appearance follows the device. */
+   Colours follow the mockups in docs/design: a blue accent on near-black, with a light appearance
+   made to match. Dark appearance follows the device. */
 :root {
-  --bg: #f2f3f1;
+  --bg: #f4f5f7;
   --surface: #ffffff;
-  --surface-2: #e9ede9;
-  --text: #1c2321;
-  --muted: #55605b;
-  --border: #d3dad5;
-  --accent: #0f766e;
+  --surface-2: #eceef3;
+  /* What a person types into. */
+  --field: #ffffff;
+  --text: #16181d;
+  --muted: #5a6070;
+  --border: #dcdfe6;
+  /* The accent as a fill, and what is written on it. */
+  --accent: #2f5fe8;
   --accent-text: #ffffff;
-  --accent-soft: #d5efeb;
-  --danger: #b42318;
-  --danger-soft: #fde7e4;
-  --notice: #8a4b07;
-  --notice-soft: #fbead3;
-  --shadow: 0 1px 2px rgba(16, 24, 22, 0.04), 0 4px 18px rgba(16, 24, 22, 0.05);
-  --radius: 18px;
+  /* The accent as words or an icon on a surface. */
+  --accent-ink: #1f4fd6;
+  /* A quiet fill for what is picked, and the edge that goes with it. */
+  --accent-soft: #e8eeff;
+  --accent-line: #b7c8fb;
+  --danger: #c0271d;
+  --danger-text: #ffffff;
+  --danger-soft: #fde8e6;
+  /* Worth knowing: the mark, the words, and the fill behind them. */
+  --notice: #c26a0a;
+  --notice-ink: #7a4306;
+  --notice-soft: #fbecd6;
+  --good: #1f8f4e;
+  --good-soft: #dff5e7;
+  --shadow: 0 1px 2px rgba(16, 20, 30, 0.04), 0 4px 16px rgba(16, 20, 30, 0.05);
+  --radius: 16px;
+  --radius-control: 12px;
   /* The phone tab bar's height, without the home-bar inset. */
-  --tabbar: 72px;
+  --tabbar: 68px;
   /* Room taken at the top by "A new version is available"; none unless it is showing. */
   --update-banner: 0px;
   color-scheme: light;
@@ -27,20 +41,27 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #111513;
-    --surface: #191e1c;
-    --surface-2: #262d2a;
-    --text: #e6ebe8;
-    --muted: #a3ada8;
-    --border: #2e3633;
-    --accent: #2dd4bf;
-    --accent-text: #0b1513;
-    --accent-soft: #123a35;
-    --danger: #f97066;
-    --danger-soft: #3d1714;
-    --notice: #fbbf24;
-    --notice-soft: #3b2c10;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 20px rgba(0, 0, 0, 0.3);
+    --bg: #0b0b0c;
+    --surface: #131315;
+    --surface-2: #1f1f23;
+    --field: #0d0d0f;
+    --text: #f3f3f5;
+    --muted: #9d9da8;
+    --border: #27272d;
+    --accent: #3566f0;
+    --accent-text: #ffffff;
+    --accent-ink: #7da2ff;
+    --accent-soft: #141c33;
+    --accent-line: #2a3c70;
+    --danger: #ff6b61;
+    --danger-text: #1a0605;
+    --danger-soft: #3a1614;
+    --notice: #f59e0b;
+    --notice-ink: #fcd28a;
+    --notice-soft: #33260f;
+    --good: #4ade80;
+    --good-soft: #12301f;
+    --shadow: none;
     color-scheme: dark;
   }
 }
@@ -76,18 +97,23 @@ textarea {
 }
 
 a {
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 h1 {
-  font-size: 34px;
+  font-size: 32px;
+  font-weight: 700;
   line-height: 1.2;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
   margin: 0;
 }
 h2 {
-  font-size: 22px;
+  font-size: 21px;
+  font-weight: 700;
   line-height: 1.3;
+  margin: 0;
+}
+h3 {
   margin: 0;
 }
 p {
@@ -95,7 +121,7 @@ p {
 }
 
 :focus-visible {
-  outline: 3px solid var(--accent);
+  outline: 3px solid var(--accent-ink);
   outline-offset: 2px;
 }
 
@@ -103,8 +129,8 @@ p {
 .page {
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: calc(env(safe-area-inset-top) + 24px) 20px 24px;
+  gap: 20px;
+  padding: calc(env(safe-area-inset-top) + 20px) 20px 28px;
 }
 .muted {
   color: var(--muted);
@@ -125,6 +151,23 @@ p {
   box-shadow: var(--shadow);
 }
 
+/* A small heading over a part of a screen: "Next up", "Reminders", "Private notes". */
+.section-label,
+.details dt,
+.reminders > h2,
+.reminders > h3,
+.texts > h2,
+.texts > h3,
+.next-reminders > .muted,
+.text-preview > .muted {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 /* ---------- buttons ---------- */
 .btn {
   display: inline-flex;
@@ -132,23 +175,72 @@ p {
   justify-content: center;
   gap: 8px;
   min-height: 52px;
-  padding: 12px 20px;
+  padding: 10px 20px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-control);
   background: var(--surface);
   color: var(--text);
-  font-weight: 650;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
   text-decoration: none;
   cursor: pointer;
+}
+.btn:hover {
+  background: var(--surface-2);
 }
 .btn-primary {
   border-color: transparent;
   background: var(--accent);
   color: var(--accent-text);
 }
+.btn-primary:hover {
+  background: var(--accent);
+  filter: brightness(1.1);
+}
+.btn-danger {
+  border-color: transparent;
+  background: var(--danger);
+  color: var(--danger-text);
+}
+.btn-danger:hover {
+  background: var(--danger);
+  filter: brightness(1.08);
+}
+/* Leads to something that cannot be taken back, such as Cancel Appointment: it asks first. */
+.btn-danger-text {
+  color: var(--danger);
+}
+/* The least of a set of buttons. */
+.btn-ghost {
+  border-color: transparent;
+  background: none;
+  color: var(--muted);
+}
 .btn:disabled {
   opacity: 0.55;
   cursor: default;
+  filter: none;
+}
+/* A round button holding only an icon, such as New Appointment on a phone. */
+.btn-round {
+  flex: none;
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  border-radius: 99px;
+}
+/* A square button holding only an icon, such as Previous month. */
+.btn-icon {
+  width: 52px;
+  padding: 0;
+}
+/* Buttons that belong together, side by side where there is room. */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
 }
 
 /* ---------- phone layout: one column, tabs along the bottom ---------- */
@@ -159,6 +251,10 @@ p {
 /* An Appointment and its form fill the screen: no tab bar. */
 .app.phone.full-screen {
   padding-bottom: env(safe-area-inset-bottom);
+}
+/* Room for the name of the app, or of a month, beside New Appointment. */
+.app.phone h1 {
+  font-size: 28px;
 }
 .tabbar {
   position: fixed;
@@ -181,21 +277,25 @@ p {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  font-size: 15px;
+  gap: 3px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--muted);
   text-decoration: none;
 }
 .tabbar a[aria-current='page'] {
-  color: var(--accent);
-  font-weight: 750;
+  color: var(--accent-ink);
+  font-weight: 700;
 }
 
 /* ---------- desktop layout: sidebar, the current tab, the detail panel ---------- */
+/* The side columns give way first, so the middle keeps room for the month grid. */
 .app.desktop {
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr) minmax(320px, 30%);
+  grid-template-columns:
+    clamp(240px, 20vw, 272px)
+    minmax(0, 1fr)
+    clamp(320px, 28vw, 400px);
   min-height: 100dvh;
 }
 .sidebar,
@@ -210,37 +310,42 @@ p {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  padding: 28px 18px 20px;
+  padding: 24px 16px 20px;
   border-right: 1px solid var(--border);
 }
 .brand {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 6px;
-  font-size: 21px;
-  font-weight: 750;
-  white-space: nowrap;
-}
-.new-appointment {
+  padding: 0 8px;
+  font-size: 18px;
+  font-weight: 700;
   white-space: nowrap;
 }
 .brand img {
-  border-radius: 10px;
+  flex: none;
+  border-radius: 9px;
+}
+.new-appointment {
+  padding-inline: 12px;
+  white-space: nowrap;
+}
+.btn svg {
+  flex: none;
 }
 .sidebar nav {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 .sidebar nav a {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   min-height: 52px;
-  padding: 10px 14px;
-  border-radius: 14px;
-  font-weight: 600;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  font-weight: 500;
   color: var(--muted);
   text-decoration: none;
 }
@@ -251,20 +356,37 @@ p {
 .sidebar nav a[aria-current='page'] {
   background: var(--accent-soft);
   color: var(--text);
-  font-weight: 750;
+  font-weight: 700;
 }
 .sidebar-foot {
   margin-top: auto;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding-top: 18px;
+  gap: 14px;
+  padding-top: 16px;
   border-top: 1px solid var(--border);
 }
 .sidebar-foot .person {
-  padding: 0 6px;
-  font-weight: 650;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 8px;
+  font-weight: 600;
   overflow-wrap: anywhere;
+}
+/* The first letter of a person's name, in a circle. */
+.avatar {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 99px;
+  background: var(--surface-2);
+  font-size: 16px;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 .sidebar-foot .btn {
   width: 100%;
@@ -273,14 +395,17 @@ p {
   min-width: 0;
 }
 .middle .page {
-  max-width: 760px;
-  padding: 40px 36px;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 36px 28px 48px;
 }
 .detail {
-  padding: 40px 28px;
+  padding: 36px 24px 24px;
   border-left: 1px solid var(--border);
 }
+/* As tall as the panel at least, so that an Appointment's buttons sit at its foot. */
 .detail .page {
+  min-height: 100%;
   padding: 0;
 }
 
@@ -290,23 +415,24 @@ p {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  min-height: 52px;
 }
 .page-head h1,
 .page-head h2 {
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.detail .page-head h2 {
-  font-size: 28px;
-  line-height: 1.2;
+.detail .page-head {
+  min-height: 0;
 }
-/* A round button holding only an icon, such as New Appointment on a phone. */
-.btn-round {
-  flex: none;
-  width: 56px;
-  height: 56px;
-  padding: 0;
-  border-radius: 99px;
+/* In a narrow middle column the month's controls go beneath its name. */
+.middle .page-head {
+  flex-wrap: wrap;
+}
+.detail .page-head h2 {
+  font-size: 26px;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
 }
 .back {
   display: inline-flex;
@@ -314,8 +440,8 @@ p {
   align-self: flex-start;
   gap: 4px;
   min-height: 52px;
-  margin: -12px 0 -8px -6px;
-  font-weight: 650;
+  margin: -10px 0 -12px -6px;
+  font-weight: 600;
   text-decoration: none;
 }
 
@@ -324,13 +450,6 @@ p {
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-.section-label {
-  color: var(--muted);
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 .empty {
   display: flex;
@@ -341,28 +460,32 @@ p {
 }
 
 .next-card {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 22px;
+  display: block;
+  padding: 20px;
   background: var(--surface);
   border: 2px solid var(--accent);
-  border-radius: var(--radius);
+  border-radius: 20px;
   box-shadow: var(--shadow);
   color: var(--text);
   text-decoration: none;
 }
+.next-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 .next-day {
   white-space: nowrap;
-  color: var(--accent);
+  color: var(--accent-ink);
+  font-size: 17px;
   font-weight: 700;
 }
 .next-time {
   white-space: nowrap;
-  font-size: 46px;
-  font-weight: 750;
+  font-size: 44px;
+  font-weight: 700;
   line-height: 1.1;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
 }
 .next-what {
   display: flex;
@@ -372,7 +495,7 @@ p {
   overflow-wrap: anywhere;
 }
 .next-title {
-  font-size: 24px;
+  font-size: 23px;
   font-weight: 700;
   line-height: 1.25;
 }
@@ -385,22 +508,38 @@ p {
 .next-reminders {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   margin-top: 8px;
   padding-top: 12px;
   border-top: 1px solid var(--border);
 }
-.next-reminders .muted {
-  font-size: 16px;
-  font-weight: 650;
-}
 .next-reminders ul {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   margin: 0;
   padding: 0;
   list-style: none;
+}
+/* The mark the mockups put before each Reminder still to go. */
+.next-reminders li,
+.reminder-count {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.next-reminders li {
+  font-size: 17px;
+}
+.next-reminders li::before,
+.reminder-count::before {
+  content: '';
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--notice);
+  transform: translateY(-2px);
 }
 .with-icon {
   display: flex;
@@ -410,43 +549,45 @@ p {
 .with-icon svg {
   flex: none;
 }
-/* On a desktop the card is wide: the day and time on the left, what it is beside them, or beneath
-   them when the middle column is narrow. */
+/* On a desktop the card is wide: the day and time on the left, a rule, and what it is beside them;
+   or beneath them, with no rule, when the middle column is narrow. The rule is the left edge of
+   what it is, pulled back into the gap between the two: on a line of its own that edge falls
+   outside the card's body, which hides it. */
 .app.desktop .next-card {
+  padding: 24px 26px;
+  border-width: 1px;
+  border-color: var(--accent-line);
+}
+.app.desktop .next-body {
   flex-direction: row;
   flex-wrap: wrap;
-  gap: 18px 44px;
-  padding: 28px 30px;
+  gap: 18px 0;
+  overflow: hidden;
+}
+.app.desktop .next-when {
+  margin-right: 57px;
 }
 .app.desktop .next-what {
-  flex: 1 1 260px;
+  flex: 1 1 280px;
+  margin-left: -29px;
+  padding-left: 28px;
+  border-left: 1px solid var(--accent-line);
 }
 
 .later {
   display: flex;
   flex-direction: column;
-  gap: 10px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 .later-row {
   display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
   align-items: center;
-  gap: 16px;
   min-height: 52px;
-  padding: 14px 18px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 14px;
   color: var(--text);
   text-decoration: none;
 }
-.app.desktop .later-row {
-  padding: 16px 24px;
-}
-/* On a desktop the time has a column of its own, above what it is when the column is narrow. */
 .row-main {
   display: flex;
   flex-wrap: wrap;
@@ -457,41 +598,6 @@ p {
 .row-main .row-what {
   flex: 1 1 180px;
 }
-.next-card:hover,
-.later-row:hover {
-  border-color: var(--accent);
-}
-/* The Appointment open in the desktop detail panel. */
-.later-row[aria-current='true'] {
-  border: 2px solid var(--accent);
-  background: var(--accent-soft);
-}
-.next-card[aria-current='true'] {
-  background: var(--accent-soft);
-}
-.date-block {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  line-height: 1.15;
-}
-.date-block .weekday,
-.date-block .month {
-  color: var(--muted);
-  font-size: 15px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-.date-block .day {
-  font-size: 28px;
-  font-weight: 750;
-}
-.later-row .time {
-  flex: 0 0 96px;
-  white-space: nowrap;
-  font-weight: 700;
-}
 .row-what {
   display: flex;
   flex-direction: column;
@@ -499,7 +605,112 @@ p {
   overflow-wrap: anywhere;
 }
 .row-what strong {
-  font-size: 21px;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.later-row .time {
+  flex: 0 0 96px;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.date-block {
+  display: flex;
+}
+
+/* On a phone the later ones are a plain list: the date in a line at the start of each row. */
+.app.phone .later {
+  border-top: 1px solid var(--border);
+}
+.app.phone .later-row {
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.app.phone .date-block {
+  flex-wrap: wrap;
+  gap: 0 5px;
+  padding-top: 3px;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 500;
+}
+.app.phone .date-block .month {
+  order: 1;
+}
+.app.phone .date-block .day {
+  order: 2;
+}
+/* Past's year, beneath the day. */
+.app.phone .date-block .month ~ .month {
+  order: 3;
+}
+
+/* On a desktop each is a card: a block for the date, the time in a column of its own, what it is,
+   and how many Reminders are still to be sent. */
+.app.desktop .later {
+  gap: 10px;
+}
+.app.desktop .later-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  padding: 14px 22px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+/* Wide enough for the time beside a short name; in a narrow column the count goes beneath. */
+.app.desktop .row-main {
+  flex: 1 1 260px;
+}
+.app.desktop .row-main .row-what {
+  flex-basis: 140px;
+}
+.app.desktop .date-block {
+  flex: 0 0 52px;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.15;
+}
+.app.desktop .date-block .weekday,
+.app.desktop .date-block .month {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.app.desktop .date-block .day {
+  font-size: 26px;
+  font-weight: 700;
+}
+.app.desktop .later-row .reminder-count {
+  flex: none;
+  margin-left: auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 14px 4px 12px;
+  border-radius: 99px;
+  background: var(--notice-soft);
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.app.desktop .later-row .reminder-count::before {
+  transform: none;
+}
+.next-card:hover,
+.app.desktop .later-row:hover {
+  border-color: var(--accent);
+}
+/* The Appointment open in the desktop detail panel. */
+.app.desktop .later-row[aria-current='true'],
+.next-card[aria-current='true'] {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
 }
 
 /* At the end of Upcoming on a phone, whose tab bar has no room for Past. */
@@ -511,6 +722,7 @@ p {
 /* On a desktop the grid fills the middle column. */
 .middle .page:has(.month-grid) {
   max-width: none;
+  padding-inline: 20px;
 }
 .month-controls {
   display: flex;
@@ -523,11 +735,6 @@ p {
 .app.phone .month-controls .btn:first-child {
   margin-right: auto;
 }
-/* A square button holding only an icon, such as Previous month. */
-.btn-icon {
-  width: 52px;
-  padding: 0;
-}
 .month-grid {
   width: 100%;
   table-layout: fixed;
@@ -536,7 +743,7 @@ p {
 .month-grid th {
   padding: 4px 0 8px;
   color: var(--muted);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
 }
 .month-grid abbr {
@@ -566,7 +773,7 @@ p {
   background: none;
   color: var(--text);
   font: inherit;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
 }
 .app.phone .month-grid button.day[aria-current='date'] {
@@ -575,18 +782,18 @@ p {
 .app.phone .month-grid button.day[aria-pressed='true'] {
   background: var(--accent);
   color: var(--accent-text);
-  font-weight: 750;
+  font-weight: 700;
 }
 /* The mark on a day that has an Appointment. */
 .month-grid .mark {
   position: absolute;
   bottom: 5px;
   left: 50%;
-  width: 7px;
-  height: 7px;
-  margin-left: -3.5px;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
   border-radius: 99px;
-  background: var(--accent);
+  background: var(--accent-ink);
 }
 .month-grid button.day[aria-pressed='true'] .mark {
   background: var(--accent-text);
@@ -607,16 +814,20 @@ p {
   box-shadow: 0 0 0 1px var(--border);
 }
 .app.desktop .month-grid th {
-  padding: 14px 12px;
+  padding: 12px 12px;
+  font-size: 13px;
   text-align: left;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
   border-bottom: 1px solid var(--border);
 }
 .app.desktop .month-grid td {
-  height: 128px;
-  padding: 8px 6px;
+  height: 122px;
+  padding: 6px 4px 8px;
   border-top: 1px solid var(--border);
+}
+.app.desktop .month-grid tbody tr:first-child td {
+  border-top: 0;
 }
 .app.desktop .month-grid td + td {
   border-left: 1px solid var(--border);
@@ -625,20 +836,22 @@ p {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 34px;
-  height: 34px;
-  margin-bottom: 6px;
-  font-weight: 700;
+  min-width: 32px;
+  height: 32px;
+  margin: 0 0 4px 2px;
+  font-size: 16px;
+  font-weight: 600;
 }
 .app.desktop .month-grid td[aria-current='date'] .day {
   border-radius: 99px;
   background: var(--accent);
   color: var(--accent-text);
+  font-weight: 700;
 }
 .month-grid ul {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -646,12 +859,12 @@ p {
 .chip {
   display: flex;
   flex-direction: column;
-  padding: 5px 8px;
-  border-left: 4px solid var(--accent);
+  padding: 5px 5px 5px 6px;
+  border-left: 3px solid var(--accent);
   border-radius: 8px;
   background: var(--accent-soft);
   color: var(--text);
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1.3;
   text-decoration: none;
   overflow-wrap: break-word;
@@ -677,7 +890,7 @@ p {
    taken for one still to be kept. */
 .chip.cancelled {
   border: 1px dashed var(--muted);
-  border-left: 4px solid var(--muted);
+  border-left: 3px solid var(--muted);
   background: none;
   color: var(--muted);
 }
@@ -690,17 +903,21 @@ p {
   color: var(--text);
 }
 .chip-state {
-  font-size: 14px;
-  font-weight: 750;
+  font-size: 13px;
+  font-weight: 700;
+}
+.chip .repeat-icon {
+  flex: none;
+  display: inline-flex;
 }
 .month-grid .more {
-  margin-top: 6px;
+  margin-top: 4px;
   padding: 4px 6px;
   border: none;
   background: none;
-  color: var(--accent);
+  color: var(--accent-ink);
   font: inherit;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -722,7 +939,7 @@ p {
 }
 .day-group h2 .muted {
   margin-left: 6px;
-  font-weight: 500;
+  font-weight: 400;
 }
 .day-group ul {
   display: flex;
@@ -742,8 +959,9 @@ p {
   text-decoration: none;
 }
 .day-row .time {
+  padding-top: 2px;
   white-space: nowrap;
-  font-weight: 700;
+  font-weight: 600;
 }
 .day-row.cancelled {
   color: var(--muted);
@@ -753,13 +971,41 @@ p {
   text-decoration: line-through;
 }
 .day-row .reminder-count {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   font-size: 16px;
 }
-/* The dot the phone mockup puts before the count. */
-.day-row .reminder-count::before {
+.day-row .badge {
+  margin-top: 4px;
+}
+
+/* ---------- one Appointment, and the form ---------- */
+/* Worth knowing, though it stops nothing: it overlaps another Appointment, or a Reminder goes out
+   overnight. */
+.warning {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: var(--radius-control);
+  background: var(--notice-soft);
+  color: var(--notice-ink);
+  font-weight: 600;
+}
+/* A word or two on what has become of something, with a mark before it. */
+.badge {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 13px 3px 11px;
+  border-radius: 99px;
+  background: var(--notice-soft);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.badge::before {
   content: '';
   flex: none;
   width: 8px;
@@ -767,31 +1013,23 @@ p {
   border-radius: 50%;
   background: var(--notice);
 }
-.day-row .badge {
-  margin-top: 4px;
+.badge.good {
+  background: var(--good-soft);
 }
-
-/* ---------- one Appointment, and the form ---------- */
-/* It overlaps another Appointment. A warning, not a refusal: it was saved. */
-.warning {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 14px 18px;
-  border-radius: 14px;
-  background: var(--notice-soft);
-  color: var(--notice);
-  font-weight: 600;
+.badge.good::before {
+  background: var(--good);
 }
-.badge {
-  align-self: flex-start;
-  display: inline-block;
-  padding: 2px 12px;
-  border-radius: 99px;
-  background: var(--notice-soft);
-  color: var(--notice);
-  font-size: 16px;
-  font-weight: 700;
+.badge.bad {
+  background: var(--danger-soft);
+}
+.badge.bad::before {
+  background: var(--danger);
+}
+.badge.new {
+  background: var(--accent-soft);
+}
+.badge.new::before {
+  background: var(--accent-ink);
 }
 
 .details {
@@ -801,10 +1039,7 @@ p {
   margin: 0;
 }
 .details dt {
-  margin-top: 12px;
-  color: var(--muted);
-  font-size: 16px;
-  font-weight: 650;
+  margin-top: 14px;
 }
 .details dt:first-child {
   margin-top: 0;
@@ -813,35 +1048,46 @@ p {
   display: flex;
   flex-direction: column;
   margin: 0;
-  font-size: 20px;
   overflow-wrap: anywhere;
+}
+.details dd .muted {
+  display: block;
+  font-size: 16px;
 }
 /* Notes keep the line breaks they were typed with. */
 .details .words {
   white-space: pre-wrap;
 }
+/* The foot of an Appointment: its buttons, then who added and last changed it. */
+.detail-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.detail .detail-foot {
+  margin-top: auto;
+  padding-top: 12px;
+}
+/* Edit beside Cancel Appointment where both fit on a line, with Delete Appointment beneath. */
+.detail-actions .btn {
+  flex: 1 1 auto;
+  min-width: 84px;
+  padding-inline: 12px;
+  white-space: nowrap;
+}
+.detail-actions .wide {
+  flex-basis: 100%;
+}
 .stamps {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-  font-size: 16px;
-}
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
+  font-size: 15px;
 }
 .confirm {
   display: flex;
   flex-direction: column;
   gap: 14px;
-}
-.btn-danger {
-  border-color: transparent;
-  background: var(--danger);
-  color: var(--surface);
 }
 /* The calendar could not be read, or may be out of date. */
 .trouble {
@@ -850,14 +1096,15 @@ p {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px 18px;
-  border-radius: 14px;
+  padding: 12px 16px;
+  border-radius: var(--radius-control);
   background: var(--notice-soft);
-  color: var(--notice);
+  color: var(--notice-ink);
   font-weight: 600;
 }
 
-.form {
+.form,
+.settings-section form {
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -869,7 +1116,8 @@ p {
   min-width: 0;
 }
 .field label {
-  font-weight: 650;
+  font-size: 17px;
+  font-weight: 600;
 }
 .field input,
 .field select,
@@ -878,44 +1126,66 @@ p {
   min-height: 52px;
   padding: 12px 14px;
   border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--surface);
+  border-radius: var(--radius-control);
+  background: var(--field);
+}
+.field input:hover,
+.field select:hover,
+.field textarea:hover {
+  border-color: var(--muted);
+}
+.field input:focus-visible,
+.field select:focus-visible,
+.field textarea:focus-visible {
+  outline-offset: 0;
+  border-color: var(--accent-ink);
+}
+.field input[readonly] {
+  background: var(--surface-2);
 }
 .field textarea {
+  display: block;
   resize: vertical;
 }
 .field [aria-invalid='true'] {
   border-color: var(--danger);
   border-width: 2px;
 }
-.field .hint {
+.field .hint,
+.hint {
   font-size: 16px;
 }
 /* Two short fields that belong together sit side by side where there is room. */
 .field-pair {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  align-items: start;
+  gap: 18px 14px;
 }
 
 /* ---------- Reminders ---------- */
 .form-reminders,
+.form-repeat,
 .reminders,
 .texts {
   display: flex;
   flex-direction: column;
   gap: 14px;
 }
-.form-reminders h2,
-.reminders h2,
-.texts h2 {
-  margin: 0;
+/* A rule over each part of the form that follows the Appointment's own details. */
+.form-reminders,
+.form-repeat {
+  padding-top: 22px;
+  border-top: 1px solid var(--border);
+}
+.reminders,
+.texts {
+  gap: 10px;
 }
 .reminders ul,
 .texts ul {
   display: flex;
   flex-direction: column;
-  gap: 12px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -929,8 +1199,17 @@ p {
 }
 .reminders .reminder,
 .texts .reminder {
-  padding-bottom: 12px;
+  gap: 8px;
+  padding: 14px 0;
   border-bottom: 1px solid var(--border);
+}
+.reminders .reminder:first-child,
+.texts .reminder:first-child {
+  padding-top: 4px;
+}
+.reminders .reminder:last-child,
+.texts .reminder:last-child {
+  border-bottom: 0;
 }
 .reminder legend {
   float: left;
@@ -939,30 +1218,28 @@ p {
   font-weight: 700;
 }
 .reminder-due {
-  font-weight: 650;
-}
-/* Worth knowing before saving, though it does not stop anything. */
-.warning {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 14px;
-  border-radius: 14px;
-  background: var(--notice-soft);
-  color: var(--notice);
   font-weight: 600;
 }
 .text-preview {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  margin-top: 4px;
 }
-.text-preview .muted {
-  font-size: 16px;
-  font-weight: 650;
+/* Words that are read aloud or sent as a text, shown exactly, as a text on a phone is. */
+.quoted {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 12px 16px;
+  border-radius: 16px;
+  background: var(--surface-2);
+  font-size: 17px;
+  line-height: 1.45;
 }
-.text-preview .quoted {
+.text-preview .quoted,
+p.quoted {
   display: block;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
@@ -972,17 +1249,23 @@ p {
 .settings-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
+  padding: 24px;
+}
+/* What the section is for, beneath its name. */
+.settings-section > h2 + p:not([class]) {
+  color: var(--muted);
 }
 .settings-section .btn {
   align-self: flex-start;
 }
 .account {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
-  margin-top: 6px;
+  padding: 0 4px;
 }
 .sign-out {
   display: flex;
@@ -990,24 +1273,28 @@ p {
   gap: 8px;
 }
 .about {
-  font-size: 16px;
+  padding: 0 4px;
+  font-size: 15px;
 }
 
 /* ---------- notices ---------- */
 /* "Sample data": the app has no backend. */
 .notice {
-  padding: calc(env(safe-area-inset-top) + 10px) 20px 10px;
+  padding: calc(env(safe-area-inset-top) + 8px) 20px 8px;
   background: var(--notice-soft);
-  color: var(--notice);
-  font-size: 16px;
+  color: var(--notice-ink);
+  font-size: 15px;
   font-weight: 600;
   text-align: center;
 }
 .notice + .page {
-  padding-top: 24px;
+  padding-top: 20px;
 }
 .app.desktop .notice {
-  padding-top: 10px;
+  padding-top: 8px;
+}
+.app.desktop .notice + .page {
+  padding-top: 28px;
 }
 
 /* The most recent text to Susan did not get through (src/components/TextsBanner.tsx). */
@@ -1020,7 +1307,7 @@ p {
   padding: calc(env(safe-area-inset-top) + 12px) 20px 12px;
   background: var(--danger-soft);
   color: var(--danger);
-  font-weight: 650;
+  font-weight: 600;
 }
 .texts-banner p {
   margin: 0;
@@ -1035,7 +1322,10 @@ p {
   padding-top: 12px;
 }
 .texts-banner + .page {
-  padding-top: 24px;
+  padding-top: 20px;
+}
+.app.desktop .texts-banner + .page {
+  padding-top: 28px;
 }
 
 /* "A new version is available" */
@@ -1053,7 +1343,7 @@ p {
   padding: env(safe-area-inset-top) 16px 0;
   background: var(--accent);
   color: var(--accent-text);
-  font-weight: 650;
+  font-weight: 600;
 }
 .update-banner button {
   min-height: 52px;
@@ -1062,7 +1352,7 @@ p {
   color: inherit;
   border-radius: 99px;
   padding: 6px 18px;
-  font-weight: 750;
+  font-weight: 700;
   cursor: pointer;
 }
 body.has-update {
@@ -1142,18 +1432,6 @@ body.has-update .public {
 .public a {
   overflow-wrap: anywhere;
 }
-/* Words that are read aloud or sent as a text, shown exactly. */
-.quoted {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin: 0;
-  padding: 16px 20px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-left: 5px solid var(--accent);
-  border-radius: 14px;
-}
 .public-foot {
   padding: 0 20px calc(env(safe-area-inset-bottom) + 24px);
 }
@@ -1182,12 +1460,6 @@ body.has-update .public {
   font-family: ui-monospace, monospace;
   font-size: 16px;
 }
-.subscription-link .actions {
-  align-items: center;
-}
-.subscription-link .hint {
-  font-size: 16px;
-}
 
 /* A person's agent keys, by name, each with a way to revoke it. */
 .agent-keys {
@@ -1196,17 +1468,22 @@ body.has-update .public {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
 }
 .agent-keys li {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
 }
 .agent-keys li p {
   margin: 0;
   font-size: 16px;
+}
+.agent-keys .btn {
+  flex: none;
+  align-self: center;
 }
 .agent-key-new {
   display: flex;
@@ -1223,28 +1500,16 @@ body.has-update .public {
   gap: 6px;
   color: var(--muted);
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 500;
 }
 .repeats svg {
   flex: none;
 }
-.chip .repeat-icon {
-  flex: none;
-  display: inline-flex;
-}
-/* The form's Repeats section. */
-.form-repeat {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-.form-repeat h2 {
-  margin: 0;
-}
+/* The form's Repeats section: the days of the week a Series falls on. */
 .weekdays {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 8px 18px;
+  gap: 0 18px;
   margin: 0;
   padding: 0;
   border: 0;
@@ -1252,20 +1517,20 @@ body.has-update .public {
 .weekdays legend {
   float: left;
   width: 100%;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
   padding: 0;
-  font-weight: 700;
+  font-size: 17px;
+  font-weight: 600;
 }
-.weekday {
+.weekday-choice {
   display: flex;
   align-items: center;
   gap: 12px;
   min-height: 52px;
-  font-weight: 500;
 }
-.weekday input {
-  width: 26px;
-  height: 26px;
+.weekday-choice input {
+  width: 24px;
+  height: 24px;
   margin: 0;
   accent-color: var(--accent);
 }
@@ -1274,25 +1539,25 @@ body.has-update .public {
   flex-direction: column;
   gap: 4px;
   padding: 12px 16px;
-  border-radius: 14px;
-  border: 1px solid var(--border);
-}
-.details dd .muted {
-  display: block;
-  font-size: 16px;
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
 }
 
 /* ---------- Texts to Susan ---------- */
+/* A text's status: its badge, then why or when, beside it where that fits. */
 .text-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
   margin: 0;
-}
-.text-status .badge {
-  margin-right: 6px;
 }
 .test-text {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
 }
 
 /* ---------- Replies ---------- */
@@ -1300,20 +1565,33 @@ body.has-update .public {
   position: relative;
   display: inline-flex;
 }
+/* How many Replies the person has not yet seen. */
 .tab-count {
-  position: absolute;
-  top: -6px;
-  right: -12px;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 6px;
-  border-radius: 11px;
-  background: var(--danger);
-  color: #ffffff;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--accent-text);
   font-size: 14px;
-  font-weight: 750;
-  line-height: 22px;
+  font-weight: 700;
+  line-height: 24px;
   text-align: center;
+}
+/* In the sidebar it ends the row; in the phone's tab bar it sits on the icon's corner. */
+.sidebar .tab-count {
+  margin-left: auto;
+}
+.tabbar .tab-count {
+  position: absolute;
+  top: -8px;
+  left: 14px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  box-shadow: 0 0 0 2px var(--surface);
+  font-size: 12px;
+  line-height: 20px;
 }
 .visually-hidden {
   position: absolute;
@@ -1332,30 +1610,37 @@ body.has-update .public {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
 }
 .reply {
-  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px 20px;
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: var(--radius);
   background: var(--surface);
 }
 .reply p {
-  margin: 0 0 8px;
-}
-.reply p:last-child {
-  margin-bottom: 0;
+  margin: 0;
 }
 .reply-when {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 6px 10px;
 }
-.reply-words {
-  font-size: 20px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.reply .reply-words {
+  align-self: flex-start;
+  max-width: 100%;
+  font-size: 19px;
 }
-.reply-answer .muted {
-  margin-bottom: 4px;
+.reply-answer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.reply-answer .muted,
+.reply > .muted {
+  font-size: 16px;
 }

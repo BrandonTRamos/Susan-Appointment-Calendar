@@ -143,7 +143,7 @@ export function RepeatFields({
             <fieldset className="weekdays">
               <legend>On these days</legend>
               {WEEKDAY_NAMES.map((name, weekday) => (
-                <label key={name} className="weekday">
+                <label key={name} className="weekday-choice">
                   <input
                     type="checkbox"
                     checked={typed.weekdays.includes(weekday)}

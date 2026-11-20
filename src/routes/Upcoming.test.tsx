@@ -297,6 +297,32 @@ describe('on a desktop', () => {
     expect(window.location.pathname).toBe('/');
   });
 
+  it('says on each later row how many of its Reminders are still to be sent, and nothing when none are', async () => {
+    const calendar = emptyCalendar();
+    await calendar.core.addAppointment(linda, { ...checkUp, date: daysFromToday(1) });
+    await calendar.core.addAppointment(mark, {
+      what: 'Hair',
+      date: daysFromToday(3),
+      time: '11:00',
+      reminders: [
+        { shape: 'daysBefore', days: 1, time: '18:00' },
+        { shape: 'before', amount: 2, unit: 'hours' },
+      ],
+    });
+    await calendar.core.addAppointment(mark, {
+      what: 'Eye exam',
+      date: daysFromToday(5),
+      time: '15:30',
+      reminders: [],
+    });
+    renderApp('/', { calendar });
+
+    expect(await laterRows()).toEqual([
+      `${dateOnRow(daysFromToday(3))}11:00 amHair2 Reminders to send`,
+      `${dateOnRow(daysFromToday(5))}3:30 pmEye exam`,
+    ]);
+  });
+
   it('shows a picked Appointment in the panel and keeps Upcoming in the middle', async () => {
     const calendar = emptyCalendar();
     await calendar.core.addAppointment(linda, { ...checkUp, date: daysFromToday(1) });

@@ -38,18 +38,21 @@ function Tabs({ phone = false }: { phone?: boolean }) {
     <nav aria-label="Main">
       {TABS.filter((tab) => !phone || tab.onPhone).map(({ to, label, Icon }) => {
         const count = to === '/replies' ? notSeen : 0;
+        const shown = count > 0 && (
+          <span className="tab-count" aria-hidden="true">
+            {count > 99 ? '99+' : count}
+          </span>
+        );
         return (
           <NavLink key={to} to={to} end={to === '/'}>
             <span className="tab-icon">
-              <Icon />
-              {count > 0 && (
-                <span className="tab-count" aria-hidden="true">
-                  {count > 99 ? '99+' : count}
-                </span>
-              )}
+              <Icon size={phone ? 26 : 22} />
+              {phone && shown}
             </span>
             {label}
             {count > 0 && <span className="visually-hidden">{`, ${count} not yet seen`}</span>}
+            {/* In the sidebar the count ends the row; in the tab bar it sits on the icon. */}
+            {!phone && shown}
           </NavLink>
         );
       })}
@@ -71,17 +74,24 @@ export function Sidebar({ displayName, onSignOut }: Pick<AppProps, 'displayName'
   return (
     <header className="sidebar">
       <div className="brand">
-        <img src="/icons/favicon.svg" alt="" width={36} height={36} />
+        <img src="/icons/favicon.svg" alt="" width={32} height={32} />
         Susan's Calendar
       </div>
       <Link className="btn btn-primary new-appointment" to="/appointments/new">
-        <PlusIcon size={22} />
+        <PlusIcon size={20} />
         New Appointment
       </Link>
       <Tabs />
       {(displayName || onSignOut) && (
         <div className="sidebar-foot">
-          {displayName && <span className="person">{displayName}</span>}
+          {displayName && (
+            <span className="person">
+              <span className="avatar" aria-hidden="true">
+                {displayName.trim().slice(0, 1)}
+              </span>
+              {displayName}
+            </span>
+          )}
           {onSignOut && <SignOut onSignOut={onSignOut} />}
         </div>
       )}
