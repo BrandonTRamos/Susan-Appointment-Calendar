@@ -10,6 +10,7 @@ import {
   isTime,
   localDateTime,
   momentOf,
+  momentOrSkipped,
   today,
 } from './localTime';
 
@@ -58,6 +59,20 @@ describe("Susan's local time", () => {
     );
   });
 
+  it('can read a time the clocks skip as that time moved on by the gap they jump', () => {
+    // Lord Howe Island's clocks go forward half an hour, from 2:00 to 2:30 am on 4 October 2026.
+    const lordHowe = 'Australia/Lord_Howe';
+    const moment = momentOrSkipped('2026-10-04', '02:15', lordHowe);
+    expect(localDateTime(moment, lordHowe)).toEqual({ date: '2026-10-04', time: '02:45' });
+
+    expect(momentOrSkipped('2027-03-14', '02:30', EASTERN).toISOString()).toBe(
+      '2027-03-14T07:30:00.000Z',
+    );
+    expect(momentOrSkipped('2027-03-14', '01:30', EASTERN).toISOString()).toBe(
+      '2027-03-14T06:30:00.000Z',
+    );
+  });
+
   it('takes the first of the two when the clocks repeat an hour going back', () => {
     // US Eastern, 1 November 2026: 1:59 am is followed by 1:00 am again.
     expect(momentOf('2026-11-01', '01:30', EASTERN)?.toISOString()).toBe(
@@ -100,6 +115,7 @@ describe("Susan's local time", () => {
   it('writes dates, times and moments in words', () => {
     expect(formatDate('2026-11-20')).toBe('Friday, November 20, 2026');
     expect(formatDate('2026-11-20', 'short')).toBe('Fri, Nov 20, 2026');
+    expect(formatDate('2026-11-20', 'noYear')).toBe('Friday, November 20');
     expect(formatTime('14:30')).toBe('2:30 pm');
     expect(formatTime('00:05')).toBe('12:05 am');
     expect(formatTime('12:00')).toBe('12:00 pm');

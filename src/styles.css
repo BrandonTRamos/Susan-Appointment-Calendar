@@ -379,6 +379,27 @@ p {
   padding-top: 12px;
   border-top: 1px solid var(--border);
 }
+/* The Reminders still to be sent, at the foot of the next-Appointment card. */
+.next-reminders {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.next-reminders .muted {
+  font-size: 16px;
+  font-weight: 650;
+}
+.next-reminders ul {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
 .with-icon {
   display: flex;
   align-items: center;
@@ -729,6 +750,21 @@ p {
 .day-row.cancelled strong {
   text-decoration: line-through;
 }
+.day-row .reminder-count {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+}
+/* The dot the phone mockup puts before the count. */
+.day-row .reminder-count::before {
+  content: '';
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--notice);
+}
 .day-row .badge {
   margin-top: 4px;
 }
@@ -834,6 +870,7 @@ p {
   font-weight: 650;
 }
 .field input,
+.field select,
 .field textarea {
   width: 100%;
   min-height: 52px;
@@ -857,6 +894,72 @@ p {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 18px;
+}
+
+/* ---------- Reminders ---------- */
+.form-reminders,
+.reminders {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.form-reminders h2,
+.reminders h2 {
+  margin: 0;
+}
+.reminders ul {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.reminder {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+}
+.reminders .reminder {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.reminder legend {
+  float: left;
+  width: 100%;
+  padding: 0;
+  font-weight: 700;
+}
+.reminder-due {
+  font-weight: 650;
+}
+/* Worth knowing before saving, though it does not stop anything. */
+.warning {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: var(--notice-soft);
+  color: var(--notice);
+  font-weight: 600;
+}
+.text-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.text-preview .muted {
+  font-size: 16px;
+  font-weight: 650;
+}
+.text-preview .quoted {
+  display: block;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 /* ---------- settings ---------- */

@@ -105,7 +105,9 @@ describe('the next Appointment, on a phone', () => {
     expect(within(card).getByText('Mark is driving')).toBeInTheDocument();
     expect(card).not.toHaveTextContent('·  ·');
     expect(card.textContent).toBe(
-      `${dayInWords(daysFromToday(2), daysFromToday(0))}11:00 amHairMark is driving`,
+      `${dayInWords(daysFromToday(2), daysFromToday(0))}11:00 amHairMark is driving` +
+        // The Reminder it started with, still to be sent.
+        `Reminder${dayInWords(daysFromToday(1), daysFromToday(0))} at 6:00 pm`,
     );
   });
 

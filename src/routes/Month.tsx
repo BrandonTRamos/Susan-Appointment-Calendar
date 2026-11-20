@@ -10,7 +10,7 @@ import { Link, useMatch } from 'react-router-dom';
 import { CalendarLoading, CalendarTrouble } from '../components/CalendarTrouble';
 import { BackIcon, ForwardIcon, PlusIcon } from '../components/Icons';
 import { Page } from '../components/Page';
-import { RemindersToSend } from '../components/RemindersToSend';
+import { ReminderCount } from '../components/RemindersToSend';
 import { useCalendar } from '../data/CalendarContext';
 import type { Appointment } from '../lib/calendar';
 import { addDays, dateParts, formatDate, formatTime } from '../lib/localTime';
@@ -325,7 +325,10 @@ function DayList({
   );
 }
 
-/** An Appointment beneath the grid: its time, then what it is, who with, where and the Driver. */
+/**
+ * An Appointment beneath the grid: its time, then what it is, who with, where and the Driver, and
+ * how many Reminders are still to be sent.
+ */
 function DayRow({ appointment }: { appointment: Appointment }) {
   const { id, time, what, withWhom, placeName } = appointment;
   const withAndWhere = joined(' · ', withWhom, placeName);
@@ -348,7 +351,7 @@ function DayRow({ appointment }: { appointment: Appointment }) {
         <strong>{what}</strong>
         {withAndWhere && <span className="muted">{withAndWhere}</span>}
         {driver && <span className="muted">{driver}</span>}
-        <RemindersToSend appointment={appointment} />
+        <ReminderCount appointment={appointment} />
       </span>
     </Link>
   );

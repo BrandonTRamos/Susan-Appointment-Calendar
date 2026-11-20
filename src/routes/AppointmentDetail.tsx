@@ -6,11 +6,13 @@ import { Page } from '../components/Page';
 import { useCalendar } from '../data/CalendarContext';
 import { overlappingAppointments, type Appointment, type Stamp } from '../lib/calendar';
 import { formatDate, formatMoment, formatTime } from '../lib/localTime';
+import { ReminderList } from './AppointmentReminders';
 
 /**
- * One Appointment: all its details, a warning when it overlaps another, Edit, Cancel and Delete, and
- * who added it and who last changed it. A full screen on a phone; on a desktop, the detail panel.
- * It shows the Appointment at its address, or the one it is given.
+ * One Appointment: all its details, a warning when it overlaps another, its Reminders and their
+ * words, Edit, Cancel and Delete, and who added it and who last changed it. A full screen on a
+ * phone; on a desktop, the detail panel. It shows the Appointment at its address, or the one it is
+ * given.
  */
 export function AppointmentDetail({ id: given }: { id?: string }) {
   const params = useParams();
@@ -146,6 +148,8 @@ function Detail({
           </>
         )}
       </dl>
+
+      <ReminderList appointment={appointment} timeZone={timeZone} now={new Date()} />
 
       {problem && (
         <p className="error" role="alert">

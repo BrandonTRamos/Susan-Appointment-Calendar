@@ -93,7 +93,8 @@ describe('the Month tab, on a phone', () => {
     expect(day(today())).toHaveAccessibleName(`${formatDate(today())}, 1 cancelled Appointment`);
     expect(day(today()).querySelector('.mark')).toHaveClass('cancelled');
     expect(listed()[0]).toEqual([`${brief(today())} Today`, '11:00 amHairCancelled']);
-    expect(listed()[1][1]).toBe('3:30 pmEye exam');
+    // Its Reminder, the day before at 6:00 pm, is still to be sent.
+    expect(listed()[1][1]).toBe('3:30 pmEye exam1 Reminder to send');
   });
 
   it('counts a cancelled Appointment apart from the ones still on', async () => {
@@ -144,7 +145,8 @@ describe('the Month tab, on a phone', () => {
         `${brief(today())} Today`,
         '2:00 pmCardiology check-upDr. Patel · Heart ClinicLinda picks up at 1:15 pm',
       ],
-      [brief(daysFromToday(4)), '9:00 amBlood drawRiverside Lab'],
+      // Today's has no Reminder left to send; the later one has its starting Reminder still to go.
+      [brief(daysFromToday(4)), '9:00 amBlood drawRiverside Lab1 Reminder to send'],
     ]);
     expect(day(today())).toHaveAttribute('aria-pressed', 'true');
   });
@@ -153,12 +155,25 @@ describe('the Month tab, on a phone', () => {
     const calendar = emptyCalendar();
     // Days in this month, whether or not they have passed: any day can be picked.
     const [tenth, twelfth, nineteenth] = ['10', '12', '19'].map((d) => `${thisMonth()}-${d}`);
-    await calendar.core.addAppointment(linda, { what: 'Hair', date: tenth, time: '11:00' });
-    await calendar.core.addAppointment(linda, { what: 'Eye exam', date: twelfth, time: '15:30' });
+    // No Reminders, so that what each row says does not depend on today's date.
+    const reminders: [] = [];
+    await calendar.core.addAppointment(linda, {
+      what: 'Hair',
+      date: tenth,
+      time: '11:00',
+      reminders,
+    });
+    await calendar.core.addAppointment(linda, {
+      what: 'Eye exam',
+      date: twelfth,
+      time: '15:30',
+      reminders,
+    });
     await calendar.core.addAppointment(linda, {
       what: 'Blood draw',
       date: nineteenth,
       time: '09:00',
+      reminders,
     });
     renderApp('/month', { calendar });
     await screen.findByRole('table');

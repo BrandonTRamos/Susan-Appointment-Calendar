@@ -186,6 +186,38 @@ describe('the calendar kept in the data API', () => {
     expect(await store.appointment(added.id)).toEqual(added as Appointment);
   });
 
+  it('holds Reminders of every shape, flagged or not, and hands them back as they were', async () => {
+    const { api, store, core } = calendar();
+    const { id } = await core.addAppointment(linda, {
+      ...checkUp,
+      reminders: [
+        { shape: 'daysBefore', days: 1, time: '18:00' },
+        { shape: 'before', amount: 2, unit: 'hours' },
+        { shape: 'at', date: '2026-11-19', time: '20:00' },
+      ],
+    });
+    const moved = await core.changeAppointment(linda, id, { time: '15:30' });
+    expect(moved.reminders.map((r) => r.needsReview)).toEqual([false, true, false]);
+    // The data API gives every field of a Reminder, with null for those of the other shapes.
+    const row = api.appointments()[0];
+    row.reminders = (row.reminders as Record<string, unknown>[]).map((reminder) => ({
+      amount: null,
+      unit: null,
+      days: null,
+      date: null,
+      time: null,
+      ...reminder,
+    }));
+    expect(await store.appointment(id)).toEqual(moved);
+  });
+
+  it('reads an Appointment kept before Reminders existed as having none', async () => {
+    const { api, store, core } = calendar();
+    const added = await core.addAppointment(linda, checkUp);
+    delete api.appointments()[0].reminders;
+    expect(await store.appointment(added.id)).toEqual({ ...added, reminders: [] });
+  });
+
   it('says no text has gone to Susan: nothing sends texts yet', async () => {
     const { store, core } = calendar();
     const { id } = await core.addAppointment(linda, checkUp);

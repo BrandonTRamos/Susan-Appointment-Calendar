@@ -13,13 +13,14 @@ installable web app on AWS Amplify Gen 2.
 - **Why texts go through Textbelt:** [`docs/adr/0002-textbelt-for-text-messages.md`](docs/adr/0002-textbelt-for-text-messages.md), with the research in [`docs/research/`](docs/research/text-message-options.md)
 - **Notes for contributors and AI sessions:** [`AGENTS.md`](AGENTS.md) (`CLAUDE.md` is an identical copy)
 
-So far: sign-in, the [public pages](#public-pages), and Appointments. Anyone signed in can add an
-Appointment, see the next one in full and the later ones beneath it, open one, change it, cancel it,
-and delete one entered by mistake, and is warned when one overlaps another; what one person changes
-shows for the others as it happens. The Month tab shows a month at a glance, and Past lists the
-Appointments that have already happened. Anyone signed in can also get their own
-[calendar subscription](#calendar-subscription) link. Reminders, texts and Replies arrive with the
-later tickets.
+So far: sign-in, the [public pages](#public-pages), and Appointments with their Reminders. Anyone
+signed in can add an Appointment, see the next one in full and the later ones beneath it, open one,
+change it, cancel it, and delete one entered by mistake, and is warned when one overlaps another;
+what one person changes shows for the others as it happens. Each Appointment carries its Reminders,
+showing when each goes out and the exact words Susan will read. The Month tab shows a month at a
+glance, and Past lists the Appointments that have already happened. Anyone signed in can also get
+their own [calendar subscription](#calendar-subscription) link. No text is sent yet: sending texts
+and Replies arrive with the later tickets.
 
 ## Run it locally
 

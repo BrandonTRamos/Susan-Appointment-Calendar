@@ -10,18 +10,22 @@ Nothing is sent in this ticket. It delivers the planning and the wording; ticket
 
 **Parallel:** Yes, with 06, 08 and 09. Ticket 06 also touches the Appointment form and the detail, so whichever of the two lands second should expect a small merge there.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] An Appointment can carry any number of Reminders, added, changed and removed in its form.
-- [ ] A Reminder has one of three shapes: a gap before the Appointment's start (minutes, hours or days), a number of days before at a fixed clock time, or an exact date and time.
-- [ ] A new Appointment starts with one Reminder, the day before at 6:00 pm, which can be changed or removed like any other.
-- [ ] The core works out when each Reminder is due in Susan's time zone, and works it out again when the Appointment's time changes. Gaps are measured from the Appointment's start, not the pickup time.
-- [ ] An exact-time Reminder keeps its time when its Appointment moves and is flagged for review until someone confirms or changes it.
-- [ ] The form warns when a Reminder falls between 9:00 pm and 7:00 am, and says so when a Reminder's time has already passed.
-- [ ] Saving an Appointment with no Reminder still to be sent asks for confirmation first.
-- [ ] The core composes each Reminder's words as the spec describes: the opening "Susan's Calendar:", what it is, who with, the day in words and the time, where, the Driver and pickup time when present, then the Note for Susan. Private notes never appear.
-- [ ] The day in words is right for the moment the Reminder goes out ("today", "tomorrow", or the weekday and date).
-- [ ] Words are kept to the basic SMS character set where possible, for example straight quotes for curly ones.
-- [ ] The form and the detail show each Reminder's due time and a preview of its exact words.
-- [ ] The next-Appointment card on Upcoming shows the Reminders still to be sent, if ticket 06 has landed.
-- [ ] Tests through the core cover each shape, a daylight-saving change, a moved Appointment, and the wording with and without each optional detail. Screen tests cover the three form warnings.
+- [x] An Appointment can carry any number of Reminders, added, changed and removed in its form.
+- [x] A Reminder has one of three shapes: a gap before the Appointment's start (minutes, hours or days), a number of days before at a fixed clock time, or an exact date and time.
+- [x] A new Appointment starts with one Reminder, the day before at 6:00 pm, which can be changed or removed like any other.
+- [x] The core works out when each Reminder is due in Susan's time zone, and works it out again when the Appointment's time changes. Gaps are measured from the Appointment's start, not the pickup time.
+- [x] An exact-time Reminder keeps its time when its Appointment moves and is flagged for review until someone confirms or changes it.
+- [x] The form warns when a Reminder falls between 9:00 pm and 7:00 am, and says so when a Reminder's time has already passed.
+- [x] Saving an Appointment with no Reminder still to be sent asks for confirmation first.
+- [x] The core composes each Reminder's words as the spec describes: the opening "Susan's Calendar:", what it is, who with, the day in words and the time, where, the Driver and pickup time when present, then the Note for Susan. Private notes never appear.
+- [x] The day in words is right for the moment the Reminder goes out ("today", "tomorrow", or the weekday and date).
+- [x] Words are kept to the basic SMS character set where possible, for example straight quotes for curly ones.
+- [x] The form and the detail show each Reminder's due time and a preview of its exact words.
+- [x] The next-Appointment card on Upcoming shows the Reminders still to be sent, if ticket 06 has landed. (06 landed first; 07 fills its `RemindersToSend` place, `src/components/RemindersToSend.tsx`, with `remindersStillToSend` from the calendar core: when each goes out, or "No Reminder to be sent". Screen tests check it at phone and desktop widths.)
+- [x] Tests through the core cover each shape, a daylight-saving change, a moved Appointment, and the wording with and without each optional detail. Screen tests cover the three form warnings.
+
+**As built, as the owner approved:** Reminders are set as part of adding or changing an Appointment, not by a separate command, so that one save is one change with one activity record. The form and the detail show Reminders through `src/routes/AppointmentReminders.tsx`. A Reminder newly set, changed or confirmed must go out strictly before the Appointment starts; the core refuses one at or after the start. An exact-time Reminder that a move leaves at or after the new start is kept, shown and flagged until someone sees to it. A move that would put a same-day clock-time Reminder at or after the new start is refused, naming the Reminder. A newly chosen exact time the clocks skip is refused; a Reminder worked out from a gap in days or a clock time that lands in the skipped time goes out moved on by the gap the clocks jump (`momentOrSkipped` in `src/lib/localTime.ts`).
+
+**Month rows (owner's decision, after ticket 10 landed):** ticket 10 had put the same `RemindersToSend` place in each row beneath the phone Month grid. The owner chose to show only the count there, as the phone mockup does: `ReminderCount` in `src/components/RemindersToSend.tsx` says "1 Reminder to send" or "2 Reminders to send" for an active Appointment still to come, and nothing for one with none left to send, one cancelled, or one that has started. The Upcoming card keeps the full list of times. Screen tests in `src/routes/AppointmentReminders.test.tsx` cover each case, and that the desktop Month grid shows no count.
