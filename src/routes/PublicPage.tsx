@@ -27,7 +27,7 @@ const TITLES: Record<PublicPageName, string> = {
   terms: 'Terms and Conditions',
 };
 
-/** "run by …": the sender's identity, which the text-message registration is checked against. */
+/** "run by …": who is behind the calendar and its texts. */
 function runBy(ownerName: string | null) {
   return ownerName ? `run by ${ownerName}, a private individual,` : 'run by a private individual';
 }
@@ -71,9 +71,9 @@ function PrivacyPolicy({ contactEmail, ownerName }: OwnerDetails) {
       <Clause lead="Sharing.">
         Mobile numbers and consent to receive text messages are never sold, rented or shared with
         third parties or affiliates, for marketing or for any other purpose. The only companies that
-        handle them are the ones that deliver the messages and host the calendar, Twilio and Amazon
-        Web Services, and they may use them only to do that. We do not sell or share SMS opt-in data
-        or any other personal information with third parties for marketing purposes.
+        handle them are the ones that deliver the messages and host the calendar, Textbelt and
+        Amazon Web Services, and they may use them only to do that. We do not sell or share SMS
+        opt-in data or any other personal information with third parties for marketing purposes.
       </Clause>
       <Clause lead="Text messages.">
         {FREQUENCY} Message and data rates may apply. Reply STOP to stop the messages, or HELP for
@@ -120,8 +120,7 @@ function Terms({ contactEmail, ownerName }: OwnerDetails) {
         on her plan.
       </Clause>
       <Clause lead="Reply STOP to any message to stop all messages.">
-        One message confirms it and no more are sent after that. <strong>Reply START</strong> to
-        turn them back on.
+        No more are sent after that. <strong>Reply START</strong> to turn them back on.
       </Clause>
       <Clause lead="Reply HELP to any message for help,">
         or ask <Contact contactEmail={contactEmail} />.
@@ -231,7 +230,7 @@ function About({ contactEmail, ownerName }: OwnerDetails) {
 /**
  * The pages anyone can open without signing in: what Susan's Calendar is, its privacy policy and
  * its terms. About carries all three; the policy and the terms also have a page each, because the
- * text-message registration asks for a direct address for each. Links here are plain ones: these
+ * consent script read to Susan gives an address for each. Links here are plain ones: these
  * pages sit outside the app's router (src/Root.tsx).
  */
 export function PublicPage({ page, contactEmail, ownerName, sampleData }: PublicPageProps) {

@@ -45,7 +45,7 @@ Word to the other Admins that someone has added, changed or cancelled an Appoint
 _Avoid_: Notification, change notice, audit alert
 
 **Public pages**:
-The pages anyone can open without signing in: what the calendar is, its privacy policy and its terms. They exist so that the registration to send text messages can be reviewed.
+The pages anyone can open without signing in: what the calendar is, its privacy policy and its terms. They exist so that Susan, and anyone who asks, can read what the calendar texts and what it does with her number.
 _Avoid_: Landing page, marketing site, legal pages
 
 **Driver**:

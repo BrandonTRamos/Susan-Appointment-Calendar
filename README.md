@@ -8,7 +8,8 @@ installable web app on AWS Amplify Gen 2.
 - **The work, ticket by ticket:** [`.scratch/susans-calendar/issues/`](.scratch/susans-calendar/issues/)
 - **The words the project uses:** [`CONTEXT.md`](CONTEXT.md)
 - **Chosen layouts:** [`docs/design/`](docs/design/README.md)
-- **Registering to send texts:** [`docs/twilio-registration-pack.md`](docs/twilio-registration-pack.md)
+- **Setting up text messages:** [`docs/text-message-setup.md`](docs/text-message-setup.md)
+- **Why texts go through Textbelt:** [`docs/adr/0002-textbelt-for-text-messages.md`](docs/adr/0002-textbelt-for-text-messages.md), with the research in [`docs/research/`](docs/research/text-message-options.md)
 - **Notes for contributors and AI sessions:** [`AGENTS.md`](AGENTS.md) (`CLAUDE.md` is an identical copy)
 
 So far the app is a shell: sign-in, the tabs and a placeholder behind each one, plus the
@@ -78,7 +79,7 @@ Set these on the Amplify app under **Hosting → Environment variables**, for al
 | `SUSAN_TIME_ZONE` | `America/New_York` | Susan's time zone. Every date and time in the calendar means her local time. US Eastern if unset; a wrong name fails the deploy.                              |
 | `COST_TAG`        | `susans-calendar`  | The `project` tag on every backend resource and on the Hosting app, so the app's cost shows on its own in billing. This is the default.                       |
 | `CONTACT_EMAIL`   | your email address | The contact address on the [public pages](#public-pages). They say none has been set if it is missing; a value that is not an email address fails the deploy. |
-| `OWNER_NAME`      | your full name     | Who the public pages say runs the calendar. It must match the name on the text-message registration. They say "a private individual" if it is missing.        |
+| `OWNER_NAME`      | your full name     | Who the public pages say runs the calendar. They say "a private individual" if it is missing.                                                                 |
 
 A change to any of these takes effect at the next deploy. Later tickets add to this table.
 
@@ -105,12 +106,12 @@ Three pages open for anyone, with no sign-in. The sign-in screen links to the fi
 | `/privacy` | The privacy policy on its own                                                                                                            |
 | `/terms`   | The terms on their own                                                                                                                   |
 
-They exist because the text-message registration is reviewed against them
-([`docs/twilio-registration-pack.md`](docs/twilio-registration-pack.md)), so their addresses must
-not change, and their words must keep to what the pack says they contain. The contact address and
-the owner's name come from `CONTACT_EMAIL` and `OWNER_NAME` above, so neither is written in the
-repository. The words read to Susan to ask for her consent are in `src/lib/consent.ts` and in the
-pack; a test fails if the two differ.
+They are the plain account of what the calendar texts and what it does with Susan's number. The
+words read to Susan to ask for her consent give her the addresses of the last two, so the addresses
+must not change. The contact address and the owner's name come from `CONTACT_EMAIL` and
+`OWNER_NAME` above, so neither is written in the repository. The consent words are in
+`src/lib/consent.ts` and in [`docs/text-message-setup.md`](docs/text-message-setup.md); a test
+fails if the two differ.
 
 ## Accounts
 

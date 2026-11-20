@@ -93,7 +93,7 @@ describe('the privacy policy', () => {
       /Mobile numbers and consent to receive text messages are never sold, rented or shared with third parties or affiliates, for marketing or for any other purpose\./,
     );
     // The companies that carry the texts are named, not hidden behind "never".
-    expect(policy).toHaveTextContent(/Twilio/);
+    expect(policy).toHaveTextContent(/Textbelt/);
     expect(policy).toHaveTextContent(/only to do that/);
   });
 

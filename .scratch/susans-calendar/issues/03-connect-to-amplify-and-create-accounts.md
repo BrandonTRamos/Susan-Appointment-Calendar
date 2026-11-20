@@ -6,7 +6,7 @@
 
 **Blocked by:** 01 (Deployable app shell).
 
-**Parallel:** Yes. Independent of 02 and 04. Ticket 05 waits on this one because Twilio needs the public page to be live.
+**Parallel:** Yes. Independent of 02 and 04. Ticket 05 waits on this one because the consent script read to Susan gives the addresses of the Public pages.
 
 **Status:** ready-for-human
 

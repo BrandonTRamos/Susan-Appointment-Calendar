@@ -2,7 +2,7 @@
 
 **What to build:** Reminders go out when they are due. Every minute the app sends whatever is due, exactly once each, and anyone signed in can see on the Appointment whether each Reminder is waiting, sent or was not sent. The owner can enter Susan's mobile number in Settings and send a test text.
 
-In this ticket the texts go to a stand-in sender that records them instead of sending them, because Twilio is not connected until ticket 13. Everything else about sending is real.
+In this ticket the texts go to a stand-in sender that records them instead of sending them, because Textbelt is not connected until ticket 13. Everything else about sending is real.
 
 **Spec:** `.scratch/susans-calendar/spec.md`, sections "Sending and tracking texts", "Reminders" and "Settings and public page"; user stories 45, 46, 60, 69, 94.
 
@@ -12,7 +12,7 @@ In this ticket the texts go to a stand-in sender that records them instead of se
 
 **Status:** ready-for-agent
 
-- [ ] The core depends on a text sender port. A stand-in sender records each text instead of sending it and is used wherever Twilio credentials are absent, including sample-data mode.
+- [ ] The core depends on a text sender port. A stand-in sender records each text instead of sending it and is used wherever the Textbelt key is absent, including sample-data mode.
 - [ ] A scheduled run happens every minute, never overlaps itself, and asks the core to send whatever is due.
 - [ ] Every text is recorded with its kind, the Appointment it concerns, its words, when it was due, and a status of waiting, sent, delivered, failed or not sent.
 - [ ] Each text has an identity derived from what it is about and when it was due, and is claimed before sending, so that two runs cannot send the same text twice.

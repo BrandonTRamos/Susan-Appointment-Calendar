@@ -1,7 +1,7 @@
 // How Susan agrees to be texted: the words read aloud to her, and the one text that confirms her
-// answer. The public About page shows both, and the same words are in the registration pack
-// (docs/twilio-registration-pack.md), which is what the text-message registration is reviewed
-// against. Change them in both places together; src/lib/consent.test.ts fails if they differ.
+// answer. The public About page shows both, and the same words are in the setup document the
+// owner reads from (docs/text-message-setup.md). Change them in both places together;
+// src/lib/consent.test.ts fails if they differ.
 
 /**
  * The consent script. `site` is the app's address without "https://", such as "example.com".
@@ -22,7 +22,7 @@ export function consentScript(site: string): { ask: string[]; afterYes: string }
 
 /**
  * The first text Susan gets, sent once after she agrees. It is the only text that carries the
- * opt-out wording: Twilio's Messaging Policy requires it in the first message, not in every one.
+ * opt-out wording: Textbelt wants it in the first text to a person, and adds its own if it is missing.
  */
 export const CONSENT_CONFIRMATION =
   "Susan's Calendar: You agreed to get text reminders about your appointments. Msg frequency varies. Msg & data rates may apply. Reply HELP for help. Reply STOP to unsubscribe.";

@@ -32,4 +32,5 @@ Twilio will not review the registration until this page is live, and the review 
 - The pack is `docs/twilio-registration-pack.md`. Documentation finding: opt-out wording is required in the first text only, so the wording of Reminders is unchanged and the spec's "Further Notes" now records it as confirmed.
 - The record of consent is a form in the pack that the owner fills in and keeps privately. This repository is public, so the filled-in record is not committed.
 - Ticket 18's checklist now sends the confirmation text before the test text, because Twilio requires opt-out wording in the first message.
+- **Since replaced (19 November 2026).** ADR 0002 moved texts from Twilio to Textbelt, which needs no registration. `docs/twilio-registration-pack.md` was removed; the consent script, the record of consent and the Confirmation text moved to `docs/text-message-setup.md`. The Public pages stay, with Textbelt named in the privacy policy.
 - **For the owner:** the documentation check found that Twilio may refuse this use altogether (error 30532, September 2026). The pack opens with it, ticket 05 points to it, and the spec's "Further Notes" lists it as open.
