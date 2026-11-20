@@ -25,5 +25,5 @@
 - [x] The sidebar is narrower, shows the Replies count at the end of its row, and names the signed-in person beside their initial.
 - [x] The detail panel uses small headings ("Reminders", "What Susan will read", "Private notes") as the mockup does, shows a text's words as a message bubble, and has Edit beside Cancel Appointment at its foot, with Delete Appointment beneath.
 - [x] A text's badge is green once it has gone, red when it needs looking into, and amber while it waits.
-- [x] The app keeps its own scale: 18px type and controls at least 52px tall. The mockups' type is smaller.
+- [x] The app keeps its own scale: 18px type and controls at least 52px tall. The mockups' type is smaller. (Since changed: the app is 16px with 44px controls, and this scale is Larger text in Settings. See the spec, "Screens".)
 - [x] Every screen was looked at beside its mockup at phone and desktop width, light and dark.

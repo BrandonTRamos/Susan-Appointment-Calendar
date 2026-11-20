@@ -1,5 +1,10 @@
-/* Hand-built styles: no component library. Type is large and controls are plain throughout, for
-   Susan as much as anyone; there is no separate simplified mode.
+/* Hand-built styles: no component library. Controls are plain throughout.
+
+   Type and controls are a usual size: 16px type (1rem) and controls at least 44px tall
+   (--control). Larger text, chosen in Settings for the device in hand (src/lib/textSize.ts), sets
+   data-text-size="larger" on the page's root, which makes them 18px and 52px. So that everything
+   follows it, write every font size, and every width that has to hold words, in rem, and every
+   control's height with --control; never in px.
 
    Colours follow the mockups in docs/design: a blue accent on near-black, with a light appearance
    made to match. Dark appearance follows the device. */
@@ -32,12 +37,21 @@
   --shadow: 0 1px 2px rgba(16, 20, 30, 0.04), 0 4px 16px rgba(16, 20, 30, 0.05);
   --radius: 16px;
   --radius-control: 12px;
+  /* The least height of anything a person taps or types into. */
+  --control: 44px;
   /* The floating phone tab bar and its clearance from the bottom edge. */
-  --tabbar: 76px;
+  --tabbar: 64px;
   --tabbar-gap: max(12px, calc(env(safe-area-inset-bottom) - 6px));
   /* Room taken at the top by "A new version is available"; none unless it is showing. */
   --update-banner: 0px;
   color-scheme: light;
+}
+
+/* Larger text (Settings): everything set in rem grows by an eighth, and controls with it. */
+:root[data-text-size='larger'] {
+  font-size: 112.5%;
+  --control: 52px;
+  --tabbar: 76px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -71,13 +85,19 @@
   box-sizing: border-box;
 }
 
+/* The browser's own text size, usually 16px, which a person may have set larger themselves. */
+html {
+  font-size: 100%;
+}
 html,
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
+}
+body {
   font:
-    18px/1.5 system-ui,
+    1rem/1.5 system-ui,
     -apple-system,
     'Segoe UI',
     Roboto,
@@ -102,14 +122,14 @@ a {
 }
 
 h1 {
-  font-size: 32px;
+  font-size: 1.75rem;
   font-weight: 700;
   line-height: 1.2;
   letter-spacing: -0.015em;
   margin: 0;
 }
 h2 {
-  font-size: 21px;
+  font-size: 1.1875rem;
   font-weight: 700;
   line-height: 1.3;
   margin: 0;
@@ -162,7 +182,7 @@ p {
 .next-reminders > .muted,
 .text-preview > .muted {
   color: var(--muted);
-  font-size: 14px;
+  font-size: 0.75rem;
   font-weight: 700;
   line-height: 1.4;
   letter-spacing: 0.08em;
@@ -175,7 +195,7 @@ p {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: 52px;
+  min-height: var(--control);
   padding: 10px 20px;
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
@@ -226,14 +246,14 @@ p {
 /* A round button holding only an icon, such as New Appointment on a phone. */
 .btn-round {
   flex: none;
-  width: 52px;
-  height: 52px;
+  width: var(--control);
+  height: var(--control);
   padding: 0;
   border-radius: 99px;
 }
 /* A square button holding only an icon, such as Previous month. */
 .btn-icon {
-  width: 52px;
+  width: var(--control);
   padding: 0;
 }
 /* Buttons that belong together, side by side where there is room. */
@@ -255,7 +275,7 @@ p {
 }
 /* Room for the name of the app, or of a month, beside New Appointment. */
 .app.phone h1 {
-  font-size: 28px;
+  font-size: 1.5625rem;
 }
 .tabbar {
   position: fixed;
@@ -285,7 +305,7 @@ p {
   justify-content: center;
   gap: 3px;
   border-radius: 999px;
-  font-size: 14px;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--muted);
   text-decoration: none;
@@ -326,7 +346,7 @@ p {
   align-items: center;
   gap: 12px;
   padding: 0 8px;
-  font-size: 18px;
+  font-size: 1rem;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -350,7 +370,7 @@ p {
   display: flex;
   align-items: center;
   gap: 12px;
-  min-height: 52px;
+  min-height: var(--control);
   padding: 10px 12px;
   border-radius: var(--radius-control);
   font-weight: 500;
@@ -388,11 +408,11 @@ p {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 2.25rem;
+  height: 2.25rem;
   border-radius: 99px;
   background: var(--surface-2);
-  font-size: 16px;
+  font-size: 0.875rem;
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -423,7 +443,7 @@ p {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  min-height: 52px;
+  min-height: var(--control);
 }
 .page-head h1,
 .page-head h2 {
@@ -438,7 +458,7 @@ p {
   flex-wrap: wrap;
 }
 .detail .page-head h2 {
-  font-size: 26px;
+  font-size: 1.4375rem;
   line-height: 1.2;
   letter-spacing: -0.01em;
 }
@@ -447,7 +467,7 @@ p {
   align-items: center;
   align-self: flex-start;
   gap: 4px;
-  min-height: 52px;
+  min-height: var(--control);
   margin: -10px 0 -12px -6px;
   font-weight: 600;
   text-decoration: none;
@@ -464,7 +484,7 @@ p {
   flex-direction: column;
   align-items: flex-start;
   gap: 16px;
-  font-size: 20px;
+  font-size: 1.125rem;
 }
 
 .next-card {
@@ -485,12 +505,12 @@ p {
 .next-day {
   white-space: nowrap;
   color: var(--accent-ink);
-  font-size: 17px;
+  font-size: 0.9375rem;
   font-weight: 700;
 }
 .next-time {
   white-space: nowrap;
-  font-size: 44px;
+  font-size: 2.5rem;
   font-weight: 700;
   line-height: 1.1;
   letter-spacing: -0.02em;
@@ -503,7 +523,7 @@ p {
   overflow-wrap: anywhere;
 }
 .next-title {
-  font-size: 23px;
+  font-size: 1.25rem;
   font-weight: 700;
   line-height: 1.25;
 }
@@ -537,7 +557,7 @@ p {
   gap: 10px;
 }
 .next-reminders li {
-  font-size: 17px;
+  font-size: 0.9375rem;
 }
 .next-reminders li::before,
 .reminder-count::before {
@@ -576,7 +596,7 @@ p {
   margin-right: 57px;
 }
 .app.desktop .next-what {
-  flex: 1 1 280px;
+  flex: 1 1 15.5rem;
   margin-left: -29px;
   padding-left: 28px;
   border-left: 1px solid var(--accent-line);
@@ -592,7 +612,7 @@ p {
 .later-row {
   display: grid;
   align-items: center;
-  min-height: 52px;
+  min-height: var(--control);
   color: var(--text);
   text-decoration: none;
 }
@@ -604,7 +624,7 @@ p {
   min-width: 0;
 }
 .row-main .row-what {
-  flex: 1 1 180px;
+  flex: 1 1 10rem;
 }
 .row-what {
   display: flex;
@@ -613,12 +633,12 @@ p {
   overflow-wrap: anywhere;
 }
 .row-what strong {
-  font-size: 20px;
+  font-size: 1.125rem;
   font-weight: 700;
   line-height: 1.3;
 }
 .later-row .time {
-  flex: 0 0 96px;
+  flex: 0 0 5.5rem;
   white-space: nowrap;
   font-weight: 600;
 }
@@ -631,7 +651,7 @@ p {
   border-top: 1px solid var(--border);
 }
 .app.phone .later-row {
-  grid-template-columns: 96px minmax(0, 1fr);
+  grid-template-columns: 5.5rem minmax(0, 1fr);
   align-items: start;
   gap: 14px;
   padding: 14px 0;
@@ -642,7 +662,7 @@ p {
   gap: 0 5px;
   padding-top: 3px;
   color: var(--muted);
-  font-size: 16px;
+  font-size: 0.875rem;
   font-weight: 500;
 }
 .app.phone .date-block .month {
@@ -672,13 +692,13 @@ p {
 }
 /* Wide enough for the time beside a short name; in a narrow column the count goes beneath. */
 .app.desktop .row-main {
-  flex: 1 1 260px;
+  flex: 1 1 14.5rem;
 }
 .app.desktop .row-main .row-what {
-  flex-basis: 140px;
+  flex-basis: 7.75rem;
 }
 .app.desktop .date-block {
-  flex: 0 0 52px;
+  flex: 0 0 2.875rem;
   flex-direction: column;
   align-items: center;
   line-height: 1.15;
@@ -686,13 +706,13 @@ p {
 .app.desktop .date-block .weekday,
 .app.desktop .date-block .month {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.6875rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
 .app.desktop .date-block .day {
-  font-size: 26px;
+  font-size: 1.4375rem;
   font-weight: 700;
 }
 .app.desktop .later-row .reminder-count {
@@ -703,7 +723,7 @@ p {
   padding: 4px 14px 4px 12px;
   border-radius: 99px;
   background: var(--notice-soft);
-  font-size: 15px;
+  font-size: 0.8125rem;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -751,7 +771,7 @@ p {
 .month-grid th {
   padding: 4px 0 8px;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 0.75rem;
   font-weight: 700;
 }
 .month-grid abbr {
@@ -772,8 +792,8 @@ p {
   align-items: center;
   justify-content: center;
   width: 100%;
-  max-width: 52px;
-  height: 52px;
+  max-width: var(--control);
+  height: var(--control);
   margin: 0 auto;
   padding: 0;
   border: 2px solid transparent;
@@ -823,14 +843,14 @@ p {
 }
 .app.desktop .month-grid th {
   padding: 12px 12px;
-  font-size: 13px;
+  font-size: 0.6875rem;
   text-align: left;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   border-bottom: 1px solid var(--border);
 }
 .app.desktop .month-grid td {
-  height: 122px;
+  height: 6.75rem;
   padding: 6px 4px 8px;
   border-top: 1px solid var(--border);
 }
@@ -844,10 +864,10 @@ p {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 32px;
-  height: 32px;
+  min-width: 2rem;
+  height: 2rem;
   margin: 0 0 4px 2px;
-  font-size: 16px;
+  font-size: 0.875rem;
   font-weight: 600;
 }
 .app.desktop .month-grid td[aria-current='date'] .day {
@@ -872,7 +892,7 @@ p {
   border-radius: 8px;
   background: var(--accent-soft);
   color: var(--text);
-  font-size: 14px;
+  font-size: 0.75rem;
   line-height: 1.3;
   text-decoration: none;
   overflow-wrap: break-word;
@@ -911,7 +931,7 @@ p {
   color: var(--text);
 }
 .chip-state {
-  font-size: 13px;
+  font-size: 0.6875rem;
   font-weight: 700;
 }
 .chip .repeat-icon {
@@ -925,7 +945,7 @@ p {
   background: none;
   color: var(--accent-ink);
   font: inherit;
-  font-size: 15px;
+  font-size: 0.8125rem;
   font-weight: 700;
   cursor: pointer;
 }
@@ -943,7 +963,7 @@ p {
   border-bottom: 1px solid var(--border);
 }
 .day-group h2 {
-  font-size: 18px;
+  font-size: 1rem;
 }
 .day-group h2 .muted {
   margin-left: 6px;
@@ -959,9 +979,9 @@ p {
 }
 .day-row {
   display: grid;
-  grid-template-columns: 88px minmax(0, 1fr);
+  grid-template-columns: 5rem minmax(0, 1fr);
   gap: 12px;
-  min-height: 52px;
+  min-height: var(--control);
   padding: 6px 0;
   color: var(--text);
   text-decoration: none;
@@ -979,7 +999,7 @@ p {
   text-decoration: line-through;
 }
 .day-row .reminder-count {
-  font-size: 16px;
+  font-size: 0.875rem;
 }
 .day-row .badge {
   margin-top: 4px;
@@ -1009,7 +1029,7 @@ p {
   border-radius: 99px;
   background: var(--notice-soft);
   color: var(--text);
-  font-size: 15px;
+  font-size: 0.8125rem;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -1060,7 +1080,7 @@ p {
 }
 .details dd .muted {
   display: block;
-  font-size: 16px;
+  font-size: 0.875rem;
 }
 /* Notes keep the line breaks they were typed with. */
 .details .words {
@@ -1079,7 +1099,7 @@ p {
 /* Edit beside Cancel Appointment where both fit on a line, with Delete Appointment beneath. */
 .detail-actions .btn {
   flex: 1 1 auto;
-  min-width: 84px;
+  min-width: 4.75rem;
   padding-inline: 12px;
   white-space: nowrap;
 }
@@ -1090,7 +1110,7 @@ p {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  font-size: 15px;
+  font-size: 0.8125rem;
 }
 .confirm {
   display: flex;
@@ -1124,14 +1144,14 @@ p {
   min-width: 0;
 }
 .field label {
-  font-size: 17px;
+  font-size: 0.9375rem;
   font-weight: 600;
 }
 .field input,
 .field select,
 .field textarea {
   width: 100%;
-  min-height: 52px;
+  min-height: var(--control);
   padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
@@ -1161,12 +1181,12 @@ p {
 }
 .field .hint,
 .hint {
-  font-size: 16px;
+  font-size: 0.875rem;
 }
 /* Two short fields that belong together sit side by side where there is room. */
 .field-pair {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(8.25rem, 1fr));
   align-items: start;
   gap: 18px 14px;
 }
@@ -1243,7 +1263,7 @@ p {
   padding: 12px 16px;
   border-radius: 16px;
   background: var(--surface-2);
-  font-size: 17px;
+  font-size: 0.9375rem;
   line-height: 1.45;
 }
 .text-preview .quoted,
@@ -1254,6 +1274,23 @@ p.quoted {
 }
 
 /* ---------- settings ---------- */
+/* A set of round options, such as Text size. */
+.choices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.choice input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+.choice .muted {
+  display: block;
+  font-size: 0.875rem;
+}
 .settings-section {
   display: flex;
   flex-direction: column;
@@ -1282,7 +1319,7 @@ p.quoted {
 }
 .about {
   padding: 0 4px;
-  font-size: 15px;
+  font-size: 0.8125rem;
 }
 
 /* ---------- notices ---------- */
@@ -1291,7 +1328,7 @@ p.quoted {
   padding: calc(env(safe-area-inset-top) + 8px) 20px 8px;
   background: var(--notice-soft);
   color: var(--notice-ink);
-  font-size: 15px;
+  font-size: 0.8125rem;
   font-weight: 600;
   text-align: center;
 }
@@ -1354,7 +1391,7 @@ p.quoted {
   font-weight: 600;
 }
 .update-banner button {
-  min-height: 52px;
+  min-height: var(--control);
   border: 2px solid currentColor;
   background: none;
   color: inherit;
@@ -1364,7 +1401,7 @@ p.quoted {
   cursor: pointer;
 }
 body.has-update {
-  --update-banner: calc(env(safe-area-inset-top) + 72px);
+  --update-banner: calc(env(safe-area-inset-top) + var(--control) + 20px);
 }
 body.has-update .app,
 body.has-update .public {
@@ -1414,7 +1451,7 @@ body.has-update .public {
 }
 .public-head .brand {
   display: inline-flex;
-  min-height: 52px;
+  min-height: var(--control);
   padding: 0;
   color: var(--text);
   text-decoration: none;
@@ -1454,7 +1491,7 @@ body.has-update .public {
 .public-foot a {
   display: inline-flex;
   align-items: center;
-  min-height: 52px;
+  min-height: var(--control);
   font-weight: 600;
 }
 
@@ -1464,9 +1501,9 @@ body.has-update .public {
   flex-direction: column;
   gap: 12px;
 }
+/* No smaller than other fields: an iPhone zooms in on a field whose type is under 16px. */
 .subscription-link input {
   font-family: ui-monospace, monospace;
-  font-size: 16px;
 }
 
 /* A person's agent keys, by name, each with a way to revoke it. */
@@ -1487,7 +1524,7 @@ body.has-update .public {
 }
 .agent-keys li p {
   margin: 0;
-  font-size: 16px;
+  font-size: 0.875rem;
 }
 .agent-keys .btn {
   flex: none;
@@ -1507,7 +1544,7 @@ body.has-update .public {
   align-items: center;
   gap: 6px;
   color: var(--muted);
-  font-size: 16px;
+  font-size: 0.875rem;
   font-weight: 500;
 }
 .repeats svg {
@@ -1516,7 +1553,7 @@ body.has-update .public {
 /* The form's Repeats section: the days of the week a Series falls on. */
 .weekdays {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(8.25rem, 1fr));
   gap: 0 18px;
   margin: 0;
   padding: 0;
@@ -1527,18 +1564,22 @@ body.has-update .public {
   width: 100%;
   margin-bottom: 4px;
   padding: 0;
-  font-size: 17px;
+  font-size: 0.9375rem;
   font-weight: 600;
 }
-.weekday-choice {
+/* One of a set of choices: a checkbox or a round option, then its words. */
+.weekday-choice,
+.choice {
   display: flex;
   align-items: center;
   gap: 12px;
-  min-height: 52px;
+  min-height: var(--control);
 }
-.weekday-choice input {
-  width: 24px;
-  height: 24px;
+.weekday-choice input,
+.choice input {
+  flex: none;
+  width: 1.375rem;
+  height: 1.375rem;
   margin: 0;
   accent-color: var(--accent);
 }
@@ -1575,15 +1616,15 @@ body.has-update .public {
 }
 /* How many Replies the person has not yet seen. */
 .tab-count {
-  min-width: 24px;
-  height: 24px;
+  min-width: 1.5rem;
+  height: 1.5rem;
   padding: 0 7px;
-  border-radius: 12px;
+  border-radius: 99px;
   background: var(--accent);
   color: var(--accent-text);
-  font-size: 14px;
+  font-size: 0.75rem;
   font-weight: 700;
-  line-height: 24px;
+  line-height: 1.5rem;
   text-align: center;
 }
 /* In the sidebar it ends the row; in the phone's tab bar it sits on the icon's corner. */
@@ -1594,12 +1635,12 @@ body.has-update .public {
   position: absolute;
   top: -8px;
   left: 14px;
-  min-width: 20px;
-  height: 20px;
+  min-width: 1.25rem;
+  height: 1.25rem;
   padding: 0 5px;
   box-shadow: 0 0 0 2px var(--surface);
-  font-size: 12px;
-  line-height: 20px;
+  font-size: 0.6875rem;
+  line-height: 1.25rem;
 }
 .visually-hidden {
   position: absolute;
@@ -1641,7 +1682,7 @@ body.has-update .public {
 .reply .reply-words {
   align-self: flex-start;
   max-width: 100%;
-  font-size: 19px;
+  font-size: 1.0625rem;
 }
 .reply-answer {
   display: flex;
@@ -1650,5 +1691,5 @@ body.has-update .public {
 }
 .reply-answer .muted,
 .reply > .muted {
-  font-size: 16px;
+  font-size: 0.875rem;
 }

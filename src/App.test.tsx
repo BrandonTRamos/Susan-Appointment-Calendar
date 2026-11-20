@@ -120,12 +120,13 @@ describe('tabs and their URLs', () => {
 });
 
 describe('Settings', () => {
-  it('has four separate sections for later work to fill in', () => {
+  it('has a separate section for each part', () => {
     renderApp('/settings');
     const sections = screen.getAllByRole('region');
     expect(sections.map((section) => section.getAttribute('aria-label'))).toEqual([
       "Susan's phone and contact",
       'App notifications',
+      'Text size',
       'Calendar subscription',
       'Agent keys',
     ]);

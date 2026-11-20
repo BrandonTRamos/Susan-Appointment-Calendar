@@ -6,6 +6,7 @@ import { AgentKeys } from './settings/AgentKeys';
 import { AppNotifications } from './settings/AppNotifications';
 import { CalendarSubscription } from './settings/CalendarSubscription';
 import { SusansPhoneAndContact } from './settings/SusansPhoneAndContact';
+import { TextSize } from './settings/TextSize';
 
 export function Settings({
   displayName,
@@ -18,6 +19,7 @@ export function Settings({
     <Page title="Settings">
       <SusansPhoneAndContact />
       <AppNotifications devices={devices} />
+      <TextSize />
       <CalendarSubscription />
       <AgentKeys />
 
