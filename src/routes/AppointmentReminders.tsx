@@ -4,6 +4,7 @@ import { TextStatus } from '../components/TextStatus';
 import { useInPanel } from '../components/Page';
 import {
   describeReminder,
+  holdsWebAddress,
   isOvernight,
   REMINDER_UNITS,
   reminderDue,
@@ -20,7 +21,7 @@ import {
   type Text,
 } from '../lib/calendar';
 import { formatMoment, isDate, isTime, momentOf } from '../lib/localTime';
-import { planStatus, textStatus } from '../lib/textStatus';
+import { planStatus, textStatus, WEB_ADDRESS_WARNING, webAddressStatus } from '../lib/textStatus';
 
 // An Appointment's Reminders: the part of the form that sets them, and the part of the detail that
 // shows them. Kept apart from the form and the detail so that each can change without the other.
@@ -342,12 +343,16 @@ function Warnings({
   );
 }
 
-/** The exact words Susan will read. */
+/**
+ * The exact words Susan will read, and a warning when they hold a web address: such a text is not
+ * sent (src/lib/calendar/webAddress.ts). The words are shown as they are; nothing is changed.
+ */
 function Preview({ words }: { words: string }) {
   return (
     <div className="text-preview">
       <p className="muted">What Susan will read</p>
       <p className="quoted">{words}</p>
+      {holdsWebAddress(words) && <p className="warning">{WEB_ADDRESS_WARNING}</p>}
     </div>
   );
 }
@@ -424,9 +429,10 @@ function ReminderStatus({
   timeZone: string;
 }) {
   const standing = reminderStanding(appointment, reminder, texts, now);
-  return (
-    <TextStatus
-      status={'text' in standing ? textStatus(standing.text, timeZone) : planStatus(standing.plan)}
-    />
-  );
+  if ('text' in standing) return <TextStatus status={textStatus(standing.text, timeZone)} />;
+  // One still to go whose words hold a web address will not be sent when its time comes.
+  const toGo = standing.plan === 'later' || standing.plan === 'send';
+  const blocked =
+    toGo && holdsWebAddress(wordsFor(appointment, new Date(reminder.dueAt), timeZone));
+  return <TextStatus status={blocked ? webAddressStatus() : planStatus(standing.plan)} />;
 }

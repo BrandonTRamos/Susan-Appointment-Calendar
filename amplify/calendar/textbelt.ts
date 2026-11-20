@@ -30,8 +30,14 @@ export interface TextbeltOptions {
   key: string;
   /** How requests are made; a test hands in a stand-in that answers with recorded examples. */
   fetch?: typeof fetch;
-  /** How long a request may take before nobody can tell what became of it. */
+  /** How long a send may take before nobody can tell whether it went. */
   timeoutMs?: number;
+  /**
+   * How long a question about a text's status may take. Shorter than a send: the scheduled run asks
+   * a few at a time (STATUS_READS_AT_ONCE) and must end within its minute, and a status not read
+   * now is asked for again on the next run.
+   */
+  statusTimeoutMs?: number;
 }
 
 /**
@@ -49,12 +55,13 @@ export function textbeltSender({
   key,
   fetch: request = fetch,
   timeoutMs = 10_000,
+  statusTimeoutMs = 5_000,
 }: TextbeltOptions): TextSender {
   /** Textbelt's answer to a request, read as JSON; null when there was none worth reading. */
-  async function answer(what: string, url: string, init: RequestInit = {}) {
+  async function answer(what: string, url: string, waitMs: number, init: RequestInit = {}) {
     let response: Response;
     try {
-      response = await request(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+      response = await request(url, { ...init, signal: AbortSignal.timeout(waitMs) });
     } catch (error) {
       throw failed(what, error);
     }
@@ -72,12 +79,14 @@ export function textbeltSender({
       // Kept as '+1' and ten digits; Textbelt takes the ten digits of a US number.
       const phone = /^\+1(\d{10})$/.exec(to)?.[1];
       if (!phone) return { sent: false };
-      const { status, body } = await answer('send', `${TEXTBELT}/text`, {
+      const { body } = await answer('send', `${TEXTBELT}/text`, timeoutMs, {
         method: 'POST',
         body: new URLSearchParams({ phone, message: words, key }),
       });
-      // A clear yes or no, whatever the HTTP status. Anything else, such as a server error or an
-      // answer cut off, cannot say whether the text went: it is tried again.
+      // Textbelt's own yes or no, whatever the HTTP status: `success: false` is a refusal, such as
+      // "Out of quota", and the text certainly did not go. Anything that is not Textbelt's answer,
+      // such as a gateway's error page or an answer cut off, cannot say whether it went: it is
+      // tried again.
       if (body?.success === true) {
         const { textId, quotaRemaining } = body;
         const reference =
@@ -86,8 +95,7 @@ export function textbeltSender({
             : null;
         return { sent: true, reference, creditLeft: credit(quotaRemaining) };
       }
-      if (body?.success === false && status < 500)
-        return { sent: false, creditLeft: credit(body.quotaRemaining) };
+      if (body?.success === false) return { sent: false, creditLeft: credit(body.quotaRemaining) };
       throw failed('send');
     },
 
@@ -95,6 +103,7 @@ export function textbeltSender({
       const { ok, body } = await answer(
         'status',
         `${TEXTBELT}/status/${encodeURIComponent(reference)}`,
+        statusTimeoutMs,
       );
       const status = body?.status;
       if (!ok || typeof status !== 'string') throw failed('status');

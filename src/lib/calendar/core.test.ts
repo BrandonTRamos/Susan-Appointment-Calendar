@@ -19,6 +19,8 @@ import {
   type TextKind,
   holdsWebAddress,
   NO_TEXT_SENDER,
+  STATUS_READS_AT_ONCE,
+  TEXT_KINDS,
   TEST_TEXT_WORDS,
 } from './index';
 
@@ -2670,6 +2672,100 @@ describe('delivery status', () => {
     vi.restoreAllMocks();
   });
 
+  it('asks about the other texts while one answer is slow, and records each as it comes', async () => {
+    const store = createMemoryStore();
+    const clock = createFixedClock('2026-11-19T20:00:00.000Z');
+    const sender = createStandInSender({ reportsDelivery: true });
+    const core = createCalendarCore({
+      store,
+      clock,
+      messenger: createMemoryMessenger(ADMINS),
+      textSender: sender,
+      timeZone: EASTERN,
+    });
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    for (const what of ['Eye exam', 'Blood draw', 'Hair', 'Flu shot'])
+      await core.addAppointment(linda, { ...checkUp, what });
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    // The oldest text's answer is slow; the others are delivered.
+    sender.holdReports('stand-in-1');
+    for (const reference of ['stand-in-2', 'stand-in-3', 'stand-in-4'])
+      sender.report(reference, 'delivered');
+    clock.set('2026-11-19T23:01:00.000Z');
+    let finished = false;
+    const run = core.runDue().then((done) => {
+      finished = true;
+      return done;
+    });
+    await vi.waitFor(() =>
+      expect(store.texts().filter((text) => text.status === 'delivered')).toHaveLength(3),
+    );
+    expect(finished).toBe(false);
+    expect(store.texts().find((text) => text.reference === 'stand-in-1')?.status).toBe('sent');
+    sender.report('stand-in-1', 'delivered');
+    sender.releaseReports();
+    expect(await run).toHaveLength(4);
+    expect(store.texts().every((text) => text.status === 'delivered')).toBe(true);
+  });
+
+  it(`asks about no more than ${STATUS_READS_AT_ONCE} texts at once, the oldest first`, async () => {
+    const store = createMemoryStore();
+    const clock = createFixedClock('2026-11-19T20:00:00.000Z');
+    const sender = createStandInSender({ reportsDelivery: true });
+    const core = createCalendarCore({
+      store,
+      clock,
+      messenger: createMemoryMessenger(ADMINS),
+      textSender: sender,
+      timeZone: EASTERN,
+    });
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    for (let n = 0; n < 6; n += 1) {
+      clock.set(`2026-11-19T22:0${n}:00.000Z`);
+      await core.sendTestText(mark);
+    }
+    sender.holdReports();
+    clock.set('2026-11-19T22:10:00.000Z');
+    const run = core.runDue();
+    await vi.waitFor(() => expect(sender.asked()).toHaveLength(STATUS_READS_AT_ONCE));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sender.asked()).toEqual(['stand-in-1', 'stand-in-2', 'stand-in-3', 'stand-in-4']);
+    sender.releaseReports();
+    await run;
+    expect(sender.asked()).toHaveLength(6);
+  });
+
+  it('sends every due text, one at a time, before asking about any', async () => {
+    const { core, clock, sender, store } = await tracked();
+    let sending = 0;
+    let most = 0;
+    const watched = createCalendarCore({
+      store,
+      clock,
+      messenger: createMemoryMessenger(ADMINS),
+      timeZone: EASTERN,
+      textSender: {
+        async send(text) {
+          sending += 1;
+          most = Math.max(most, sending);
+          expect(sender.asked()).toEqual([]);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          sending -= 1;
+          return sender.send(text);
+        },
+        delivery: sender.delivery,
+      },
+    });
+    for (const what of ['Eye exam', 'Blood draw', 'Hair'])
+      await core.addAppointment(linda, { what, date: '2026-11-20', time: '09:00' });
+    clock.set('2026-11-20T13:00:00.000Z'); // 8:00 am: the three new ones' Reminders are overdue
+    await watched.runDue();
+    expect(sender.taken()).toHaveLength(4);
+    expect(most).toBe(1);
+    expect(sender.asked()).toContain('stand-in-1');
+  });
+
   it('asks about a test text too, so Settings shows it delivered', async () => {
     const { core, store, sender, runAt } = await tracked();
     const test = await core.sendTestText(mark);
@@ -2741,24 +2837,43 @@ describe('web addresses', () => {
   const ADDRESSES = [
     'https://portal.example.com/visit',
     'http://example.org',
+    'ftp://files.example.net',
     'www.example.com',
+    'WWW.EXAMPLE.COM',
     'example.com/checkin',
+    'example.xyz',
+    'example.de',
+    'portal.example.co.uk',
     'clinic.example.health',
+    'EXAMPLE.COM',
+    'example.online/booking',
+    'example.xn--p1ai',
     'front-desk@example.com',
+    'nurse@clinic.example.fr',
   ];
 
-  it('are found however they are written, and ordinary words are not taken for one', () => {
-    for (const address of ADDRESSES) expect(holdsWebAddress(`See ${address} first.`)).toBe(true);
+  it('are found however they are written, with any recognized ending', () => {
+    for (const address of ADDRESSES) {
+      expect(holdsWebAddress(`See ${address} first.`), address).toBe(true);
+      expect(holdsWebAddress(address), address).toBe(true);
+    }
+  });
+
+  it('are not ordinary punctuation, abbreviations, times or doses', () => {
     for (const words of [
       "Susan's Calendar: Cardiology check-up with Dr. Patel, tomorrow at 2:00 pm.",
       'Smith & Co. Dental, 12 St. James St. Suite 4',
       'Bring your list of medicines.Then wait.',
-      'Pickup at 1:15 p.m., e.g. by the door.',
+      'Pickup at 1:15 p.m., e.g. by the door, i.e. the front.',
+      'Arrive at 10.am and take 2.5mg with food.',
+      'Ask for Mr.Li or Dr.Ng at the desk.',
+      'U.S. Route 1, Apt.4B, No. 5',
+      TEST_TEXT_WORDS,
     ])
-      expect(holdsWebAddress(words)).toBe(false);
+      expect(holdsWebAddress(words), words).toBe(false);
   });
 
-  it('are refused in every detail a text carries, and allowed in the Private notes', async () => {
+  it('are kept as they were written: saving an Appointment or a contact is never refused', async () => {
     const { core, store } = calendar();
     const carried = [
       'what',
@@ -2767,49 +2882,99 @@ describe('web addresses', () => {
       'placeAddress',
       'driverName',
       'noteForSusan',
+      'privateNotes',
     ] as const;
     for (const detail of carried) {
-      const refusal = await refused(
-        core.addAppointment(linda, { ...checkUp, [detail]: 'See www.example.com' }),
-        'invalid',
-      );
-      expect(refusal.detail).toBe(detail);
-      expect(refusal.message).toMatch(/web address/);
+      const added = await core.addAppointment(linda, {
+        ...checkUp,
+        [detail]: 'See www.example.com',
+      });
+      expect(added[detail]).toBe('See www.example.com');
     }
-    expect(store.appointments()).toEqual([]);
-    const added = await core.addAppointment(linda, {
-      ...checkUp,
-      privateNotes: 'Portal: https://portal.example.com',
-    });
-    await refused(
-      core.changeAppointment(linda, added.id, { noteForSusan: 'Check in at example.com' }),
-      'invalid',
-    );
+    expect(store.appointments()).toHaveLength(carried.length);
+    const changed = await core.changeSettings(linda, { contactName: 'Linda, www.example.com' });
+    expect(changed.contactName).toBe('Linda, www.example.com');
   });
 
-  it('are refused in the name the automatic answer tells Susan to call', async () => {
-    const { core } = calendar();
-    const refusal = await refused(
-      core.changeSettings(linda, { contactName: 'Linda, www.example.com' }),
-      'invalid',
-    );
-    expect(refusal.detail).toBe('contactName');
-  });
-
-  it('are never sent: a text that would hold one, from before the rule, is not sent', async () => {
+  it('keep a Reminder from being sent, and it says why, while the Appointment is kept', async () => {
     const { core, clock, sender, store } = calendar();
     await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
-    const added = await core.addAppointment(linda, checkUp);
-    // Kept before the calendar refused web addresses.
-    await store.replaceAppointment({ ...added, noteForSusan: 'Check in at www.example.com.' });
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      noteForSusan: 'Check in at www.example.com.',
+    });
     clock.set('2026-11-19T23:00:00.000Z');
     await core.runDue();
     expect(sender.taken()).toEqual([]);
-    expect(store.texts()).toMatchObject([{ status: 'notSent', reason: 'webAddress' }]);
+    expect(store.texts()).toMatchObject([{ status: 'notSent', reason: 'webAddress', attempts: 0 }]);
+    // Never tried, so it did not reach her: the Appointment can be deleted, and a corrected note
+    // goes out with the next Reminder.
+    expect(store.appointments()[0].noteForSusan).toBe('Check in at www.example.com.');
+    await core.deleteAppointment(mark, added.id);
   });
 
-  it('are in no text of any kind the calendar sends', async () => {
+  it('are never sent in a text of any kind: each passes the same check before it goes', async () => {
     const { core, clock, sender, store } = calendar();
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    // One text of each kind, with a web address in its words, waiting to be sent, as the run that
+    // claimed it left it. Change notices (ticket 14) and the automatic answer (ticket 17) make
+    // their own words; this checks only that none holding an address is sent, whoever wrote it.
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      noteForSusan: 'Check in at example.de',
+    });
+    const [reminder] = added.reminders;
+    const fixtures: Record<TextKind, { id: string; reminderId: string | null; words: string }> = {
+      reminder: {
+        id: `reminder:${added.id}:${reminder.id}:${reminder.dueAt}`,
+        reminderId: reminder.id,
+        words: "Susan's Calendar: Cardiology check-up. Check in at example.de",
+      },
+      changeNotice: {
+        id: `changeNotice:${added.id}`,
+        reminderId: null,
+        words: "Susan's Calendar: Change: see https://example.com/new-time",
+      },
+      automaticAnswer: {
+        id: `automaticAnswer:${added.id}`,
+        reminderId: null,
+        words: "Susan's Calendar: Nobody reads replies here. Email front-desk@example.xyz",
+      },
+      test: {
+        id: 'test:2026-11-19T22:58:00.000Z',
+        reminderId: null,
+        words: "Susan's Calendar: This is a test text. www.example.com",
+      },
+    };
+    for (const kind of TEXT_KINDS) {
+      const { id, reminderId, words } = fixtures[kind];
+      await store.claimText({
+        id,
+        kind,
+        appointmentId: kind === 'test' ? null : added.id,
+        reminderId,
+        words,
+        dueAt: reminder.dueAt,
+        status: 'waiting',
+        reason: null,
+        attempts: 1,
+        triedAt: '2026-11-19T22:58:00.000Z',
+        sentAt: null,
+        reference: null,
+        creditLeft: null,
+      });
+    }
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    expect(sender.taken()).toEqual([]);
+    expect(store.texts().map((text) => [text.kind, text.status, text.reason])).toEqual(
+      expect.arrayContaining(TEXT_KINDS.map((kind) => [kind, 'failed', 'webAddress'])),
+    );
+    expect(store.texts()).toHaveLength(TEXT_KINDS.length);
+  });
+
+  it('are in none of the texts the calendar writes today', async () => {
+    const { core, clock, sender } = calendar();
     await core.changeSettings(linda, {
       susansNumber: SUSANS_NUMBER,
       contactName: 'Linda',
@@ -2832,18 +2997,7 @@ describe('web addresses', () => {
       clock.set(at);
       await core.runDue();
     }
-    // Every kind of text the calendar has words for. Change notices (ticket 14) and the automatic
-    // answer (ticket 17) join this list as they are built; each kind must appear here.
-    const sent: Record<TextKind, string[]> = {
-      reminder: [],
-      changeNotice: [],
-      automaticAnswer: [],
-      test: [],
-    };
-    for (const text of store.texts()) sent[text.kind].push(text.words);
-    expect(sent.reminder).toHaveLength(3);
-    expect(sent.test).toEqual([TEST_TEXT_WORDS]);
-    for (const words of [...Object.values(sent).flat(), ...sender.taken().map((t) => t.words)])
-      expect(holdsWebAddress(words)).toBe(false);
+    expect(sender.taken()).toHaveLength(4);
+    for (const { words } of sender.taken()) expect(holdsWebAddress(words)).toBe(false);
   });
 });

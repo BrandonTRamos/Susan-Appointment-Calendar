@@ -113,14 +113,20 @@ failed or not sent. The Appointment's screen shows each Reminder's status and ev
   makes it failed, and anything else leaves it sent. A text with no confirmation 30 minutes after it
   was sent is marked failed as "not confirmed delivered", which the app tells apart from a failure
   Textbelt reported. "Delivered" means her phone company accepted it for her phone; the app never
-  says she read it. A text the stand-in recorded is never asked about and stays sent.
-- **Refused sends.** A send Textbelt refuses, such as "Out of quota", is failed at once and not
-  tried again. The credit left on the key, which Textbelt gives with every send, is kept on each
+  says she read it. A text the stand-in recorded is never asked about and stays sent. Texts are
+  sent one at a time; the run then asks about statuses a few at a time, the oldest first, so one
+  slow answer holds up no other.
+- **Refused sends.** A send Textbelt refuses (its answer says `success: false`, such as "Out of
+  quota"), whatever the HTTP status, is failed at once and not tried again. An answer that is not
+  Textbelt's, such as a gateway's error page, cannot say whether the text went, so it is tried
+  again. The credit left on the key, which Textbelt gives with every send, is kept on each
   text's record.
 - **No web addresses.** Textbelt does not send a text holding a web address unless the key has been
-  given leave to. The calendar refuses one in any detail a text carries (what, who with, where, the
-  Driver, the Note for Susan) and in the contact's name; the Private notes can hold one. A text that
-  would hold one is never sent.
+  given leave to. The calendar sends no text whose words hold one (a link, a "www." address, a
+  name such as `example.de`, or an email address), of any kind: it is recorded as not sent, and
+  says why. Nothing typed is refused or changed: a Reminder's preview, in the form and on the
+  Appointment, warns that it will not be sent, and its status says "Will not be sent" until the
+  address is taken out. The Private notes go in no text, so they can hold one.
 - **Settings → Susan's phone and contact** holds Susan's mobile number, and the name and number the
   automatic answer to a Reply will give her. With no number set, nothing is sent, and each Reminder
   that comes due is recorded as not sent. **Send a test text** sends one by the same path and shows

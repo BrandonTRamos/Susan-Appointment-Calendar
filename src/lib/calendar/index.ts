@@ -20,6 +20,7 @@ export type {
 } from './core';
 export * from './reminders';
 export * from './texts';
+export { holdsWebAddress } from './webAddress';
 export {
   createFixedClock,
   createMemoryMessenger,

@@ -113,6 +113,13 @@ export const UNCONFIRMED_AFTER_MINUTES = 30;
 export const UNCONFIRMED_AFTER = UNCONFIRMED_AFTER_MINUTES * 60_000;
 
 /**
+ * How many texts the scheduled run asks the text sender about at once. Each question waits for its
+ * own answer, so one slow answer holds up only its own text, while the run still ends well within
+ * its minute. Sending is never done this way: texts go one at a time.
+ */
+export const STATUS_READS_AT_ONCE = 4;
+
+/**
  * The period before a text counts as not confirmed delivered, in minutes, from the deploy's
  * TEXT_CONFIRMATION_MINUTES: UNCONFIRMED_AFTER_MINUTES when it is not set. Anything but a whole
  * number of minutes up to a week, which is as long as Textbelt keeps a status, fails the deploy.
@@ -127,26 +134,6 @@ export function resolveConfirmationMinutes(configured: string | undefined | null
     );
   return minutes;
 }
-
-/**
- * Whether words hold a web address: a link, a "www." address, a domain such as "example.com", or
- * an email address. No text to Susan may hold one: Textbelt does not send a text with a web
- * address unless the key has been given leave to, and this one has not. The details a text
- * carries are refused when they hold one, and a text that would is never sent.
- */
-export function holdsWebAddress(words: string): boolean {
-  return WEB_ADDRESS.test(words);
-}
-
-const WEB_ADDRESS = new RegExp(
-  [
-    String.raw`\b[a-z][a-z\d+.-]*:\/\/`, // https://, http://, and any other scheme
-    String.raw`\bwww\d?\.`,
-    // A name, a dot and a top-level domain people use, followed by no further letter.
-    String.raw`\b[a-z\d](?:[a-z\d-]*[a-z\d])?\.(?:com|org|net|edu|gov|mil|info|biz|io|co|us|ca|uk|me|ly|app|dev|health|care|clinic|doctor|link|site|online|page)(?![a-z\d])`,
-  ].join('|'),
-  'i',
-);
 
 /** The ID of the text a Reminder sends at the time it is now due. */
 export function reminderTextId(appointment: Pick<Appointment, 'id'>, reminder: Reminder): string {

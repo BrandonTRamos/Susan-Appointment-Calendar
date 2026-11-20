@@ -35,6 +35,7 @@ import type {
   TextSender,
 } from './ports';
 import { reminderDue, reminderWords, STARTING_REMINDER } from './reminders';
+import { holdsWebAddress } from './webAddress';
 import {
   isSubscriptionSecret,
   newSubscriptionSecret,
@@ -42,12 +43,12 @@ import {
   type MadeSubscriptionLink,
 } from './subscription';
 import {
-  holdsWebAddress,
   mayHaveReachedSusan,
   reminderPlan,
   reminderTextId,
   RETRY_AFTER,
   SEND_ATTEMPTS,
+  STATUS_READS_AT_ONCE,
   TEST_TEXT_WORDS,
   testTextId,
   UNCONFIRMED_AFTER,
@@ -177,20 +178,6 @@ export interface CalendarCoreOptions {
   unconfirmedAfter?: number;
 }
 
-/** The details that go into the texts to Susan: none of them may hold a web address. */
-const CARRIED: ReadonlySet<Detail> = new Set<Detail>([
-  'what',
-  'withWhom',
-  'placeName',
-  'placeAddress',
-  'driverName',
-  'noteForSusan',
-]);
-
-/** The words of a refusal of a web address in something a text to Susan would carry. */
-const NO_WEB_ADDRESS = (what: string) =>
-  `Texts to Susan cannot carry a web address, and ${what} would go in them. Take the address out; the Private notes can hold one.`;
-
 /** The details that are words: how long each may be, and whether it may run over several lines. */
 const WORDS: Partial<Record<Detail, { limit: number; lines: boolean }>> = {
   what: { limit: 120, lines: false },
@@ -248,7 +235,6 @@ function tidied(detail: Detail, sent: unknown): string | null {
   ).trim();
   if (tidy.length > words.limit)
     invalid(`Keep ${NAMES[detail]} to ${words.limit} characters or fewer.`, detail);
-  if (CARRIED.has(detail) && holdsWebAddress(tidy)) invalid(NO_WEB_ADDRESS(NAMES[detail]), detail);
   return tidy || null;
 }
 
@@ -328,6 +314,19 @@ function timingOf(sent: unknown, wrong: (message: string) => never): ReminderTim
     default:
       return wrong('It could not be read.');
   }
+}
+
+/** Does `each` for every item, with no more than `atOnce` under way at a time. */
+async function fewAtATime<T>(
+  items: readonly T[],
+  atOnce: number,
+  each: (item: T) => Promise<void>,
+) {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) await each(items[next++]);
+  };
+  await Promise.all(Array.from({ length: Math.min(atOnce, items.length) }, worker));
 }
 
 /** A contact's name: one line, kept short. */
@@ -615,8 +614,6 @@ export function createCalendarCore({
         const name = (value ?? '').replace(UNSEEN, '').replace(/\s+/g, ' ').trim();
         if (name.length > CONTACT_NAME_LIMIT)
           invalid(`Keep the name to ${CONTACT_NAME_LIMIT} characters or fewer.`, 'contactName');
-        // The automatic answer to a Reply names this person (ticket 17).
-        if (holdsWebAddress(name)) invalid(NO_WEB_ADDRESS('the name'), 'contactName');
         next.contactName = name || null;
       }
       const same =
@@ -724,14 +721,19 @@ export function createCalendarCore({
         done.push(await attempt(text, susansNumber, { startsAt: appointment.startsAt, tried: 0 }));
       }
 
-      // Texts sent and not yet settled: what became of each, as the text sender now says.
-      for (const text of texts) {
-        if (text.status !== 'sent' || text.reference === null) continue;
-        const settled = await settle(text, text.reference);
-        if (!settled) continue;
+      // Texts sent and not yet settled: what became of each, as the text sender now says. Only
+      // after every send, which go one at a time; these are asked a few at a time, the oldest
+      // first, and each is recorded as soon as its answer comes, so a slow answer holds up nothing
+      // else and a run cut short keeps what it learned.
+      const unsettled = texts
+        .filter((text) => text.status === 'sent' && text.reference !== null)
+        .sort((a, b) => (a.sentAt ?? a.triedAt).localeCompare(b.sentAt ?? b.triedAt));
+      await fewAtATime(unsettled, STATUS_READS_AT_ONCE, async (text) => {
+        const settled = await settle(text, text.reference!);
+        if (!settled) return;
         await store.replaceText(settled);
         done.push(settled);
-      }
+      });
       return done;
     },
   };
@@ -822,7 +824,8 @@ export function createCalendarCore({
       await store.replaceText(next);
       return next;
     }
-    // Only details kept before web addresses were refused could bring one in.
+    // The one place every text passes before it is sent: none holding a web address goes, of any
+    // kind. The details it came from are left as the person wrote them; the screens say why.
     if (holdsWebAddress(text.words)) {
       next =
         tried === 0

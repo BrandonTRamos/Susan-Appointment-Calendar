@@ -176,6 +176,13 @@ export interface StandInSender extends TextSender {
   /** Every reference it was asked about, in order. */
   asked(): string[];
   /**
+   * From now on, asking about any of these references (or, with none given, any reference) waits,
+   * as a slow answer does, until `releaseReports`.
+   */
+  holdReports(...references: string[]): void;
+  /** Answers every question held back, and holds no more. */
+  releaseReports(): void;
+  /**
    * Says, with each send, that this much credit is left, one less for each text it takes. Until
    * this is called it says nothing about credit.
    */
@@ -192,6 +199,8 @@ export function createStandInSender({
   let refused = 0;
   let brokenReports = 0;
   let credit: number | null = null;
+  let holding: Set<string> | 'all' | null = null;
+  const held: (() => void)[] = [];
   return {
     async send({ to, words }): Promise<SendResult> {
       if (broken > 0) {
@@ -209,6 +218,8 @@ export function createStandInSender({
     },
     async delivery(reference) {
       asked.push(reference);
+      if (holding === 'all' || holding?.has(reference))
+        await new Promise<void>((resolve) => held.push(resolve));
       if (brokenReports > 0) {
         brokenReports -= 1;
         throw new Error('The stand-in sender was told it cannot be reached.');
@@ -229,6 +240,13 @@ export function createStandInSender({
       brokenReports += times;
     },
     asked: () => [...asked],
+    holdReports(...references) {
+      holding = references.length ? new Set(references) : 'all';
+    },
+    releaseReports() {
+      holding = null;
+      for (const release of held.splice(0)) release();
+    },
     haveCredit(next) {
       credit = next;
     },

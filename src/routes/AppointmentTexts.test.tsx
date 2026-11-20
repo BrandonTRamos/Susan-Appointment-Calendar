@@ -116,6 +116,44 @@ describe.each(['phone', 'desktop'] as const)(
       expect(screen.queryByText(/Not confirmed delivered/)).not.toBeInTheDocument();
     });
 
+    it('shows a Reminder whose words hold a web address as one that will not be sent, and why', async () => {
+      const calendar = createSampleCalendar(EASTERN, { empty: true });
+      const added = await calendar.core.addAppointment(linda, {
+        what: 'Eye exam',
+        date: daysFromToday(4),
+        time: '15:30',
+        noteForSusan: 'Check in at www.example.com',
+      });
+      renderApp(`/appointments/${added.id}`, { calendar });
+      expect(await inReminders('Will not be sent')).toBeTruthy();
+      expect(await inReminders(/Its words hold a web address/)).toBeTruthy();
+      expect(
+        await inReminders(/This text holds a web address, so it will not be sent/),
+      ).toBeTruthy();
+      // The words are shown as they are, address and all.
+      expect(await inReminders(/Check in at www\.example\.com/)).toBeTruthy();
+    });
+
+    it('shows a Reminder kept from going for a web address as not sent, and why', async () => {
+      const calendar = createSampleCalendar(EASTERN, { empty: true });
+      const added = await calendar.core.addAppointment(linda, {
+        what: 'Eye exam',
+        date: daysFromToday(4),
+        time: '15:30',
+        noteForSusan: 'Check in at www.example.com',
+      });
+      const text = await sentReminder(calendar, added);
+      await calendar.store.replaceText({
+        ...text,
+        status: 'notSent',
+        reason: 'webAddress',
+        attempts: 0,
+      });
+      renderApp(`/appointments/${added.id}`, { calendar });
+      expect(await inReminders('Not sent')).toBeTruthy();
+      expect(await inReminders(/^Its words held a web address/)).toBeTruthy();
+    });
+
     it('shows a Reminder whose time had passed when it was set as not sent, and why', async () => {
       const calendar = createSampleCalendar(EASTERN, { empty: true });
       const { date, time } = inMinutes(120);

@@ -84,6 +84,26 @@ describe('the Textbelt sender', () => {
     expect(await sender.send({ to: TO, words: WORDS })).toEqual({ sent: false, creditLeft: 0 });
   });
 
+  it('answers a refusal as refused whatever the HTTP status, out of credit included', async () => {
+    const { sender } = textbelt(
+      { status: 402, body: JSON.stringify(RECORDED.outOfQuota) },
+      { status: 500, body: JSON.stringify(RECORDED.outOfQuota) },
+      { status: 503, body: JSON.stringify(RECORDED.incomplete) },
+    );
+    expect(await sender.send({ to: TO, words: WORDS })).toEqual({ sent: false, creditLeft: 0 });
+    expect(await sender.send({ to: TO, words: WORDS })).toEqual({ sent: false, creditLeft: 0 });
+    expect(await sender.send({ to: TO, words: WORDS })).toEqual({ sent: false, creditLeft: null });
+  });
+
+  it("throws on a gateway's answer that is not Textbelt's, so the text is tried again", async () => {
+    const { sender } = textbelt(
+      { status: 502, body: '<html>Bad gateway</html>' },
+      { status: 503, body: '{"message": "Service Unavailable"}' },
+      { status: 504, body: '' },
+    );
+    for (let n = 0; n < 3; n += 1) await thrown(sender.send({ to: TO, words: WORDS }));
+  });
+
   it('answers any other refusal as refused, saying nothing of credit it was not told', async () => {
     const { sender } = textbelt(RECORDED.incomplete, { status: 400, body: '{"success":false}' });
     expect(await sender.send({ to: TO, words: WORDS })).toEqual({ sent: false, creditLeft: null });
@@ -154,6 +174,21 @@ describe("Textbelt's delivery statuses", () => {
   ])('answer %s as %s', async (status, report) => {
     const { sender } = textbelt(RECORDED.status(status));
     expect(await sender.delivery('12345')).toBe(report);
+  });
+
+  it('give up waiting for a slow answer, so the next run asks again', async () => {
+    // A request that never answers, until it is told it has waited too long.
+    const request = (_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) =>
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason)),
+      );
+    const sender = textbeltSender({
+      key: KEY,
+      fetch: request as typeof fetch,
+      statusTimeoutMs: 20,
+    });
+    const error = await thrown(sender.delivery('12345'));
+    expect(failureKind(error)).toBe('timeout');
   });
 
   it('throw, so the next run asks again, when Textbelt cannot be asked', async () => {
