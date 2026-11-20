@@ -64,11 +64,14 @@ describe('on a desktop', () => {
     expect(within(screen.getByRole('banner')).getByText('Linda')).toBeInTheDocument();
   });
 
-  it('opens a page for a new Appointment from the sidebar button', async () => {
+  it('opens the form for a new Appointment in the detail panel from the sidebar button', async () => {
     renderApp();
     await userEvent.click(screen.getByRole('link', { name: 'New Appointment' }));
     expect(window.location.pathname).toBe('/appointments/new');
-    expect(screen.getByRole('heading', { level: 1, name: 'New Appointment' })).toBeInTheDocument();
+    const panel = screen.getByRole('complementary', { name: 'Appointment details' });
+    expect(
+      within(panel).getByRole('heading', { level: 2, name: 'New Appointment' }),
+    ).toBeInTheDocument();
   });
 });
 

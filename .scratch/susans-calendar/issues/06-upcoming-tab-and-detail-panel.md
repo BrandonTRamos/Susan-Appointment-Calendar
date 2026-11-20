@@ -10,15 +10,23 @@ Ticket 04 left a plain form and list. This ticket replaces their layout, not the
 
 **Parallel:** Yes, with 07, 08 and 09. Ticket 07 also touches the Appointment form and the detail (it adds the Reminders section), so whichever of the two lands second should expect a small merge there.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] At phone width, Upcoming leads with a card for the next Appointment showing the day in words ("Today", "Tomorrow", or the weekday and date), the time in large type, what it is, who with and where, and the Driver and pickup time when present.
-- [ ] The card has a place for the Reminders still to be sent. If ticket 07 has landed it is filled; if not, the place is left for 07 to fill.
-- [ ] Later Appointments follow as rows, each starting with its date.
-- [ ] At phone width, opening an Appointment shows its detail as a full screen, and the Appointment form is a full screen.
-- [ ] At desktop width, the detail of the picked Appointment is shown in the right-hand panel, with Edit and Cancel, and who added and last changed it. On arrival the next Appointment is picked. The Appointment form opens in the same panel.
-- [ ] With nothing upcoming, the tab says so plainly and offers to add an Appointment.
-- [ ] Cancelled Appointments are not shown in Upcoming.
-- [ ] Saving an Appointment that overlaps another (treating each as about an hour long) shows a warning naming the other one. The warning does not block saving.
-- [ ] Type is large and controls are plain, in light and dark appearance, and nothing is cramped or stretched at either width.
-- [ ] Screen tests cover the next-Appointment card, the empty state and the overlap warning.
+- [x] At phone width, Upcoming leads with a card for the next Appointment showing the day in words ("Today", "Tomorrow", or the weekday and date), the time in large type, what it is, who with and where, and the Driver and pickup time when present.
+- [x] The card has a place for the Reminders still to be sent. If ticket 07 has landed it is filled; if not, the place is left for 07 to fill.
+- [x] Later Appointments follow as rows, each starting with its date.
+- [x] At phone width, opening an Appointment shows its detail as a full screen, and the Appointment form is a full screen.
+- [x] At desktop width, the detail of the picked Appointment is shown in the right-hand panel, with Edit and Cancel, and who added and last changed it. On arrival the next Appointment is picked. The Appointment form opens in the same panel.
+- [x] With nothing upcoming, the tab says so plainly and offers to add an Appointment.
+- [x] Cancelled Appointments are not shown in Upcoming.
+- [x] Saving an Appointment that overlaps another (treating each as about an hour long) shows a warning naming the other one. The warning does not block saving.
+- [x] Type is large and controls are plain, in light and dark appearance, and nothing is cramped or stretched at either width.
+- [x] Screen tests cover the next-Appointment card, the empty state and the overlap warning.
+
+**As built:**
+
+- The place for the Reminders still to be sent is `RemindersToSend` (`src/components/RemindersToSend.tsx`), rendered inside the next-Appointment card. It shows nothing until ticket 07 fills it.
+- The overlap rule is `overlappingAppointments` in the calendar core: two active Appointments overlap when they start less than an hour apart, measured in real time. The warning is on the Appointment's detail, so it is the first thing seen after saving, and it stays while the overlap does.
+- At desktop width an Appointment's addresses (`/appointments/<id>`, `/edit`, `/new`) keep Upcoming in the middle column and fill the detail panel. Ticket 10 decides what the middle column shows when an Appointment is picked from Month.
+- The phone heading reads "Upcoming", as at desktop width and in the tab bar, where the phone mockup shows the app name.
+
