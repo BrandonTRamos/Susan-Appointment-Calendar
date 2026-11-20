@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import {
   BrowserRouter,
   Navigate,
@@ -9,7 +9,7 @@ import {
   useMatch,
   useNavigationType,
 } from 'react-router-dom';
-import { Sidebar, TabBar } from './components/Navigation';
+import { PickedFrom, Sidebar, TabBar } from './components/Navigation';
 import { InPanel, Placeholder } from './components/Page';
 import { CalendarProvider, useCalendar } from './data/CalendarContext';
 import type { CalendarClient } from './data/calendarClient';
@@ -18,7 +18,7 @@ import { useDesktopWidth } from './lib/useDesktopWidth';
 import { useToday } from './lib/useToday';
 import { AppointmentDetail } from './routes/AppointmentDetail';
 import { EditAppointment, NewAppointment } from './routes/AppointmentForm';
-import { Month } from './routes/Month';
+import { Month, MonthPlace } from './routes/Month';
 import { Past } from './routes/Past';
 import { Replies } from './routes/Replies';
 import { Settings } from './routes/Settings';
@@ -37,17 +37,23 @@ export interface AppProps {
   onSignOut?: () => Promise<unknown>;
 }
 
-function Layout({ displayName, sampleData, onSignOut }: Omit<AppProps, 'calendar'>) {
+function Layout(props: Omit<AppProps, 'calendar'>) {
+  const { displayName, sampleData, onSignOut } = props;
   const desktop = useDesktopWidth();
   // An Appointment's own addresses: on a phone a full screen, on a desktop the detail panel.
   const onAppointment = useMatch('/appointments/*') !== null;
   const panel = useRef<HTMLElement>(null);
 
+  // The tab an Appointment was opened from: kept while it, its form, or another one picked beside
+  // it is open.
+  const { pathname } = useLocation();
+  const [pickedFrom, setPickedFrom] = useState(onAppointment ? '/' : pathname);
+  if (!onAppointment && pickedFrom !== pathname) setPickedFrom(pathname);
+
   // A new screen opens at the top; Back (a POP) returns to where you were. On a desktop the
   // middle column keeps its place while only the detail panel changes.
-  const { pathname } = useLocation();
   const navigation = useNavigationType();
-  const middle = desktop && onAppointment ? '/' : pathname;
+  const middle = desktop && onAppointment ? pickedFrom : pathname;
   useLayoutEffect(() => {
     if (navigation !== 'POP') window.scrollTo(0, 0);
   }, [middle, navigation]);
@@ -63,27 +69,47 @@ function Layout({ displayName, sampleData, onSignOut }: Omit<AppProps, 'calendar
 
   if (!desktop)
     return (
-      <div className={onAppointment ? 'app phone full-screen' : 'app phone'}>
-        {notice}
-        <Outlet />
-        {!onAppointment && <TabBar />}
-      </div>
+      <PickedFrom.Provider value={pickedFrom}>
+        <div className={onAppointment ? 'app phone full-screen' : 'app phone'}>
+          {notice}
+          <Outlet />
+          {!onAppointment && <TabBar />}
+        </div>
+      </PickedFrom.Provider>
     );
   return (
-    <div className="app desktop">
-      <Sidebar displayName={displayName} onSignOut={onSignOut} />
-      <div className="middle">
-        {notice}
-        {/* An Appointment opens beside the list it was picked from. */}
-        {onAppointment ? <Upcoming /> : <Outlet />}
+    <PickedFrom.Provider value={pickedFrom}>
+      <div className="app desktop">
+        <Sidebar displayName={displayName} onSignOut={onSignOut} />
+        <div className="middle">
+          {notice}
+          {/* An Appointment opens beside the tab it was picked from. */}
+          {onAppointment ? <Tab path={pickedFrom} {...props} /> : <Outlet />}
+        </div>
+        <aside className="detail" aria-label="Appointment details" ref={panel}>
+          <InPanel.Provider value={true}>
+            {onAppointment ? <Outlet /> : <PickedToBeginWith />}
+          </InPanel.Provider>
+        </aside>
       </div>
-      <aside className="detail" aria-label="Appointment details" ref={panel}>
-        <InPanel.Provider value={true}>
-          {onAppointment ? <Outlet /> : <PickedToBeginWith />}
-        </InPanel.Provider>
-      </aside>
-    </div>
+    </PickedFrom.Provider>
   );
+}
+
+/** A tab's screen, by its URL: what the middle column holds while an Appointment is open. */
+function Tab({ path, ...props }: Omit<AppProps, 'calendar'> & { path: string }) {
+  switch (path) {
+    case '/month':
+      return <Month />;
+    case '/past':
+      return <Past />;
+    case '/replies':
+      return <Replies />;
+    case '/settings':
+      return <Settings {...props} />;
+    default:
+      return <Upcoming />;
+  }
 }
 
 /** The detail panel before anything is picked: on Upcoming, the next Appointment. */
@@ -101,7 +127,13 @@ export function App({ calendar, ...props }: AppProps) {
     <CalendarProvider client={calendar} timeZone={props.timeZone}>
       <BrowserRouter>
         <Routes>
-          <Route element={<Layout {...props} />}>
+          <Route
+            element={
+              <MonthPlace>
+                <Layout {...props} />
+              </MonthPlace>
+            }
+          >
             <Route index element={<Upcoming />} />
             <Route path="month" element={<Month />} />
             <Route path="past" element={<Past />} />

@@ -2,9 +2,13 @@
 import { cleanup, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { atWidth, renderApp } from './test/renderApp';
+import { formatMonth, monthOf } from './lib/monthGrid';
+import { atWidth, daysFromToday, renderApp } from './test/renderApp';
 
 const realMatchMedia = window.matchMedia;
+
+/** The Month tab's heading: the month on show, which starts as today's. */
+const thisMonth = () => formatMonth(monthOf(daysFromToday(0)));
 
 const tabNames = () =>
   within(screen.getByRole('navigation', { name: 'Main' }))
@@ -54,7 +58,7 @@ describe('on a desktop', () => {
   it('shows the current tab in the middle and keeps a region for the detail panel', () => {
     renderApp('/month');
     expect(
-      within(screen.getByRole('main')).getByRole('heading', { level: 1, name: 'Month' }),
+      within(screen.getByRole('main')).getByRole('heading', { level: 1, name: thisMonth() }),
     ).toBeInTheDocument();
     expect(screen.getByRole('complementary', { name: 'Appointment details' })).toBeInTheDocument();
   });
@@ -75,6 +79,9 @@ describe('on a desktop', () => {
   });
 });
 
+/** Each tab is headed with its name, except Month, headed with the month on show. */
+const headed = (tab: string) => (tab === 'Month' ? thisMonth() : tab);
+
 describe('tabs and their URLs', () => {
   it.each([
     ['/', 'Upcoming'],
@@ -85,7 +92,7 @@ describe('tabs and their URLs', () => {
   ])('%s opens the %s tab, as after a reload or from a shared link', (path, name) => {
     atWidth('desktop');
     renderApp(path);
-    expect(screen.getByRole('heading', { level: 1, name })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: headed(name) })).toBeInTheDocument();
     expect(screen.getByRole('link', { name })).toHaveAttribute('aria-current', 'page');
   });
 
@@ -101,7 +108,7 @@ describe('tabs and their URLs', () => {
     ]) {
       await userEvent.click(screen.getByRole('link', { name }));
       expect(window.location.pathname).toBe(path);
-      expect(screen.getByRole('heading', { level: 1, name })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: headed(name) })).toBeInTheDocument();
     }
   });
 

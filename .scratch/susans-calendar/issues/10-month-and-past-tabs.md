@@ -8,14 +8,14 @@
 
 **Parallel:** Yes, with 11 and 12.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] At phone width, the Month tab shows a month grid with a mark on each day that has an Appointment. Picking a day lists that day's Appointments beneath the grid, followed by the ones after it.
-- [ ] At desktop width, the month grid fills the middle column and each Appointment appears in its day's cell by time and name. Picking one opens it in the detail panel on the right.
-- [ ] Today is marked. Previous, next and "Today" controls move between months.
-- [ ] Days belonging to the neighbouring months are shown but visibly quieter.
-- [ ] A day with more Appointments than fit in its cell says how many more there are.
-- [ ] A Past screen lists Appointments that have already happened, newest first, including cancelled ones marked as cancelled.
-- [ ] Past is a sidebar tab at desktop width. At phone width, where the tab bar has no room for it, it is reached from a link at the end of the Upcoming list.
-- [ ] Opening a past Appointment shows its full detail.
-- [ ] Screen tests cover picking a day, moving between months, and the Past list's order.
+- [x] At phone width, the Month tab shows a month grid with a mark on each day that has an Appointment. Picking a day lists that day's Appointments beneath the grid, followed by the ones after it.
+- [x] At desktop width, the month grid fills the middle column and each Appointment appears in its day's cell by time and name. Picking one opens it in the detail panel on the right.
+- [x] Today is marked. Previous, next and "Today" controls move between months.
+- [x] Days belonging to the neighbouring months are shown but visibly quieter.
+- [x] A day with more Appointments than fit in its cell says how many more there are.
+- [x] A Past screen lists Appointments that have already happened, newest first, including cancelled ones marked as cancelled.
+- [x] Past is a sidebar tab at desktop width. At phone width, where the tab bar has no room for it, it is reached from a link at the end of the Upcoming list.
+- [x] Opening a past Appointment shows its full detail.
+- [x] Screen tests cover picking a day, moving between months, and the Past list's order.

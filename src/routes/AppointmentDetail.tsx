@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { CalendarLoading, CalendarTrouble } from '../components/CalendarTrouble';
+import { usePickedFrom } from '../components/Navigation';
 import { Page } from '../components/Page';
 import { useCalendar } from '../data/CalendarContext';
 import { overlappingAppointments, type Appointment, type Stamp } from '../lib/calendar';
@@ -52,6 +53,7 @@ function Detail({
 }) {
   const { client, timeZone, appointments } = useCalendar();
   const navigate = useNavigate();
+  const back = usePickedFrom();
   const [asking, setAsking] = useState<'cancel' | 'delete' | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -79,7 +81,7 @@ function Detail({
     `${did} by ${personName}${viaAgent ? ' (via agent)' : ''} on ${formatMoment(at, timeZone)}`;
 
   return (
-    <Page title={what} back={{ to: '/', label: 'Back to Upcoming' }}>
+    <Page title={what} back={back}>
       <CalendarTrouble />
       {cancelled && (
         <p>
@@ -187,7 +189,7 @@ function Detail({
                   onDeleting(true);
                   try {
                     await client.deleteAppointment(id);
-                    navigate('/', { replace: true });
+                    navigate(back.to, { replace: true });
                   } finally {
                     onDeleting(false);
                   }
