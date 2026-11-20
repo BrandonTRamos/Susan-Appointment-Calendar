@@ -6,7 +6,7 @@ The mockups show the dark appearance: a blue accent on near-black, with amber fo
 
 Until ticket 19 this page said the mockups did not fix colour and that the app's colours followed the sibling apps, so the app was built in their teal. The owner did not want that: the mockups are the look they chose.
 
-The mockups' type is smaller than the app's. The app keeps its own scale, 18px type and controls at least 52px tall, because Susan uses it too.
+The app's type is a usual size, 16px with controls at least 44px tall. Until November 2026 it was 18px with controls 52px tall, larger than the mockups', for Susan; the owner found that too big for everyone, and Susan is not expected to use the app much. That scale is now Larger text, a choice in Settings for each device.
 
 | File                           | Shows                                                                                              |
 | ------------------------------ | -------------------------------------------------------------------------------------------------- |

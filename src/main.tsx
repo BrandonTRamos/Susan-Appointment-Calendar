@@ -10,10 +10,13 @@ import {
   subscriptionFeedUrl,
   timeZone,
 } from './config';
+import { savedTextSize, showTextSize } from './lib/textSize';
 import { Root } from './Root';
 import './styles.css';
 
 if (amplifyOutputs) Amplify.configure(amplifyOutputs);
+// Before anything is drawn, so the page never shows at one size and then jumps to another.
+showTextSize(savedTextSize());
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

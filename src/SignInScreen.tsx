@@ -30,9 +30,9 @@ const theme = {
   tokens: {
     colors: { primary: blueLight },
     components: {
-      button: { fontSize: { value: '1.125rem' } },
-      fieldcontrol: { fontSize: { value: '1.125rem' } },
-      field: { fontSize: { value: '1.125rem' } },
+      button: { fontSize: { value: '1rem' } },
+      fieldcontrol: { fontSize: { value: '1rem' } },
+      field: { fontSize: { value: '1rem' } },
     },
   },
   overrides: [
