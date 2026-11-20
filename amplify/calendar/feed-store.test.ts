@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   createCalendarCore,
   createFixedClock,
+  createMemoryMessenger,
+  NO_ADMIN_MESSENGER,
   createMemoryStore,
   type Actor,
   type Appointment,
@@ -22,6 +24,7 @@ async function tables() {
   const core = createCalendarCore({
     store: memory,
     clock: createFixedClock('2026-11-19T20:00:00.000Z'),
+    messenger: createMemoryMessenger(),
     timeZone: 'America/New_York',
   });
   const sent: { kind: string; input: Record<string, unknown> }[] = [];
@@ -56,6 +59,7 @@ async function tables() {
   const feed = createCalendarCore({
     store: feedStore(reader, TABLES),
     clock: createFixedClock('2026-11-19T20:00:00.000Z'),
+    messenger: NO_ADMIN_MESSENGER,
     timeZone: 'America/New_York',
   });
   return { core, feed, sent, freezeIndex: () => (index = memory.subscriptionLinks()) };

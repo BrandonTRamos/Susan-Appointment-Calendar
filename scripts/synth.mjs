@@ -51,6 +51,9 @@ function stepWords(step, which) {
 // between them means a signed-in person may not call it.
 const SIGNED_IN = '#if( $util.authType() == "User Pool Authorization" )';
 const AFTER_SIGNED_IN = '#if( !$isAuthorized';
+const DYNAMIC_FILTERS = '## Apply dynamic roles auth';
+const NO_FILTERS =
+  /#set\( \$(hasValidOwnerArgument = false|authRuntimeFilter = \[\]|authOwnerRuntimeFilter = \[\]|authGroupRuntimeFilter = \[\]) \)/g;
 
 /** Each data API operation of one kind, by name, with the words of the steps that hold its rules. */
 function ruleSteps(kind) {
@@ -75,7 +78,15 @@ function ruleSteps(kind) {
  */
 function openToSignedIn(kind) {
   const allows = (words) =>
-    words.split(SIGNED_IN)[1].split(AFTER_SIGNED_IN)[0].replace('#end', '').trim() !== '';
+    words
+      .split(SIGNED_IN)[1]
+      .split(AFTER_SIGNED_IN)[0]
+      // A subscription's rule always ends by applying the owner and group filters set above it,
+      // and always starts with no filters. Neither lets anyone in by itself.
+      .split(DYNAMIC_FILTERS)[0]
+      .replace(NO_FILTERS, '')
+      .replace('#end', '')
+      .trim() !== '';
   return new Map(
     [...ruleSteps(kind)].map(([name, rules]) => [name, rules.length === 0 || rules.some(allows)]),
   );
@@ -108,6 +119,95 @@ const COMMANDS = [
 const MODELS = ['Appointment', 'ActivityRecord'];
 /** Kept per person, and read only by that person. Only the commands function writes these. */
 const OWN_MODELS = ['SubscriptionLink'];
+/**
+ * Turning app notifications on and off for a device, and keeping it up to date: the only other
+ * mutations anyone may call.
+ */
+const DEVICE_MUTATIONS = [
+  'renewAppNotifications',
+  'turnOffAppNotifications',
+  'turnOnAppNotifications',
+];
+/** Kept for app notifications, and closed to everyone signed in: only the backend reaches them. */
+const CLOSED_MODELS = ['AppNotificationDevice', 'AppNotificationKey'];
+/** All the app-notifications function may call in the data API (amplify/backend.ts). */
+const APP_NOTIFICATION_FIELDS = [
+  'Mutation/createAppNotificationDevice',
+  'Mutation/createAppNotificationKey',
+  'Mutation/deleteAppNotificationDevice',
+  'Mutation/updateAppNotificationDevice',
+  'Query/getAppNotificationKey',
+];
+
+/**
+ * What the app-notifications function's role may call in the data API, as 'Type/field', or
+ * 'Type/*' for a whole type. Its role is the one its own policies name.
+ */
+function appNotificationsAccess() {
+  return stacks()
+    .flatMap((stack) => Object.values(stack))
+    .filter(
+      (resource) =>
+        resource.Type === 'AWS::IAM::Policy' &&
+        resource.Properties.Roles?.some((each) =>
+          /^appnotificationslambdaServiceRole/.test(each.Ref ?? ''),
+        ),
+    )
+    .flatMap((policy) => policy.Properties.PolicyDocument.Statement)
+    .filter((statement) => [statement.Action].flat().includes('appsync:GraphQL'))
+    .flatMap((statement) => [statement.Resource].flat())
+    .map((resource) => {
+      const tail = resource?.['Fn::Join']?.[1]?.at(-1) ?? String(resource);
+      return /\/types\/(\w+)\/(?:fields\/)?([\w*]+)$/.exec(tail)?.slice(1).join('/') ?? tail;
+    })
+    .sort();
+}
+
+/**
+ * The words of the step that writes a device in DynamoDB for one data API mutation ('Delete' or
+ * 'Update'). A device is forgotten, or kept up to date, only by a write that carries a condition
+ * (amplify/calendar/app-notification-devices.ts), so this step must put the caller's condition into
+ * the one conditional write.
+ */
+function deviceWriteWords(verb) {
+  return stacks()
+    .flatMap((stack) => Object.entries(stack))
+    .filter(
+      ([id, resource]) =>
+        resource.Type === 'AWS::AppSync::FunctionConfiguration' &&
+        id.startsWith(`Mutation${verb}AppNotificationDeviceDataResolverFn`),
+    )
+    .map(([, resource]) => stepWords(resource.Properties, 'Request'))
+    .join('\n');
+}
+
+/**
+ * The app-notifications function: its properties, what its role may do outside the data API, and
+ * the code it runs as bundled for the deploy.
+ */
+function appNotificationsFunction() {
+  const all = stacks();
+  const lambda = all
+    .flatMap((stack) => Object.entries(stack))
+    .find(
+      ([id, resource]) =>
+        resource.Type === 'AWS::Lambda::Function' && /^appnotificationslambda[0-9A-F]+$/.test(id),
+    )?.[1];
+  if (!lambda) return { properties: {}, statements: [], code: '' };
+  const role = lambda.Properties.Role?.['Fn::GetAtt']?.[0];
+  const statements = all
+    .flatMap((stack) => Object.values(stack))
+    .filter(
+      (resource) =>
+        resource.Type === 'AWS::IAM::Policy' &&
+        resource.Properties.Roles?.some((each) => each.Ref === role),
+    )
+    .flatMap((policy) => policy.Properties.PolicyDocument.Statement)
+    .filter((statement) => !String(statement.Action).startsWith('appsync:'));
+  const asset = /^([0-9a-f]{64})\.zip$/.exec(lambda.Properties.Code?.S3Key ?? '')?.[1];
+  const code = asset ? readFileSync(join(out, `asset.${asset}`, 'index.mjs'), 'utf8') : '';
+  return { properties: lambda.Properties, statements, code };
+}
 
 /**
  * The subscription feed's function: the one its public address (a Lambda function URL) points at,
@@ -221,12 +321,99 @@ function checks() {
       ['onCreate', 'onUpdate', 'onDelete'].every((on) => subscriptions.get(`${on}Appointment`)),
     ],
     [
-      "the calendar core's commands are the only mutations a signed-in person can call",
+      "the calendar core's commands, and turning app notifications on and off, are the only " +
+        'mutations a signed-in person can call',
       [...mutations]
         .filter(([, open]) => open)
         .map(([name]) => name)
         .sort()
-        .join() === COMMANDS.join(),
+        .join() === [...COMMANDS, ...DEVICE_MUTATIONS].sort().join(),
+    ],
+    [
+      'nobody signed in can read or write the devices app notifications go to, or their key',
+      CLOSED_MODELS.every(
+        (model) =>
+          queries.get(`get${model}`) === false &&
+          queries.get(`list${model}s`) === false &&
+          ['create', 'update', 'delete'].every(
+            (verb) => mutations.get(`${verb}${model}`) === false,
+          ) &&
+          ['onCreate', 'onUpdate', 'onDelete'].every(
+            (on) => subscriptions.get(`${on}${model}`) === false,
+          ),
+      ),
+    ],
+    [
+      'anyone signed in can ask for the public key a device subscribes with',
+      queries.get('appNotificationKey') === true,
+    ],
+    [
+      'the app-notifications function may call only the device and key operations it needs',
+      appNotificationsAccess().join() === APP_NOTIFICATION_FIELDS.join(),
+    ],
+    [
+      'a device is deleted only if the condition it is deleted on holds when DynamoDB deletes it',
+      (() => {
+        const words = deviceWriteWords('Delete');
+        return (
+          words.includes('"operation": "DeleteItem"') &&
+          words.includes('$util.qr($ctx.stash.conditions.add($args.condition))') &&
+          words.includes('$util.qr($DeleteRequest.put("condition", $Conditions))')
+        );
+      })(),
+    ],
+    [
+      'a device is kept up to date only if the condition it is written on holds when it is written',
+      (() => {
+        const words = deviceWriteWords('Update');
+        return (
+          words.includes('"operation": "UpdateItem"') &&
+          words.includes('$util.qr($ctx.stash.conditions.add($args.condition))') &&
+          words.includes('$util.qr($UpdateItem.put("condition", $Conditions))')
+        );
+      })(),
+    ],
+    [
+      // Why a write about a device was refused is read straight from its table, because the data
+      // API's reads are eventually consistent (amplify/calendar/app-notification-devices.ts).
+      'the app-notifications function may only get single devices from their table, consistently',
+      (() => {
+        const fn = appNotificationsFunction();
+        const table = fn.properties.Environment?.Variables?.APP_NOTIFICATION_DEVICE_TABLE;
+        const dynamo = fn.statements.filter((statement) =>
+          [statement.Action].flat().some((action) => String(action).startsWith('dynamodb:')),
+        );
+        const tableArn = JSON.stringify(dynamo[0]?.Resource ?? '');
+        return (
+          JSON.stringify(table ?? '').includes('AppNotificationDevice') &&
+          dynamo.length === 1 &&
+          JSON.stringify([dynamo[0].Action].flat()) === '["dynamodb:GetItem"]' &&
+          tableArn.includes('AppNotificationDevice') &&
+          !tableArn.includes('index') &&
+          // Beside it, only what Amplify's data client needs to start: its settings, and the
+          // description of the models it reads.
+          fn.statements.every(
+            (statement) =>
+              statement === dynamo[0] ||
+              [statement.Action]
+                .flat()
+                .every(
+                  (action) =>
+                    action === 'ssm:GetParameters' ||
+                    (action === 's3:GetObject' &&
+                      JSON.stringify(statement.Resource).includes('modelIntrospectionSchema')),
+                ),
+          ) &&
+          /ConsistentRead:\s*(?:!0|true)\b/.test(fn.code) &&
+          !/ConsistentRead:\s*(?:!1|false)\b/.test(fn.code)
+        );
+      })(),
+    ],
+    [
+      'the commands function can find out who the Admins are, to tell them',
+      resources('AWS::IAM::Policy').some((policy) =>
+        JSON.stringify(policy.PolicyDocument ?? {}).includes('cognito-idp:ListUsersInGroup'),
+      ),
     ],
     [
       "a signed-in person can read their own subscription link and nobody else's",
@@ -290,7 +477,7 @@ function checks() {
     ],
     [
       'every table can be restored to a point in time',
-      tables.length === MODELS.length + OWN_MODELS.length &&
+      tables.length === MODELS.length + OWN_MODELS.length + CLOSED_MODELS.length &&
         tables.every(
           (table) => table.pointInTimeRecoverySpecification?.pointInTimeRecoveryEnabled === true,
         ),

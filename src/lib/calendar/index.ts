@@ -12,7 +12,7 @@ export {
 export { CalendarRefusal, createCalendarCore } from './core';
 export type { CalendarCore, CalendarCoreOptions, RefusalField, RefusalReason } from './core';
 export * from './reminders';
-export { createFixedClock, createMemoryStore } from './memory';
-export type { FixedClock, MemoryStore } from './memory';
-export { systemClock } from './ports';
-export type { Clock, Store } from './ports';
+export { createFixedClock, createMemoryMessenger, createMemoryStore } from './memory';
+export type { FixedClock, MemoryMessenger, MemoryStore } from './memory';
+export { NO_ADMIN_MESSENGER, systemClock } from './ports';
+export type { AdminMessenger, AppNotification, Clock, Store } from './ports';

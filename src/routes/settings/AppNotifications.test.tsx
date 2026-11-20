@@ -1,0 +1,278 @@
+// @vitest-environment jsdom
+import { cleanup, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { atWidth, renderApp } from '../../test/renderApp';
+import { fakeRegistry, installFakePush, type FakePushOptions } from '../../test/fakePush';
+
+const realMatchMedia = window.matchMedia;
+let uninstall: (() => void) | null = null;
+beforeEach(() => atWidth('phone'));
+afterEach(() => {
+  cleanup();
+  uninstall?.();
+  uninstall = null;
+  window.matchMedia = realMatchMedia;
+  vi.restoreAllMocks();
+});
+
+function device(options: FakePushOptions = {}) {
+  const push = installFakePush(options);
+  uninstall = push.uninstall;
+  return push;
+}
+
+const section = () => screen.getByRole('region', { name: 'App notifications' });
+
+describe('the App notifications section of Settings', () => {
+  it('says what they are and who gets them', async () => {
+    device();
+    renderApp('/settings', { devices: fakeRegistry().registry });
+    expect(
+      within(section()).getByText(/someone else adds, changes or cancels an Appointment/),
+    ).toBeInTheDocument();
+    expect(within(section()).getByText(/only to Admins, never to Susan/)).toBeInTheDocument();
+  });
+
+  it('turns them on for the device in hand, keeping it against the account', async () => {
+    const push = device();
+    const { registry, turnedOn } = fakeRegistry();
+    renderApp('/settings', { devices: registry });
+    await userEvent.click(await screen.findByRole('button', { name: 'Turn on for this device' }));
+    expect(await within(section()).findByText('On for this device.')).toBeInTheDocument();
+    expect(turnedOn).toEqual([
+      {
+        endpoint: push.subscription()!.endpoint,
+        p256dh: 'p256dh-1',
+        auth: 'auth-1',
+        label: 'Mac',
+      },
+    ]);
+  });
+
+  it('turns them off again, and forgets the device', async () => {
+    const push = device({ permission: 'granted', subscribed: true });
+    const { endpoint } = push.subscription()!;
+    const { registry, turnedOff } = fakeRegistry();
+    renderApp('/settings', { devices: registry });
+    await userEvent.click(await screen.findByRole('button', { name: 'Turn off for this device' }));
+    expect(
+      await screen.findByRole('button', { name: 'Turn on for this device' }),
+    ).toBeInTheDocument();
+    expect(turnedOff).toEqual([endpoint]);
+    expect(push.subscription()).toBeNull();
+  });
+
+  it('says how to allow them when the person said no', async () => {
+    device({ answer: 'denied' });
+    const { registry, turnedOn } = fakeRegistry();
+    renderApp('/settings', { devices: registry });
+    await userEvent.click(await screen.findByRole('button', { name: 'Turn on for this device' }));
+    expect(await within(section()).findByText(/blocked for this app/)).toBeInTheDocument();
+    expect(turnedOn).toEqual([]);
+  });
+
+  it('on an iPhone, explains that the app must first be added to the home screen', async () => {
+    device({
+      noPush: true,
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15',
+    });
+    renderApp('/settings', { devices: fakeRegistry().registry });
+    expect(
+      await within(section()).findByText(/must first be added to the home screen/),
+    ).toBeInTheDocument();
+    expect(within(section()).getByText(/tap Share, then Add to Home Screen/)).toBeInTheDocument();
+    expect(within(section()).queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('on an iPhone with the app on the home screen, turns them on like anywhere else', async () => {
+    device({
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15',
+    });
+    const { registry, turnedOn } = fakeRegistry();
+    renderApp('/settings', { devices: registry });
+    await userEvent.click(await screen.findByRole('button', { name: 'Turn on for this device' }));
+    expect(await within(section()).findByText('On for this device.')).toBeInTheDocument();
+    expect(turnedOn).toMatchObject([{ label: 'iPhone' }]);
+  });
+
+  it('says so when they could not be turned on', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    device();
+    renderApp('/settings', { devices: fakeRegistry({ failing: true }).registry });
+    await userEvent.click(await screen.findByRole('button', { name: 'Turn on for this device' }));
+    expect(await within(section()).findByRole('alert')).toHaveTextContent(
+      'Could not turn notifications on. Check your connection and try again.',
+    );
+    expect(screen.getByRole('button', { name: 'Turn on for this device' })).toBeEnabled();
+  });
+
+  it('stays off when the device could not be kept, even after the screen opens again', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const push = device();
+    const { registry, turnedOn } = fakeRegistry({ failingTurnOn: true });
+    const first = renderApp('/settings', { devices: registry });
+    await userEvent.click(await screen.findByRole('button', { name: 'Turn on for this device' }));
+    expect(await within(section()).findByRole('alert')).toHaveTextContent(
+      'Could not turn notifications on.',
+    );
+    expect(within(section()).queryByText('On for this device.')).not.toBeInTheDocument();
+    // The browser's subscription is undone, so nothing says this device is on.
+    expect(push.subscription()).toBeNull();
+    expect(turnedOn).toEqual([]);
+
+    first.unmount();
+    renderApp('/settings', { devices: registry });
+    expect(
+      await screen.findByRole('button', { name: 'Turn on for this device' }),
+    ).toBeInTheDocument();
+  });
+
+  it('is not available on sample data', async () => {
+    device();
+    renderApp('/settings');
+    expect(await within(section()).findByText('Not available on sample data.')).toBeInTheDocument();
+  });
+});
+
+describe('a device with app notifications on', () => {
+  it('is forgotten when the person signs out', async () => {
+    const push = device({ permission: 'granted', subscribed: true });
+    const { endpoint } = push.subscription()!;
+    const { registry, turnedOff } = fakeRegistry();
+    const onSignOut = vi.fn(async () => {
+      // Still signed in while the device is forgotten.
+      expect(turnedOff).toEqual([endpoint]);
+    });
+    renderApp('/settings', { devices: registry, onSignOut });
+    await userEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await vi.waitFor(() => expect(onSignOut).toHaveBeenCalledOnce());
+    expect(push.subscription()).toBeNull();
+    expect(push.closed()).toBe(1);
+  });
+
+  it('still signs out, and unsubscribes, when nobody can say whose the device is', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const push = device({ permission: 'granted', subscribed: true });
+    const onSignOut = vi.fn(async () => {});
+    renderApp('/settings', { devices: fakeRegistry({ failing: true }).registry, onSignOut });
+    await userEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await vi.waitFor(() => expect(onSignOut).toHaveBeenCalledOnce());
+    // This person's notifications must not reach whoever uses the device next.
+    expect(push.subscription()).toBeNull();
+  });
+
+  it('is unsubscribed at sign-out when the backend no longer keeps it', async () => {
+    const push = device({ permission: 'granted', subscribed: true });
+    const onSignOut = vi.fn(async () => {});
+    renderApp('/settings', { devices: fakeRegistry({ removal: 'not-kept' }).registry, onSignOut });
+    await userEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await vi.waitFor(() => expect(onSignOut).toHaveBeenCalledOnce());
+    expect(push.subscription()).toBeNull();
+  });
+
+  it('is left on for someone else who took it over, and the person is still signed out', async () => {
+    const push = device({ permission: 'granted', subscribed: true });
+    const theirs = push.subscription();
+    const { registry, turnedOff } = fakeRegistry({ removal: 'someone-else' });
+    const onSignOut = vi.fn(async () => {});
+    renderApp('/settings', { devices: registry, onSignOut });
+    await userEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await vi.waitFor(() => expect(onSignOut).toHaveBeenCalledOnce());
+    expect(turnedOff).toEqual([theirs!.endpoint]);
+    // The backend refused to forget it for this person, so their subscription stays theirs.
+    expect(push.subscription()).toBe(theirs);
+    expect(push.closed()).toBe(0);
+  });
+
+  it('is left on for someone else who took it over when the person turns it off', async () => {
+    const push = device({ permission: 'granted', subscribed: true });
+    const theirs = push.subscription();
+    renderApp('/settings', { devices: fakeRegistry({ removal: 'someone-else' }).registry });
+    await userEvent.click(await screen.findByRole('button', { name: 'Turn off for this device' }));
+    expect(await within(section()).findByText(/not coming to you/)).toBeInTheDocument();
+    expect(push.subscription()).toBe(theirs);
+    expect(within(section()).queryByText('On for this device.')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Turn on for this device' })).toBeEnabled();
+  });
+
+  it('is kept up to date for its owner each time the app opens, and never taken', async () => {
+    const push = device({ permission: 'granted', subscribed: true });
+    const { registry, turnedOn, renewed } = fakeRegistry();
+    renderApp('/', { devices: registry });
+    await vi.waitFor(() =>
+      expect(renewed).toMatchObject([{ endpoint: push.subscription()!.endpoint }]),
+    );
+    expect(turnedOn).toEqual([]);
+  });
+
+  it('opened in an older session, stays with whoever turned it on since', async () => {
+    // Mark turned notifications on in this browser after Linda; Linda's session opens again.
+    const push = device({ permission: 'granted', subscribed: true });
+    const theirs = push.subscription();
+    const { registry, turnedOn, renewed } = fakeRegistry({ renewal: 'someone-else' });
+    renderApp('/settings', { devices: registry });
+    expect(await within(section()).findByText(/not coming to you/)).toBeInTheDocument();
+    expect(renewed.length).toBeGreaterThan(0);
+    expect(turnedOn).toEqual([]);
+    expect(push.subscription()).toBe(theirs);
+    expect(within(section()).queryByText('On for this device.')).not.toBeInTheDocument();
+
+    // Turning them on, deliberately, is what takes the device.
+    await userEvent.click(screen.getByRole('button', { name: 'Turn on for this device' }));
+    expect(await within(section()).findByText('On for this device.')).toBeInTheDocument();
+    expect(turnedOn).toMatchObject([{ endpoint: theirs!.endpoint }]);
+  });
+
+  it('shows as off when the backend keeps it for nobody, though the browser is subscribed', async () => {
+    device({ permission: 'granted', subscribed: true });
+    const { registry, turnedOn } = fakeRegistry({ renewal: 'not-kept' });
+    renderApp('/settings', { devices: registry });
+    expect(
+      await screen.findByRole('button', { name: 'Turn on for this device' }),
+    ).toBeInTheDocument();
+    expect(within(section()).queryByText(/not coming to you/)).not.toBeInTheDocument();
+    expect(turnedOn).toEqual([]);
+  });
+
+  it('keeps a subscription the browser already had when turning on cannot be saved', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const push = device({ permission: 'granted', subscribed: true });
+    const had = push.subscription();
+    renderApp('/settings', {
+      devices: fakeRegistry({ renewal: 'someone-else', failingTurnOn: true }).registry,
+    });
+    await userEvent.click(await screen.findByRole('button', { name: 'Turn on for this device' }));
+    expect(await within(section()).findByRole('alert')).toBeInTheDocument();
+    // It may be someone else's, so it is not undone.
+    expect(push.subscription()).toBe(had);
+  });
+
+  it.each(['someone-else', 'unconfirmed'] as const)(
+    'keeps its subscription when turning off is refused as %s',
+    async (removal) => {
+      const push = device({ permission: 'granted', subscribed: true });
+      const theirs = push.subscription();
+      renderApp('/settings', { devices: fakeRegistry({ removal }).registry });
+      await userEvent.click(
+        await screen.findByRole('button', { name: 'Turn off for this device' }),
+      );
+      expect(await within(section()).findByText(/not coming to you/)).toBeInTheDocument();
+      expect(push.subscription()).toBe(theirs);
+    },
+  );
+
+  it('keeps its subscription at sign-out when the backend refused without saying why', async () => {
+    const push = device({ permission: 'granted', subscribed: true });
+    const theirs = push.subscription();
+    const onSignOut = vi.fn(async () => {});
+    renderApp('/settings', {
+      devices: fakeRegistry({ removal: 'unconfirmed' }).registry,
+      onSignOut,
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await vi.waitFor(() => expect(onSignOut).toHaveBeenCalledOnce());
+    expect(push.subscription()).toBe(theirs);
+    expect(push.closed()).toBe(0);
+  });
+});

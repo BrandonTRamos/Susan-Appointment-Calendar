@@ -41,6 +41,8 @@ export default defineConfig({
       },
       workbox: {
         navigateFallback: '/index.html',
+        // App notification handlers (public/app-notifications-sw.js).
+        importScripts: ['app-notifications-sw.js'],
         // Precache everything except the sign-in screen and its Amplify UI styles: it's only needed
         // when signed out, which needs the network anyway. Keeps each update small.
         globIgnores: ['**/node_modules/**/*', 'sw.js', 'workbox-*.js', '**/SignInScreen-*'],

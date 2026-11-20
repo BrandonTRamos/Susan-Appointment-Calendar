@@ -11,12 +11,13 @@ export function Settings({
   displayName,
   timeZone,
   sampleData,
+  devices = null,
   onSignOut,
 }: Omit<AppProps, 'calendar'>) {
   return (
     <Page title="Settings">
       <SusansPhoneAndContact />
-      <AppNotifications />
+      <AppNotifications devices={devices} />
       <CalendarSubscription />
       <AgentKeys />
 

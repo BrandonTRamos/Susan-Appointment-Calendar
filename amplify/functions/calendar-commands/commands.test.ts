@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createCalendarCore,
   createFixedClock,
+  createMemoryMessenger,
   createMemoryStore,
   type Appointment,
 } from '../../../src/lib/calendar';
@@ -13,9 +14,11 @@ const linda = { sub: 'person-linda', username: 'account-linda' };
 /** The commands as the data API would call them, over a calendar kept in memory. */
 function commands(names: Record<string, string | null> = { 'account-linda': 'Linda' }) {
   const store = createMemoryStore();
+  const messenger = createMemoryMessenger(['person-linda', 'person-mark']);
   const core = createCalendarCore({
     store,
     clock: createFixedClock('2026-11-19T20:00:00.000Z'),
+    messenger,
     timeZone: 'America/New_York',
   });
   const nameOf = vi.fn(async (username: string) => names[username] ?? null);
@@ -31,7 +34,7 @@ function commands(names: Record<string, string | null> = { 'account-linda': 'Lin
     const answer = await call('addAppointment', { details: JSON.stringify(details) });
     return (answer as { appointment: Appointment }).appointment;
   };
-  return { store, call, add, handler, nameOf };
+  return { store, messenger, call, add, handler, nameOf };
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -136,6 +139,14 @@ describe('who a command is carried out for', () => {
       viaAgent: false,
       at: '2026-11-19T20:00:00.000Z',
     });
+  });
+
+  it('is left out of the Activity update the command sends to the other Admins', async () => {
+    const { add, messenger } = commands();
+    await add();
+    expect(messenger.appNotifications()).toMatchObject([
+      { to: ['person-mark'], notification: { body: expect.stringMatching(/^Linda added /) } },
+    ]);
   });
 
   it('is "Someone" when the account has no name', async () => {

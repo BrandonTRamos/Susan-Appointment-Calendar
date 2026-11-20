@@ -2,6 +2,7 @@ import { signOut } from 'aws-amplify/auth';
 import { useState } from 'react';
 import { App } from './App';
 import { createAmplifyCalendar } from './data/amplifyCalendar';
+import { createAppNotificationDevices } from './data/appNotificationDevices';
 import { createSampleCalendar } from './data/sampleCalendar';
 import { publicPageAt } from './lib/publicPage';
 import { PublicPage } from './routes/PublicPage';
@@ -78,11 +79,13 @@ function SignedInApp({
   subscriptionFeedUrl: string | null;
 }) {
   const [calendar] = useState(() => createAmplifyCalendar(subscriptionFeedUrl));
+  const [devices] = useState(createAppNotificationDevices);
   return (
     <App
       displayName={displayName}
       timeZone={timeZone}
       calendar={calendar}
+      devices={devices}
       onSignOut={() => signOut()}
     />
   );
