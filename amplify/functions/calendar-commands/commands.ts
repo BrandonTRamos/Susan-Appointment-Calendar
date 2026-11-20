@@ -2,6 +2,7 @@
 // (amplify/data/resource.ts). This works out who is asking and hands the command to the core.
 
 import { CalendarRefusal, type Actor, type CalendarCore } from '../../../src/lib/calendar';
+import { COMMAND_FAILED, type CommandAnswer } from '../../../src/lib/calendarApi';
 import type { FindName } from '../../calendar/people';
 
 /** What the data API hands a function for one mutation. */
@@ -22,13 +23,11 @@ export interface CommandDependencies {
 /** Shown when the account has no usable name. The owner gives every account one. */
 const NO_NAME = 'Someone';
 
-const FAILED = 'Could not save the change. Check your connection and try again.';
-
 /** The signed-in person, from the identity the data API checked. Nothing the caller sent is used. */
 async function actor(identity: unknown, nameOf: FindName): Promise<Actor> {
   const { sub, username } = (identity ?? {}) as { sub?: unknown; username?: unknown };
   if (typeof sub !== 'string' || !sub || typeof username !== 'string' || !username)
-    throw new CalendarRefusal('invalid', 'Sign in before changing the calendar.');
+    throw new Error('No signed-in person came with the command.');
   const name = (await nameOf(username))?.trim().replace(/\s+/g, ' ').slice(0, 80);
   // A command from the app is the person's own act. Agents come in through the MCP server.
   return { person: { id: sub, name: name || NO_NAME }, viaAgent: false };
@@ -45,7 +44,7 @@ function fromJson(sent: unknown): unknown {
 }
 
 export function calendarCommandHandler({ core, nameOf }: CommandDependencies) {
-  return async (event: CommandEvent) => {
+  return async (event: CommandEvent): Promise<CommandAnswer> => {
     const command = event.fieldName ?? event.info?.fieldName;
     const { id, details, changes } = event.arguments;
     try {
@@ -53,20 +52,29 @@ export function calendarCommandHandler({ core, nameOf }: CommandDependencies) {
       const calendar = await core();
       switch (command) {
         case 'addAppointment':
-          return await calendar.addAppointment(by, fromJson(details) as never);
+          return { appointment: await calendar.addAppointment(by, fromJson(details) as never) };
         case 'changeAppointment':
-          return await calendar.changeAppointment(by, id as string, fromJson(changes) as never);
+          return {
+            appointment: await calendar.changeAppointment(
+              by,
+              id as string,
+              fromJson(changes) as never,
+            ),
+          };
         case 'cancelAppointment':
-          return await calendar.cancelAppointment(by, id as string);
+          return { appointment: await calendar.cancelAppointment(by, id as string) };
         case 'removeAppointment':
           await calendar.deleteAppointment(by, id as string);
-          return null;
+          return { appointment: null };
         default:
           throw new Error(`Unknown calendar command: ${String(command)}`);
       }
     } catch (error) {
-      // A refusal's words are for the person who asked.
-      if (error instanceof CalendarRefusal) throw error;
+      // A refusal is an answer: its words are for the person who asked.
+      if (error instanceof CalendarRefusal) {
+        const { reason, message, detail } = error;
+        return { refusal: { reason, message, detail } };
+      }
       // What broke and where, and nothing about the Appointment.
       const e = error instanceof Error ? error : null;
       console.error(
@@ -76,7 +84,7 @@ export function calendarCommandHandler({ core, nameOf }: CommandDependencies) {
         e?.message.slice(0, 300) ?? '',
         e?.stack?.split('\n').slice(1, 6).join(' | ') ?? '',
       );
-      throw new Error(FAILED, { cause: error });
+      throw new Error(COMMAND_FAILED, { cause: error });
     }
   };
 }

@@ -1,5 +1,8 @@
 import { signOut } from 'aws-amplify/auth';
+import { useState } from 'react';
 import { App } from './App';
+import { createAmplifyCalendar } from './data/amplifyCalendar';
+import { createSampleCalendar } from './data/sampleCalendar';
 import { publicPageAt } from './lib/publicPage';
 import { PublicPage } from './routes/PublicPage';
 import { SignedIn } from './SignedIn';
@@ -33,12 +36,32 @@ export function Root({ backend, timeZone, contactEmail, ownerName }: RootProps) 
         sampleData={!backend}
       />
     );
-  if (!backend) return <App displayName={null} timeZone={timeZone} sampleData />;
+  if (!backend) return <SampleApp timeZone={timeZone} />;
   return (
     <SignedIn>
-      {(person) => (
-        <App displayName={person.displayName} timeZone={timeZone} onSignOut={() => signOut()} />
-      )}
+      {(person) => <SignedInApp displayName={person.displayName} timeZone={timeZone} />}
     </SignedIn>
+  );
+}
+
+/** The calendar on sample data, with nobody signed in. Nothing is saved. */
+function SampleApp({ timeZone }: { timeZone: string }) {
+  const [calendar] = useState(() => createSampleCalendar(timeZone));
+  return <App displayName={null} timeZone={timeZone} calendar={calendar} sampleData />;
+}
+
+/**
+ * The calendar for a signed-in person. SignedIn mounts this afresh for each person, so what one
+ * person's session read is never shown to the next.
+ */
+function SignedInApp({ displayName, timeZone }: { displayName: string | null; timeZone: string }) {
+  const [calendar] = useState(createAmplifyCalendar);
+  return (
+    <App
+      displayName={displayName}
+      timeZone={timeZone}
+      calendar={calendar}
+      onSignOut={() => signOut()}
+    />
   );
 }

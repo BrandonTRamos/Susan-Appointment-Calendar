@@ -1,8 +1,21 @@
-// Calendar data as the data API hands it over, turned into what the calendar core calls it. Shared
-// by the app, which reads the data API directly, and the backend's store.
+// The calendar as the data API carries it (amplify/data/resource.ts): what it hands over when read,
+// and what a command answers with. Shared by the app, which reads the data API directly, and the
+// backend.
 
 import type { Schema } from '../../amplify/data/resource';
-import type { Appointment, Stamp } from './calendar';
+import type { Appointment, Detail, RefusalReason, Stamp } from './calendar';
+
+/**
+ * What a command answers with: the Appointment as it now is (null once deleted), or the core's
+ * refusal. A refusal is an answer, not an error, so that it reaches the person in the core's own
+ * words; an error means the command may not have been carried out at all.
+ */
+export type CommandAnswer =
+  | { appointment: Appointment | null }
+  | { refusal: { reason: RefusalReason; message: string; detail?: Detail } };
+
+/** Said when a command failed for a reason that is nobody's mistake. */
+export const COMMAND_FAILED = 'Could not save the change. Check your connection and try again.';
 
 export type AppointmentRow = Schema['Appointment']['type'];
 

@@ -68,6 +68,11 @@ export function today(zone: string, now: Date): string {
   return localDateTime(now, zone).date;
 }
 
+/** The date a number of days after a date, or before it when the number is negative. */
+export function addDays(date: string, days: number): string {
+  return new Date(asIfUtc(date, '00:00') + days * DAY).toISOString().slice(0, 10);
+}
+
 /**
  * The moment a date and time happen in a zone.
  *

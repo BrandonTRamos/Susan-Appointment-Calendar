@@ -7,7 +7,7 @@ import { getAmplifyDataClientConfig } from '@aws-amplify/backend/function/runtim
 import { Amplify } from 'aws-amplify';
 import { generateClient } from 'aws-amplify/data';
 import type { Store } from '../../src/lib/calendar';
-import { toAppointment } from '../../src/lib/calendarRows';
+import { toAppointment } from '../../src/lib/calendarApi';
 import type { Schema } from '../data/resource';
 
 type Models = ReturnType<typeof generateClient<Schema>>['models'];

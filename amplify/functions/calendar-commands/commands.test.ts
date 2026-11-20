@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  CalendarRefusal,
   createCalendarCore,
   createFixedClock,
   createMemoryStore,
+  type Appointment,
 } from '../../../src/lib/calendar';
 import { calendarCommandHandler, type CommandEvent } from './commands';
 
@@ -26,29 +26,38 @@ function commands(names: Record<string, string | null> = { 'account-linda': 'Lin
     args: Record<string, unknown>,
     caller: { identity: unknown } = { identity: linda },
   ) => handler({ fieldName, arguments: args, identity: caller.identity } as CommandEvent);
-  return { store, call, handler, nameOf };
+  /** Adds an Appointment and hands it back. */
+  const add = async (details: object = checkUp) => {
+    const answer = await call('addAppointment', { details: JSON.stringify(details) });
+    return (answer as { appointment: Appointment }).appointment;
+  };
+  return { store, call, add, handler, nameOf };
 }
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('the commands, as the data API calls them', () => {
-  it('add, change, cancel and delete an Appointment', async () => {
+  it('add, change, cancel and delete an Appointment, answering with it as it now is', async () => {
     const { store, call } = commands();
     const added = await call('addAppointment', { details: JSON.stringify(checkUp) });
-    expect(added).toMatchObject({ ...checkUp, state: 'active' });
-    expect(store.appointments()).toEqual([added]);
+    expect(added).toEqual({ appointment: store.appointments()[0] });
+    expect(added).toMatchObject({ appointment: { ...checkUp, state: 'active' } });
 
-    const { id } = added!;
+    const { id } = store.appointments()[0];
     const changed = await call('changeAppointment', {
       id,
       changes: JSON.stringify({ time: '15:30' }),
     });
-    expect(changed).toMatchObject({ id, time: '15:30', what: 'Cardiology check-up' });
+    expect(changed).toMatchObject({
+      appointment: { id, time: '15:30', what: 'Cardiology check-up' },
+    });
 
-    expect(await call('cancelAppointment', { id })).toMatchObject({ id, state: 'cancelled' });
+    expect(await call('cancelAppointment', { id })).toMatchObject({
+      appointment: { id, state: 'cancelled' },
+    });
     expect(store.appointments()).toMatchObject([{ id, state: 'cancelled', time: '15:30' }]);
 
-    expect(await call('removeAppointment', { id })).toBeNull();
+    expect(await call('removeAppointment', { id })).toEqual({ appointment: null });
     expect(store.appointments()).toEqual([]);
     expect(store.activity().map((record) => record.action)).toEqual([
       'added',
@@ -58,7 +67,7 @@ describe('the commands, as the data API calls them', () => {
     ]);
   });
 
-  it('also take a mutation named the way AppSync itself names it, with arguments not as text', async () => {
+  it('also take a mutation named the way AppSync names it, with arguments not as text', async () => {
     const { store, handler } = commands();
     await handler({
       info: { fieldName: 'addAppointment' },
@@ -71,10 +80,10 @@ describe('the commands, as the data API calls them', () => {
 
 describe('who a command is carried out for', () => {
   it('is the signed-in person, by the name on their account, acting themselves', async () => {
-    const { call, nameOf } = commands();
-    const added = await call('addAppointment', { details: JSON.stringify(checkUp) });
+    const { add, nameOf } = commands();
+    const added = await add();
     expect(nameOf).toHaveBeenCalledWith('account-linda');
-    expect(added!.added).toMatchObject({
+    expect(added.added).toMatchObject({
       personId: 'person-linda',
       personName: 'Linda',
       viaAgent: false,
@@ -82,15 +91,14 @@ describe('who a command is carried out for', () => {
   });
 
   it('never comes from what the caller sent', async () => {
-    const { call } = commands();
-    const forged = {
+    const { add } = commands();
+    const added = await add({
       ...checkUp,
       added: { personId: 'person-mark', personName: 'Mark', viaAgent: true, at: '2020-01-01' },
       personName: 'Mark',
       viaAgent: true,
-    };
-    const added = await call('addAppointment', { details: JSON.stringify(forged) });
-    expect(added!.added).toEqual({
+    });
+    expect(added.added).toEqual({
       personId: 'person-linda',
       personName: 'Linda',
       viaAgent: false,
@@ -99,9 +107,8 @@ describe('who a command is carried out for', () => {
   });
 
   it('is "Someone" when the account has no name', async () => {
-    const { call } = commands({ 'account-linda': '   ' });
-    const added = await call('addAppointment', { details: JSON.stringify(checkUp) });
-    expect(added!.added.personName).toBe('Someone');
+    const { add } = commands({ 'account-linda': '   ' });
+    expect((await add()).added.personName).toBe('Someone');
   });
 
   it.each([
@@ -111,30 +118,35 @@ describe('who a command is carried out for', () => {
     { sub: 'person-linda' },
     { username: 'account-linda' },
     { sub: '', username: '' },
-  ])('is nobody unless a person is signed in (%j)', async (identity) => {
+  ])('fails unless a person is signed in (%j)', async (identity) => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     const { store, call } = commands();
     await expect(
       call('addAppointment', { details: JSON.stringify(checkUp) }, { identity }),
-    ).rejects.toThrow(/Sign in/);
+    ).rejects.toThrow(/Could not save/);
     expect(store.appointments()).toEqual([]);
   });
 });
 
 describe('when a command cannot be carried out', () => {
-  it("a refusal reaches the person in the core's own words", async () => {
-    const { store, call } = commands();
-    await expect(
-      call('addAppointment', { details: JSON.stringify({ ...checkUp, what: '' }) }),
-    ).rejects.toThrow('Say what the Appointment is.');
-    await expect(call('addAppointment', { details: 'not json' })).rejects.toBeInstanceOf(
-      CalendarRefusal,
-    );
-    await expect(call('cancelAppointment', { id: 'no-such-appointment' })).rejects.toThrow(
-      /not in the calendar/,
-    );
-    const { id } = (await call('addAppointment', { details: JSON.stringify(checkUp) }))!;
+  it("a refusal is the answer, in the core's own words", async () => {
+    const { store, call, add } = commands();
+    expect(
+      await call('addAppointment', { details: JSON.stringify({ ...checkUp, what: '' }) }),
+    ).toEqual({
+      refusal: { reason: 'invalid', message: 'Say what the Appointment is.', detail: 'what' },
+    });
+    expect(await call('addAppointment', { details: 'not json' })).toMatchObject({
+      refusal: { reason: 'invalid' },
+    });
+    expect(await call('cancelAppointment', { id: 'no-such-appointment' })).toMatchObject({
+      refusal: { reason: 'missing' },
+    });
+    const { id } = await add();
     store.noteTextSentAbout(id);
-    await expect(call('removeAppointment', { id })).rejects.toThrow(/Cancel it instead/);
+    expect(await call('removeAppointment', { id })).toMatchObject({
+      refusal: { reason: 'texted', message: expect.stringMatching(/Cancel it instead/) },
+    });
     expect(store.appointments()).toHaveLength(1);
   });
 

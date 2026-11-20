@@ -1,0 +1,166 @@
+// The calendar over the data API (amplify/data/resource.ts). Appointments are read directly and
+// kept up to date as anyone changes them; the calendar is changed only by calling the calendar
+// core's commands, which are the data API's custom mutations.
+
+import { CONNECTION_STATE_CHANGE, ConnectionState, generateClient } from 'aws-amplify/data';
+import { Hub } from 'aws-amplify/utils';
+import type { Schema } from '../../amplify/data/resource';
+import { CalendarRefusal, inDateOrder, type Appointment } from '../lib/calendar';
+import {
+  COMMAND_FAILED,
+  toAppointment,
+  type AppointmentRow,
+  type CommandAnswer,
+} from '../lib/calendarApi';
+import type { CalendarClient } from './calendarClient';
+
+interface Watcher {
+  listener: (appointments: Appointment[]) => void;
+  onError: (error: Error) => void;
+}
+
+interface Answer {
+  data?: unknown;
+  errors?: readonly { message: string }[];
+}
+
+/** What a command did, from the mutation's answer: the Appointment as it now is, or a throw. */
+function carriedOut(answer: Answer): Appointment | null {
+  if (answer.errors?.length || answer.data == null) throw new Error(COMMAND_FAILED);
+  const said = (
+    typeof answer.data === 'string' ? JSON.parse(answer.data) : answer.data
+  ) as CommandAnswer;
+  if ('refusal' in said) {
+    const { reason, message, detail } = said.refusal;
+    throw new CalendarRefusal(reason, message, detail);
+  }
+  return said.appointment;
+}
+
+export function createAmplifyCalendar(): CalendarClient {
+  const client = generateClient<Schema>();
+  const model = client.models.Appointment;
+
+  /** Every Appointment, as last heard. */
+  const appointments = new Map<string, Appointment>();
+  const watchers = new Set<Watcher>();
+  /** Whether the whole calendar has been read at least once. Nothing is shown before that. */
+  let read = false;
+  /** While the calendar is being read: what changed meanwhile, which is newer than what is read. */
+  let changedWhileReading: Set<string> | null = null;
+  let reading = 0;
+  let stopListening: (() => void) | null = null;
+
+  function tell() {
+    if (!read) return;
+    const all = inDateOrder([...appointments.values()]);
+    for (const watcher of [...watchers]) watcher.listener(all);
+  }
+  function fail(error: unknown) {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    for (const watcher of [...watchers]) watcher.onError(failure);
+  }
+  function put(appointment: Appointment) {
+    appointments.set(appointment.id, appointment);
+    changedWhileReading?.add(appointment.id);
+    tell();
+  }
+  function drop(id: string) {
+    appointments.delete(id);
+    changedWhileReading?.add(id);
+    tell();
+  }
+
+  /** Reads the whole calendar. Changes heard while it is being read win over what it reads. */
+  async function readAll() {
+    const mine = ++reading;
+    const changed = (changedWhileReading = new Set<string>());
+    try {
+      const rows: AppointmentRow[] = [];
+      let nextToken: string | null | undefined;
+      do {
+        const page = await model.list({ limit: 1000, nextToken });
+        if (page.errors?.length) throw new Error(page.errors.map((e) => e.message).join('; '));
+        rows.push(...page.data);
+        nextToken = page.nextToken;
+      } while (nextToken);
+      if (mine !== reading) return; // a later read has taken over
+      for (const id of [...appointments.keys()]) if (!changed.has(id)) appointments.delete(id);
+      for (const row of rows)
+        if (!changed.has(row.id)) appointments.set(row.id, toAppointment(row));
+      changedWhileReading = null;
+      read = true;
+      tell();
+    } catch (error) {
+      if (mine !== reading) return;
+      changedWhileReading = null;
+      fail(error);
+    }
+  }
+
+  /** Hears every change as it happens, and reads again after the connection has dropped. */
+  function listen() {
+    const next = (row: AppointmentRow) => put(toAppointment(row));
+    const heard = [
+      model.onCreate().subscribe({ next, error: fail }),
+      model.onUpdate().subscribe({ next, error: fail }),
+      model.onDelete().subscribe({ next: (row) => drop(row.id), error: fail }),
+    ];
+    let connected = false;
+    const stopHub = Hub.listen('api', ({ payload }) => {
+      if (payload.event !== CONNECTION_STATE_CHANGE) return;
+      const { connectionState } = payload.data as { connectionState: ConnectionState };
+      if (connectionState !== ConnectionState.Connected) return;
+      // The first time is the connection opening. After that, changes may have been missed.
+      if (connected) void readAll();
+      connected = true;
+    });
+    return () => {
+      for (const subscription of heard) subscription.unsubscribe();
+      stopHub();
+    };
+  }
+
+  /** Calls a command and keeps what it answers, so the screen need not wait to hear of it. */
+  async function command(call: () => Promise<Answer>): Promise<Appointment | null> {
+    let answer: Answer;
+    try {
+      answer = await call();
+    } catch {
+      throw new Error(COMMAND_FAILED);
+    }
+    return carriedOut(answer);
+  }
+  async function changed(call: () => Promise<Answer>): Promise<Appointment> {
+    const appointment = await command(call);
+    if (!appointment) throw new Error(COMMAND_FAILED);
+    put(appointment);
+    return appointment;
+  }
+
+  return {
+    watchAppointments(listener, onError) {
+      const watcher = { listener, onError };
+      watchers.add(watcher);
+      stopListening ??= listen();
+      // Every new watch reads afresh: the app starts one whenever it comes back to the foreground.
+      if (read) listener(inDateOrder([...appointments.values()]));
+      void readAll();
+      return () => {
+        watchers.delete(watcher);
+        if (watchers.size > 0) return;
+        stopListening?.();
+        stopListening = null;
+      };
+    },
+    addAppointment: (details) =>
+      changed(() => client.mutations.addAppointment({ details: JSON.stringify(details) })),
+    changeAppointment: (id, changes) =>
+      changed(() => client.mutations.changeAppointment({ id, changes: JSON.stringify(changes) })),
+    cancelAppointment: (id) => changed(() => client.mutations.cancelAppointment({ id })),
+    async deleteAppointment(id) {
+      await command(() => client.mutations.removeAppointment({ id }));
+      drop(id);
+    },
+  };
+}

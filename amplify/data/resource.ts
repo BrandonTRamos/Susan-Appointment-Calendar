@@ -64,9 +64,10 @@ const schema = a
       })
       .authorization((allow) => [allow.authenticated().to(['read'])]),
 
-    // The core's commands. Each answers with the Appointment as it now is. `removeAppointment` is
-    // the core's "delete": the name deleteAppointment belongs to the model's own mutation, which
-    // only the function may call.
+    // The core's commands. Each answers with a CommandAnswer (src/lib/calendarApi.ts): the
+    // Appointment as it now is, or the core's refusal. `removeAppointment` is the core's "delete":
+    // the name deleteAppointment belongs to the model's own mutation, which only the function may
+    // call.
     addAppointment: command().arguments({ details: a.json().required() }),
     changeAppointment: command().arguments({
       id: a.id().required(),
