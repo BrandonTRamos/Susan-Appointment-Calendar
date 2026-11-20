@@ -25,3 +25,18 @@ export function RemindersToSend({ appointment }: { appointment: Appointment }) {
     </div>
   );
 }
+
+/**
+ * How many Reminders are still to be sent for an Appointment still to come, for a row in the list
+ * beneath the phone Month grid: "2 Reminders to send". Nothing for one that has started, is
+ * cancelled, or has none left to send.
+ */
+export function ReminderCount({ appointment }: { appointment: Appointment }) {
+  const now = new Date();
+  if (new Date(appointment.startsAt) <= now) return null;
+  const count = remindersStillToSend(appointment, now).length;
+  if (count === 0) return null;
+  return (
+    <span className="reminder-count">{`${count} ${count === 1 ? 'Reminder' : 'Reminders'} to send`}</span>
+  );
+}

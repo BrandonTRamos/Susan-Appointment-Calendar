@@ -17,9 +17,10 @@ So far: sign-in, the [public pages](#public-pages), and Appointments with their 
 signed in can add an Appointment, see the next one in full and the later ones beneath it, open one,
 change it, cancel it, and delete one entered by mistake, and is warned when one overlaps another;
 what one person changes shows for the others as it happens. Each Appointment carries its Reminders,
-showing when each goes out and the exact words Susan will read. Anyone signed in can also get their
-own [calendar subscription](#calendar-subscription) link. No text is sent yet: sending and the other
-tabs arrive with the later tickets.
+showing when each goes out and the exact words Susan will read. The Month tab shows a month at a
+glance, and Past lists the Appointments that have already happened. Anyone signed in can also get
+their own [calendar subscription](#calendar-subscription) link. No text is sent yet: sending texts
+and Replies arrive with the later tickets.
 
 ## Run it locally
 

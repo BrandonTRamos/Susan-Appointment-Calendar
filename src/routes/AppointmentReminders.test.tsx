@@ -305,3 +305,72 @@ describe('the next-Appointment card on Upcoming', () => {
     expect(within(card).queryByRole('list')).not.toBeInTheDocument();
   });
 });
+
+describe('the list beneath the phone Month grid', () => {
+  /** Each row under the grid, as the words on it, by what the Appointment is. */
+  async function rows() {
+    const region = await screen.findByRole('region', { name: 'Picked day' });
+    return Object.fromEntries(
+      within(region)
+        .getAllByRole('listitem')
+        .map((row) => [row.querySelector('strong')!.textContent, row.textContent]),
+    );
+  }
+
+  async function month() {
+    const calendar = emptyCalendar();
+    const add = (what: string, days: number, time: string, more: object = {}) =>
+      calendar.core.addAppointment(linda, { what, date: daysFromToday(days), time, ...more });
+    await add('Two to send', 3, '14:00', {
+      reminders: [
+        { shape: 'daysBefore', days: 1, time: '18:00' },
+        { shape: 'before', amount: 2, unit: 'hours' },
+      ],
+    });
+    await add('One to send', 4, '09:00');
+    await add('None set', 5, '10:00', { reminders: [] });
+    await add('All passed', 2, '10:00', {
+      reminders: [{ shape: 'daysBefore', days: 3, time: '18:00' }],
+    });
+    const cancelled = await add('Called off', 6, '10:00');
+    await calendar.core.cancelAppointment(mark, cancelled.id);
+    // Started at midnight today. Its exact-time Reminder, kept from when it was later, is still
+    // to come, but the Appointment has begun.
+    const started = await add('Already started', 1, '12:00', {
+      reminders: [{ shape: 'at', date: daysFromToday(1), time: '09:00' }],
+    });
+    await calendar.core.changeAppointment(mark, started.id, {
+      date: daysFromToday(0),
+      time: '00:00',
+    });
+    return calendar;
+  }
+
+  it('says how many Reminders are still to be sent for each Appointment to come', async () => {
+    renderApp('/month', { calendar: await month() });
+    const shown = await rows();
+    expect(shown['Two to send']).toMatch(/2 Reminders to send$/);
+    expect(shown['One to send']).toMatch(/1 Reminder to send$/);
+  });
+
+  it('says nothing for one with none left to send, one cancelled, or one that has started', async () => {
+    renderApp('/month', { calendar: await month() });
+    const shown = await rows();
+    for (const what of ['None set', 'All passed', 'Called off', 'Already started'])
+      expect(shown[what]).not.toMatch(/to send/);
+  });
+
+  it('gives only the count: the times stay on the Upcoming card and the Appointment', async () => {
+    renderApp('/month', { calendar: await month() });
+    const region = await screen.findByRole('region', { name: 'Picked day' });
+    expect(within(region).queryByRole('list', { name: 'Reminders still to be sent' })).toBeNull();
+    expect(region).not.toHaveTextContent(/ at \d+:\d\d [ap]m/);
+  });
+
+  it('is not part of the desktop Month grid', async () => {
+    atWidth('desktop');
+    renderApp('/month', { calendar: await month() });
+    await screen.findByRole('table');
+    expect(screen.queryByText(/Reminders? to send/)).not.toBeInTheDocument();
+  });
+});

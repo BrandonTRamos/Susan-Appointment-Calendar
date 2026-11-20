@@ -1,3 +1,4 @@
+import { createContext, useContext } from 'react';
 import { Link, NavLink } from 'react-router-dom';
 import type { AppProps } from '../App';
 import { MonthIcon, PastIcon, PlusIcon, RepliesIcon, SettingsIcon, UpcomingIcon } from './Icons';
@@ -11,6 +12,20 @@ const TABS = [
   { to: '/replies', label: 'Replies', Icon: RepliesIcon, onPhone: true },
   { to: '/settings', label: 'Settings', Icon: SettingsIcon, onPhone: true },
 ];
+
+/**
+ * The tab an Appointment was opened from, by its URL: where an Appointment's full screen goes back
+ * to on a phone, and what stays in the middle column beside it on a desktop. Upcoming when the
+ * Appointment's address was opened directly.
+ */
+export const PickedFrom = createContext('/');
+
+/** Where an Appointment goes back to: the tab it was opened from. */
+export function usePickedFrom(): { to: string; label: string } {
+  const to = useContext(PickedFrom);
+  const tab = TABS.find((each) => each.to === to) ?? TABS[0];
+  return { to: tab.to, label: `Back to ${tab.label}` };
+}
 
 function Tabs({ phone = false }: { phone?: boolean }) {
   return (

@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { CalendarLoading, CalendarTrouble } from '../components/CalendarTrouble';
 import { Field } from '../components/Field';
+import { usePickedFrom } from '../components/Navigation';
 import { Page } from '../components/Page';
 import { useCalendar } from '../data/CalendarContext';
 import {
@@ -48,11 +49,12 @@ export function NewAppointment() {
   // The new Appointment's ID, chosen once for this form: if a save has to be sent again, because
   // its answer was lost or the person pressed Save twice, the core adds one Appointment, not two.
   const [id] = useState(() => crypto.randomUUID());
+  const back = usePickedFrom();
   return (
     <Page title="New Appointment">
       <Form
         start={typedFrom()}
-        backTo="/"
+        backTo={back.to}
         save={async ({ details, reminders }) =>
           (await client.addAppointment({ ...details, reminders: settings(reminders) }, id)).id
         }
