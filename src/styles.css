@@ -13,6 +13,7 @@
   --accent-text: #ffffff;
   --accent-soft: #d5efeb;
   --danger: #b42318;
+  --danger-soft: #fde7e4;
   --notice: #8a4b07;
   --notice-soft: #fbead3;
   --shadow: 0 1px 2px rgba(16, 24, 22, 0.04), 0 4px 18px rgba(16, 24, 22, 0.05);
@@ -36,6 +37,7 @@
     --accent-text: #0b1513;
     --accent-soft: #123a35;
     --danger: #f97066;
+    --danger-soft: #3d1714;
     --notice: #fbbf24;
     --notice-soft: #3b2c10;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 20px rgba(0, 0, 0, 0.3);
@@ -1006,6 +1008,34 @@ p {
 }
 .app.desktop .notice {
   padding-top: 10px;
+}
+
+/* The most recent text to Susan did not get through (src/components/TextsBanner.tsx). */
+.texts-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: calc(env(safe-area-inset-top) + 12px) 20px 12px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-weight: 650;
+}
+.texts-banner p {
+  margin: 0;
+}
+.texts-banner .btn {
+  border-color: currentColor;
+  background: none;
+  color: inherit;
+}
+.notice + .texts-banner,
+.app.desktop .texts-banner {
+  padding-top: 12px;
+}
+.texts-banner + .page {
+  padding-top: 24px;
 }
 
 /* "A new version is available" */

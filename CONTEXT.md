@@ -41,7 +41,7 @@ A text message Susan sends back to the number her Reminders come from. A Reply i
 _Avoid_: Response, confirmation, inbound message
 
 **Alert**:
-A warning to every Admin that a Reminder or Change notice did not reach Susan. Alerts go to Admins only, never to Susan.
+A warning to every Admin that a text to Susan, such as a Reminder, a Change notice or a test text, did not reach her. Alerts go to Admins only, never to Susan.
 _Avoid_: Notification, failure notice, warning
 
 **Activity update**:

@@ -19,6 +19,7 @@ import {
   toAppointment,
   toSeries,
   toSettings,
+  textRow,
   toText,
   type AppointmentRow,
   type SeriesRow,
@@ -53,8 +54,8 @@ export interface DataClient {
  * data API adds `condition` to its own check that the row exists, in the one conditional write
  * (`npm run synth` checks that its resolver does).
  */
-const RETAKE_TEXT = /* GraphQL */ `
-  mutation RetakeText($input: UpdateTextInput!, $condition: ModelTextConditionInput!) {
+const CHANGE_TEXT = /* GraphQL */ `
+  mutation ChangeText($input: UpdateTextInput!, $condition: ModelTextConditionInput!) {
     updateText(input: $input, condition: $condition) {
       id
     }
@@ -121,6 +122,24 @@ export function dataStore(client: DataClient): Store {
   /** Each Appointment and Series as the core last read it here, until it is written. */
   const read = new Map<string, Appointment>();
   const readSeries = new Map<string, Series>();
+
+  /** Replaces a text's record only if the condition holds as it is written. Answers whether it did. */
+  async function changeTextIf(next: Text, condition: { and: Record<string, unknown>[] }) {
+    let answer: { errors?: readonly DataError[] };
+    try {
+      answer = (await client.graphql({
+        query: CHANGE_TEXT,
+        variables: { input: textRow(next), condition },
+      })) as { errors?: readonly DataError[] };
+    } catch (thrown) {
+      if (!(thrown && typeof thrown === 'object' && 'errors' in thrown)) throw thrown;
+      answer = thrown as { errors?: readonly DataError[] };
+    }
+    if (!answer.errors?.length) return true;
+    if (alreadyThere(answer.errors)) return false;
+    throw new Error(answer.errors.map((e) => e.message).join('; '));
+  }
+
   return {
     async appointment(id) {
       const row = check(await Appointment.get({ id }));
@@ -153,36 +172,35 @@ export function dataStore(client: DataClient): Store {
     },
     // The data API creates a row only if none has its ID, in one step: the claim.
     async claimText(text) {
-      const result = await Text.create(text);
+      const result = await Text.create(textRow(text));
       if (alreadyThere(result.errors)) return false;
       check(result);
       return true;
     },
     // Only if no other run has taken it up since it was read: still waiting, after the same tries.
     async retakeText(next, current) {
-      const condition = {
+      return changeTextIf(next, {
         and: [
           { status: { eq: 'waiting' } },
           { attempts: { eq: current.attempts } },
           { triedAt: { eq: current.triedAt } },
         ],
-      };
-      let answer: { errors?: readonly DataError[] };
-      try {
-        answer = (await client.graphql({
-          query: RETAKE_TEXT,
-          variables: { input: next, condition },
-        })) as { errors?: readonly DataError[] };
-      } catch (thrown) {
-        if (!(thrown && typeof thrown === 'object' && 'errors' in thrown)) throw thrown;
-        answer = thrown as { errors?: readonly DataError[] };
-      }
-      if (!answer.errors?.length) return true;
-      if (alreadyThere(answer.errors)) return false;
-      throw new Error(answer.errors.map((e) => e.message).join('; '));
+      });
+    },
+    // Only if no other run has changed it since it was read: settled it, or taken up its Alert.
+    async changeText(next, current) {
+      return changeTextIf(next, {
+        and: [
+          { status: { eq: current.status } },
+          { attempts: { eq: current.attempts } },
+          { triedAt: { eq: current.triedAt } },
+          ...(current.alert ? [{ alert: { eq: current.alert.state } }] : []),
+          ...(current.alert?.triedAt ? [{ alertTriedAt: { eq: current.alert.triedAt } }] : []),
+        ],
+      });
     },
     async replaceText(text: Text) {
-      check(await Text.update(text));
+      check(await Text.update(textRow(text)));
     },
     async settings() {
       const row = check(await CalendarSettings.get({ id: SETTINGS_ID }));

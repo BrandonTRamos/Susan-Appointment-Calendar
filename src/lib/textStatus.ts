@@ -1,7 +1,13 @@
 // How a text's status reads to a person: on the Appointment detail and in Settings. The calendar
 // core decides what becomes of each text (src/lib/calendar/texts.ts); this only puts it in words.
 
-import { SEND_ATTEMPTS, type ReminderPlan, type Text, type TextKind } from './calendar';
+import {
+  SEND_ATTEMPTS,
+  type ReminderPlan,
+  type Text,
+  type TextKind,
+  type TextTrouble,
+} from './calendar';
 import { formatMoment } from './localTime';
 
 /** A text's status in a word or two, and what more there is to say about it. */
@@ -86,6 +92,55 @@ function notSentBecause(text: Text): string {
       return 'Its words held a web address, which texts to Susan cannot carry.';
     default:
       return 'Its time had passed and the Appointment had started before it could go.';
+  }
+}
+
+/** A kind of text in the middle of a sentence. */
+const A_TEXT: Record<TextKind, string> = {
+  reminder: 'a Reminder',
+  changeNotice: 'a Change notice',
+  automaticAnswer: 'an automatic answer',
+  test: 'a test text',
+};
+
+/**
+ * The banner's words while the most recent text to Susan did not get through, and where to look
+ * into it: the Appointment it was about, or Settings.
+ */
+export function troubleWords(
+  trouble: TextTrouble,
+  text: Text,
+): { words: string; opens: string; label: string } {
+  const look = text.appointmentId
+    ? { opens: `/appointments/${text.appointmentId}`, label: 'See the text' }
+    : { opens: '/settings', label: 'Open Settings' };
+  const kind = A_TEXT[text.kind];
+  switch (trouble) {
+    case 'failed':
+      return { words: `The last text to Susan, ${kind}, failed.`, ...look };
+    case 'unconfirmed':
+      return {
+        words: `The last text to Susan, ${kind}, was not confirmed delivered. Her phone may be off.`,
+        ...look,
+      };
+    case 'tooLate':
+      return {
+        words: `The last text to Susan, ${kind}, could not be sent in time.`,
+        ...look,
+      };
+    // What happened to that text, not how Settings stand now: the number may have been entered
+    // since. A later text that goes clears it.
+    case 'noNumber':
+      return {
+        words: `The last text to Susan, ${kind}, was not sent: her mobile number was not set in Settings.`,
+        opens: '/settings',
+        label: 'Open Settings',
+      };
+    case 'webAddress':
+      return {
+        words: `The last text to Susan, ${kind}, was not sent: its words held a web address.`,
+        ...look,
+      };
   }
 }
 

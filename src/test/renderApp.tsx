@@ -68,6 +68,7 @@ export async function sentReminder(calendar: SampleCalendar, appointment: Appoin
     sentAt: reminder.dueAt,
     reference: null,
     creditLeft: null,
+    alert: null,
   };
   await calendar.store.claimText(text);
   return text;

@@ -1,13 +1,16 @@
 import { defineFunction, secret } from '@aws-amplify/backend';
 import { resolveConfirmationMinutes } from '../../../src/lib/calendar';
 import { resolveTimeZone } from '../../../src/lib/timeZone';
+import { appUrl } from '../../app-url';
+import { resolveAlertSender } from '../../calendar/alert-email';
 import { TEXTBELT_KEY } from '../../calendar/text-sender';
 
 /**
- * The scheduled run: every minute it asks the calendar core to send whatever is due, and asks
- * Textbelt what became of the texts already sent (amplify/functions/send-texts/run.ts). It never
- * overlaps itself: amplify/backend.ts lets only one run at a time and drops a run that cannot
- * start, rather than queueing it.
+ * The scheduled run: every minute it asks the calendar core to send whatever is due, asks Textbelt
+ * what became of the texts already sent, and raises an Alert to every Admin about each text that
+ * did not get through (amplify/functions/send-texts/run.ts). It never overlaps itself:
+ * amplify/backend.ts lets only one run at a time and drops a run that cannot start, rather than
+ * queueing it.
  */
 export const sendTexts = defineFunction({
   name: 'send-texts',
@@ -30,5 +33,11 @@ export const sendTexts = defineFunction({
     // The Textbelt key, from the deployment secret; while none is stored, texts go to the
     // stand-in (amplify/calendar/text-sender.ts).
     [TEXTBELT_KEY]: secret(TEXTBELT_KEY),
+    // Names the sender of app notifications to the push services, and is the address an Alert
+    // email links to.
+    APP_URL: appUrl(),
+    // The verified address Alerts are emailed from. Empty, they go by app notification only; a
+    // value that isn't an email address fails the deploy.
+    ALERT_EMAIL_FROM: resolveAlertSender(process.env.ALERT_EMAIL_FROM) ?? '',
   },
 });

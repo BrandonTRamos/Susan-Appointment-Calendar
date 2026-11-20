@@ -33,6 +33,13 @@ export interface Store {
    * can. Answers whether it was replaced.
    */
   retakeText(next: Text, current: Text): Promise<boolean>;
+  /**
+   * Replaces the record of a text with `next`, only if it is still as `current` has it: the same
+   * status, tries and last try, and, when `current` has an Alert, that Alert in the same state,
+   * last taken up at the same moment. In one step, so that of two runs settling a sent text, or
+   * taking up its Alert, only one can. Answers whether it was replaced.
+   */
+  changeText(next: Text, current: Text): Promise<boolean>;
   /** Replaces the record of a text that this run holds, by its claim or retake, with this one. */
   replaceText(text: Text): Promise<void>;
   /** Where texts go, and who Susan is told to call; NO_SETTINGS until someone sets them. */
@@ -129,8 +136,37 @@ export interface AppNotification {
 }
 
 /**
- * How the core tells Admins anything. For now it has one channel, app notifications; ticket 15
- * adds email. The core decides who is told: this only knows who the Admins are and reaches them.
+ * An email to Admins. The core writes every word of it; the messenger adds only the app's address
+ * for `opens`, on a line of its own, so the reader can open what it is about.
+ */
+export interface AdminEmail {
+  subject: string;
+  /** Plain text. */
+  body: string;
+  /** The app's address it is about, such as '/appointments/<id>'. */
+  opens: string;
+}
+
+/**
+ * What became of each delivery a messenger made, by its own name for each: one email to one
+ * person, or one notification to one device. A person with nothing to reach them by on that
+ * channel has no delivery at all, and that is not a failure: email not set up, no address, no
+ * device with notifications on, or a device whose subscription is gone.
+ */
+export interface Deliveries {
+  sent: string[];
+  /** Tried and not taken: it may go if tried again. */
+  failed: string[];
+  /** Refused for good, such as by an address the email service will not send to. */
+  refused: string[];
+}
+
+export const NO_DELIVERIES: Deliveries = { sent: [], failed: [], refused: [] };
+
+/**
+ * How the core tells Admins anything, by app notification and by email. The core decides who is
+ * told: this only knows who the Admins are and reaches them. Each send leaves out the deliveries
+ * named in `skip`, which have gone already, and throws only when it cannot tell what it sent.
  */
 export interface AdminMessenger {
   /** The person ID of every Admin: every account marked as an Admin's. Susan is never one. */
@@ -139,7 +175,20 @@ export interface AdminMessenger {
    * Shows the notification on every device each of these people turned app notifications on for.
    * A device that reports its subscription gone is forgotten.
    */
-  sendAppNotification(to: readonly string[], notification: AppNotification): Promise<void>;
+  sendAppNotification(
+    to: readonly string[],
+    notification: AppNotification,
+    skip?: readonly string[],
+  ): Promise<Deliveries>;
+  /**
+   * Emails each of these people at the address they sign in with, each on their own. Only an
+   * Admin's address is ever used.
+   */
+  sendEmail(
+    to: readonly string[],
+    email: AdminEmail,
+    skip?: readonly string[],
+  ): Promise<Deliveries>;
 }
 
 /**
@@ -149,6 +198,9 @@ export interface AdminMessenger {
 export const NO_ADMIN_MESSENGER: AdminMessenger = {
   admins: async () => [],
   sendAppNotification: async () => {
+    throw new Error('This calendar only reads: it tells nobody anything.');
+  },
+  sendEmail: async () => {
     throw new Error('This calendar only reads: it tells nobody anything.');
   },
 };

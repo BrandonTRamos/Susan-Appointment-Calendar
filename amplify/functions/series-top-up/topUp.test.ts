@@ -34,6 +34,8 @@ describe('the daily Series top-up', () => {
     // One Activity update, for the add; none for the Appointments the top-up made.
     expect(messenger.appNotifications()).toHaveLength(1);
     expect(textSender.taken()).toEqual([]);
+    // Nor an Alert email.
+    expect(messenger.emails()).toEqual([]);
   });
 
   it('logs what broke without anything about an Appointment, and fails the run', async () => {
