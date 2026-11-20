@@ -4085,10 +4085,17 @@ describe('the settings for texts', () => {
 
   it('give her number a new destination ID with each change of it, and with nothing else', async () => {
     const { core, store } = calendar();
+    // Every ID the generator makes, as it makes it: each destination ID must be one of these.
+    const made: string[] = [];
+    const generate = crypto.randomUUID.bind(crypto);
+    const spy = vi.spyOn(crypto, 'randomUUID').mockImplementation(() => {
+      const id = generate();
+      made.push(id);
+      return id;
+    });
     const idAfter = async (changes: Parameters<typeof core.changeSettings>[1]) =>
       (await core.changeSettings(linda, changes)).numberId;
     const first = await idAfter({ susansNumber: SUSANS_NUMBER });
-    expect(first).toMatch(/^[0-9a-f-]{36}$/);
     expect(await idAfter({ contactName: 'Linda', contactPhone: '5555550187' })).toBe(first);
     expect(await idAfter({ susansNumber: '(555) 555-0123' })).toBe(first);
     const second = await idAfter({ susansNumber: '5555550142' });
@@ -4099,8 +4106,13 @@ describe('the settings for texts', () => {
     expect(again).not.toBe(first);
     expect(again).not.toBe(second);
     expect((await store.settings()).numberId).toBe(again);
-    // It is never made from the number.
-    expect(JSON.stringify([first, second, again])).not.toMatch(/555/);
+    spy.mockRestore();
+    // Each is a fresh random ID straight from the generator, never made from the number: exactly
+    // the three it made, one per change of the number, in order, each a version 4 UUID, all apart.
+    expect([first, second, again]).toEqual(made);
+    for (const id of made)
+      expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(new Set(made).size).toBe(3);
   });
 
   it('change only what is given, and clear what is sent empty', async () => {
