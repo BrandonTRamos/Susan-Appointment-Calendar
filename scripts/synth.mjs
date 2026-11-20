@@ -1,6 +1,7 @@
 // Synthesizes the Amplify backend with CDK locally, without AWS credentials. It catches CDK and
 // bundling errors before a deploy, then checks the sign-in rules, the rules about who may read and
-// write calendar data, and the cost tags in what was synthesized. Usage: npm run synth
+// write calendar data and subscription links, the feed's public address, and the cost tags in what
+// was synthesized. Usage: npm run synth
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -54,13 +55,9 @@ const DYNAMIC_FILTERS = '## Apply dynamic roles auth';
 const NO_FILTERS =
   /#set\( \$(hasValidOwnerArgument = false|authRuntimeFilter = \[\]|authOwnerRuntimeFilter = \[\]|authGroupRuntimeFilter = \[\]) \)/g;
 
-/**
- * The data API's operations of one kind ('Query', 'Mutation' or 'Subscription'), by name, each
- * with whether a signed-in person may call it. An operation with no rule at all counts as open, so
- * that it is noticed.
- */
-function openToSignedIn(kind) {
-  const open = new Map();
+/** Each data API operation of one kind, by name, with the words of the steps that hold its rules. */
+function ruleSteps(kind) {
+  const found = new Map();
   for (const stack of stacks()) {
     for (const { Type, Properties } of Object.values(stack)) {
       if (Type !== 'AWS::AppSync::Resolver' || Properties.TypeName !== kind) continue;
@@ -68,30 +65,109 @@ function openToSignedIn(kind) {
         .map((step) => stack[step['Fn::GetAtt']?.[0]]?.Properties ?? {})
         .flatMap((step) => [stepWords(step, 'Request'), stepWords(step, 'Response')])
         .filter((words) => words.includes(SIGNED_IN));
-      const allows = (words) =>
-        words
-          .split(SIGNED_IN)[1]
-          .split(AFTER_SIGNED_IN)[0]
-          // A subscription's rule always ends by applying the owner and group filters set above it,
-          // and always starts with no filters. Neither lets anyone in by itself.
-          .split(DYNAMIC_FILTERS)[0]
-          .replace(NO_FILTERS, '')
-          .replace('#end', '')
-          .trim() !== '';
-      open.set(Properties.FieldName, rules.length === 0 || rules.some(allows));
+      found.set(Properties.FieldName, rules);
     }
   }
-  return open;
+  return found;
+}
+
+/**
+ * The data API's operations of one kind ('Query', 'Mutation' or 'Subscription'), by name, each
+ * with whether a signed-in person may call it. An operation with no rule at all counts as open, so
+ * that it is noticed.
+ */
+function openToSignedIn(kind) {
+  const allows = (words) =>
+    words
+      .split(SIGNED_IN)[1]
+      .split(AFTER_SIGNED_IN)[0]
+      // A subscription's rule always ends by applying the owner and group filters set above it,
+      // and always starts with no filters. Neither lets anyone in by itself.
+      .split(DYNAMIC_FILTERS)[0]
+      .replace(NO_FILTERS, '')
+      .replace('#end', '')
+      .trim() !== '';
+  return new Map(
+    [...ruleSteps(kind)].map(([name, rules]) => [name, rules.length === 0 || rules.some(allows)]),
+  );
+}
+
+/**
+ * Whether a signed-in person may call an operation only on rows whose `personId` is the `sub` they
+ * signed in with: Amplify's rule for a model owned by the person named in `personId`, and no rule
+ * that lets in everyone signed in.
+ */
+function onlyOwn(rules) {
+  const everyone = /User Pool Authorization" \)\s*#set\( \$isAuthorized = true \)/;
+  return (
+    rules.length > 0 &&
+    rules.every((words) => !everyone.test(words)) &&
+    rules.some((words) => /claims\.get\("sub"\)/.test(words) && /"?personId"?/.test(words))
+  );
 }
 
 /** The calendar core's commands (amplify/data/resource.ts): the only way to change the calendar. */
-const COMMANDS = ['addAppointment', 'cancelAppointment', 'changeAppointment', 'removeAppointment'];
+const COMMANDS = [
+  'addAppointment',
+  'cancelAppointment',
+  'changeAppointment',
+  'makeSubscriptionLink',
+  'removeAppointment',
+  'switchOffSubscriptionLink',
+];
+/** The calendar (amplify/data/resource.ts). Only the commands function writes these directly. */
+const MODELS = ['Appointment', 'ActivityRecord'];
+/** Kept per person, and read only by that person. Only the commands function writes these. */
+const OWN_MODELS = ['SubscriptionLink'];
 /** Turning app notifications on and off for a device: the only other mutations anyone may call. */
 const DEVICE_MUTATIONS = ['turnOffAppNotifications', 'turnOnAppNotifications'];
-/** What is kept (amplify/data/resource.ts). Only the commands function writes these directly. */
-const MODELS = ['Appointment', 'ActivityRecord'];
 /** Kept for app notifications, and closed to everyone signed in: only the backend reaches them. */
 const CLOSED_MODELS = ['AppNotificationDevice', 'AppNotificationKey'];
+
+/**
+ * The subscription feed's function: the one its public address (a Lambda function URL) points at,
+ * found by that address rather than by anything another function might share. Gives its
+ * properties, what its role may do, the code it runs as bundled for the deploy, and how many public
+ * addresses there are.
+ */
+function feedFunction() {
+  const all = stacks();
+  const urls = all.flatMap((stack) =>
+    Object.values(stack).filter((resource) => resource.Type === 'AWS::Lambda::Url'),
+  );
+  const target = urls[0]?.Properties?.TargetFunctionArn?.['Fn::GetAtt']?.[0];
+  const lambda = all
+    .map((stack) => stack[target])
+    .find((resource) => resource?.Type === 'AWS::Lambda::Function');
+  if (urls.length !== 1 || !lambda) return { urls, properties: {}, actions: [], code: '' };
+  const role = lambda.Properties.Role?.['Fn::GetAtt']?.[0];
+  const actions = all
+    .flatMap((stack) => Object.values(stack))
+    .filter(
+      (resource) =>
+        resource.Type === 'AWS::IAM::Policy' &&
+        resource.Properties.Roles?.some((each) => each.Ref === role),
+    )
+    .flatMap((policy) => policy.Properties.PolicyDocument.Statement)
+    .flatMap((statement) => [statement.Action].flat());
+  const asset = /^([0-9a-f]{64})\.zip$/.exec(lambda.Properties.Code?.S3Key ?? '')?.[1];
+  const code = asset ? readFileSync(join(out, `asset.${asset}`, 'index.mjs'), 'utf8') : '';
+  return { urls, properties: lambda.Properties, actions, code };
+}
+
+/** The names of the indexes on a model's table, as synthesized. */
+function indexesOf(model) {
+  return stacks()
+    .map((stack) => stack[`${model}Table`])
+    .filter((table) => table?.Type === 'Custom::AmplifyDynamoDBTable')
+    .flatMap((table) => table.Properties.globalSecondaryIndexes ?? [])
+    .map((index) => index.indexName);
+}
+
+/** The hash index the feed reads (LINK_INDEX in amplify/calendar/feed-store.ts). */
+const feedIndex = /export const LINK_INDEX = '([^']+)';/.exec(
+  readFileSync('amplify/calendar/feed-store.ts', 'utf8'),
+)?.[1];
 
 /** What the synthesized backend must say. Each entry is [what is being checked, whether it holds]. */
 function checks() {
@@ -101,6 +177,8 @@ function checks() {
   const pool = pools[0] ?? {};
   const client = clients[0] ?? {};
   const queries = openToSignedIn('Query');
+  const queryRules = ruleSteps('Query');
+  const feed = feedFunction();
   const mutations = openToSignedIn('Mutation');
   const subscriptions = openToSignedIn('Subscription');
   const tables = resources('Custom::AmplifyDynamoDBTable');
@@ -191,20 +269,68 @@ function checks() {
       ),
     ],
     [
-      'nobody signed in can write calendar data directly',
-      MODELS.every((model) =>
+      "a signed-in person can read their own subscription link and nobody else's",
+      OWN_MODELS.every((model) =>
+        [`get${model}`, `list${model}s`, `${model[0].toLowerCase()}${model.slice(1)}ByHash`].every(
+          (query) => onlyOwn(queryRules.get(query) ?? []),
+        ),
+      ),
+    ],
+    [
+      'nobody signed in can write calendar data or a subscription link directly',
+      [...MODELS, ...OWN_MODELS].every((model) =>
         ['create', 'update', 'delete'].every((verb) => mutations.get(`${verb}${model}`) === false),
       ),
     ],
     [
-      "the commands function is told Susan's time zone",
+      "the commands and feed functions are told Susan's time zone",
       resources('AWS::Lambda::Function').filter(
         (lambda) => lambda.Environment?.Variables?.SUSAN_TIME_ZONE,
-      ).length === 1,
+      ).length === 2,
+    ],
+    [
+      // The feed has the only public address. Its link is checked inside the function.
+      'the subscription feed has the only public address, with a cap on requests at once',
+      feed.urls.length === 1 &&
+        feed.urls[0].Properties.AuthType === 'NONE' &&
+        feed.properties.ReservedConcurrentExecutions > 0,
+    ],
+    [
+      // Its environment names the two tables it reads, from the tables' own stacks.
+      'the subscription feed is told the Appointment and SubscriptionLink tables',
+      ['Appointment', 'SubscriptionLink'].every((model) =>
+        JSON.stringify(
+          feed.properties.Environment?.Variables?.[
+            model === 'Appointment' ? 'APPOINTMENT_TABLE' : 'SUBSCRIPTION_LINK_TABLE'
+          ] ?? '',
+        ).includes(`amplifyData${model}${model}Table`),
+      ),
+    ],
+    [
+      'the hash index the subscription feed reads is the one on the SubscriptionLink table',
+      Boolean(feedIndex) &&
+        indexesOf('SubscriptionLink').join() === feedIndex &&
+        feed.code.includes(`"${feedIndex}"`),
+    ],
+    [
+      // Its link and the Appointments are read from the tables, because the data API's own reads
+      // are not strongly consistent (amplify/calendar/feed-store.ts).
+      'the subscription feed may only read the tables, and not through the data API',
+      feed.actions.length > 0 &&
+        feed.actions.every((action) =>
+          ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:Scan'].includes(action),
+        ),
+    ],
+    [
+      // Its three table reads (the person's link, an Appointment, every Appointment) are each
+      // written with ConsistentRead true, which the bundler writes as `!0`.
+      'the subscription feed reads its link and the Appointments with strongly consistent reads',
+      (feed.code.match(/ConsistentRead:\s*(?:!0|true)\b/g) ?? []).length >= 3 &&
+        !/ConsistentRead:\s*(?:!1|false)\b/.test(feed.code),
     ],
     [
       'every table can be restored to a point in time',
-      tables.length === MODELS.length + CLOSED_MODELS.length &&
+      tables.length === MODELS.length + OWN_MODELS.length + CLOSED_MODELS.length &&
         tables.every(
           (table) => table.pointInTimeRecoverySpecification?.pointInTimeRecoveryEnabled === true,
         ),

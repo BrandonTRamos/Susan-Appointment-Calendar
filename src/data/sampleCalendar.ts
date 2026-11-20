@@ -10,6 +10,7 @@ import {
   type CalendarCore,
   type Clock,
   type MemoryStore,
+  subscriptionAddress,
   type NewAppointment,
 } from '../lib/calendar';
 import { addDays, today } from '../lib/localTime';
@@ -19,6 +20,9 @@ import type { CalendarClient } from './calendarClient';
 const YOU: Actor = { person: { id: 'sample-you', name: 'You' }, viaAgent: false };
 const LINDA: Actor = { person: { id: 'sample-linda', name: 'Linda' }, viaAgent: false };
 const MARK: Actor = { person: { id: 'sample-mark', name: 'Mark' }, viaAgent: false };
+
+/** Where a sample link points. Nothing answers there: a sample link is only for seeing. */
+export const SAMPLE_FEED_URL = 'https://feed.example.com/';
 
 /** Invented Appointments, as [days from today, who added it, its details]. */
 const SAMPLES: [number, Actor, Omit<NewAppointment, 'date'>][] = [
@@ -92,5 +96,14 @@ export function createSampleCalendar(
     changeAppointment: (id, changes) => core.changeAppointment(YOU, id, changes),
     cancelAppointment: (id) => core.cancelAppointment(YOU, id),
     deleteAppointment: (id) => core.deleteAppointment(YOU, id),
+    async subscriptionLink() {
+      const link = await store.subscriptionLinkOf(YOU.person.id);
+      return link && { madeAt: link.madeAt };
+    },
+    async makeSubscriptionLink() {
+      const { secret, madeAt } = await core.makeSubscriptionLink(YOU);
+      return { address: subscriptionAddress(SAMPLE_FEED_URL, secret), madeAt };
+    },
+    switchOffSubscriptionLink: () => core.switchOffSubscriptionLink(YOU),
   };
 }

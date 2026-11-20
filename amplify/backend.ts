@@ -1,4 +1,6 @@
 import { defineBackend } from '@aws-amplify/backend';
+import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
+import { FunctionUrlAuthType } from 'aws-cdk-lib/aws-lambda';
 import { resolveContactEmail, resolveOwnerName } from '../src/lib/publicPage';
 import { resolveTimeZone } from '../src/lib/timeZone';
 import { auth } from './auth/resource';
@@ -6,8 +8,15 @@ import { configureProjectTags } from './cost-tags';
 import { data } from './data/resource';
 import { appNotifications } from './functions/app-notifications/resource';
 import { calendarCommands } from './functions/calendar-commands/resource';
+import { subscriptionFeed } from './functions/subscription-feed/resource';
 
-const backend = defineBackend({ auth, data, calendarCommands, appNotifications });
+const backend = defineBackend({
+  auth,
+  data,
+  calendarCommands,
+  subscriptionFeed,
+  appNotifications,
+});
 
 // COST_TAG keeps separate deployments apart in billing; main also tags its own Hosting app.
 configureProjectTags(backend.stack, process.env.COST_TAG || 'susans-calendar', {
@@ -46,13 +55,40 @@ userPool.grant(
 );
 backend.calendarCommands.addEnvironment('USER_POOL_ID', userPool.userPoolId);
 
-// For the app (src/config.ts): Susan's time zone, and the contact address and owner's name shown on
-// the public pages. A value that isn't a time zone or an email address fails the deploy. A value
-// that isn't set is left out.
+// The calendar subscription's feed, at a public address. Each person's secret link is checked in
+// the function (amplify/functions/subscription-feed/feed.ts). The address is public, so concurrent
+// requests are capped: plenty for a handful of calendar apps refreshing, and a ceiling on cost if
+// something floods it. Requests over the cap get 429 Too Many Requests.
+const feedUrl = backend.subscriptionFeed.resources.lambda.addFunctionUrl({
+  authType: FunctionUrlAuthType.NONE,
+});
+backend.subscriptionFeed.resources.cfnResources.cfnFunction.reservedConcurrentExecutions = 3;
+
+// The feed reads the Appointment and SubscriptionLink tables itself, with strongly consistent reads,
+// which the data API's reads are not (amplify/calendar/feed-store.ts). It may read them and nothing
+// more. Writing still goes only through the calendar core and the data API.
+const feedTables = {
+  APPOINTMENT_TABLE: backend.data.resources.tables['Appointment'],
+  SUBSCRIPTION_LINK_TABLE: backend.data.resources.tables['SubscriptionLink'],
+};
+for (const [variable, table] of Object.entries(feedTables)) {
+  backend.subscriptionFeed.addEnvironment(variable, table.tableName);
+  backend.subscriptionFeed.resources.lambda.addToRolePolicy(
+    new PolicyStatement({
+      actions: ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:Scan'],
+      resources: [table.tableArn, `${table.tableArn}/index/*`],
+    }),
+  );
+}
+
+// For the app (src/config.ts): Susan's time zone; the contact address and owner's name shown on the
+// public pages; and the feed's address, which each person's link is made from. A value that isn't a
+// time zone or an email address fails the deploy. A value that isn't set is left out.
 backend.addOutput({
   custom: {
     timeZone: resolveTimeZone(process.env.SUSAN_TIME_ZONE),
     contactEmail: resolveContactEmail(process.env.CONTACT_EMAIL) ?? undefined,
     ownerName: resolveOwnerName(process.env.OWNER_NAME) ?? undefined,
+    subscriptionFeedUrl: feedUrl.url,
   },
 });

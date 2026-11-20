@@ -5,14 +5,19 @@
 import { CONNECTION_STATE_CHANGE, ConnectionState, generateClient } from 'aws-amplify/data';
 import { Hub } from 'aws-amplify/utils';
 import type { Schema } from '../../amplify/data/resource';
-import { CalendarRefusal, inDateOrder, type Appointment } from '../lib/calendar';
+import {
+  CalendarRefusal,
+  inDateOrder,
+  subscriptionAddress,
+  type Appointment,
+} from '../lib/calendar';
 import {
   COMMAND_FAILED,
   toAppointment,
   type AppointmentRow,
   type CommandAnswer,
 } from '../lib/calendarApi';
-import type { CalendarClient } from './calendarClient';
+import { NO_FEED, type CalendarClient } from './calendarClient';
 
 interface Watcher {
   listener: (appointments: Appointment[]) => void;
@@ -24,8 +29,8 @@ interface Answer {
   errors?: readonly { message: string }[];
 }
 
-/** What a command did, from the mutation's answer: the Appointment as it now is, or a throw. */
-function carriedOut(answer: Answer): Appointment | null {
+/** What a command did, from the mutation's answer, or a throw: the core's refusal, or a failure. */
+function carriedOut(answer: Answer): Exclude<CommandAnswer, { refusal: unknown }> {
   if (answer.errors?.length || answer.data == null) throw new Error(COMMAND_FAILED);
   const said = (
     typeof answer.data === 'string' ? JSON.parse(answer.data) : answer.data
@@ -34,10 +39,25 @@ function carriedOut(answer: Answer): Appointment | null {
     const { reason, message, detail } = said.refusal;
     throw new CalendarRefusal(reason, message, detail);
   }
-  return said.appointment;
+  return said;
 }
 
-export function createAmplifyCalendar(): CalendarClient {
+/** Calls a command, and answers with what it did. */
+async function command(call: () => Promise<Answer>) {
+  let answer: Answer;
+  try {
+    answer = await call();
+  } catch {
+    throw new Error(COMMAND_FAILED);
+  }
+  return carriedOut(answer);
+}
+
+/**
+ * The calendar over the data API. `feedUrl` is the subscription feed's address, from the backend's
+ * outputs (src/config.ts); null when the backend has none.
+ */
+export function createAmplifyCalendar(feedUrl: string | null): CalendarClient {
   const client = generateClient<Schema>();
   const model = client.models.Appointment;
 
@@ -129,17 +149,9 @@ export function createAmplifyCalendar(): CalendarClient {
   }
 
   /** Calls a command and keeps what it answers, so the screen need not wait to hear of it. */
-  async function command(call: () => Promise<Answer>): Promise<Appointment | null> {
-    let answer: Answer;
-    try {
-      answer = await call();
-    } catch {
-      throw new Error(COMMAND_FAILED);
-    }
-    return carriedOut(answer);
-  }
   async function changed(call: () => Promise<Answer>): Promise<Appointment> {
-    const appointment = await command(call);
+    const said = await command(call);
+    const appointment = 'appointment' in said ? said.appointment : null;
     if (!appointment) throw new Error(COMMAND_FAILED);
     put(appointment);
     return appointment;
@@ -168,6 +180,28 @@ export function createAmplifyCalendar(): CalendarClient {
     async deleteAppointment(id) {
       await command(() => client.mutations.removeAppointment({ id }));
       drop(id);
+    },
+
+    // A signed-in person can read only their own link, so the first one found is theirs.
+    async subscriptionLink() {
+      let nextToken: string | null | undefined;
+      do {
+        const page = await client.models.SubscriptionLink.list({ nextToken });
+        if (page.errors?.length) throw new Error(page.errors.map((e) => e.message).join('; '));
+        if (page.data[0]) return { madeAt: page.data[0].madeAt };
+        nextToken = page.nextToken;
+      } while (nextToken);
+      return null;
+    },
+    async makeSubscriptionLink() {
+      if (!feedUrl) throw new Error(NO_FEED);
+      const said = await command(() => client.mutations.makeSubscriptionLink());
+      const made = 'subscriptionLink' in said ? said.subscriptionLink : null;
+      if (!made) throw new Error(COMMAND_FAILED);
+      return { address: subscriptionAddress(feedUrl, made.secret), madeAt: made.madeAt };
+    },
+    async switchOffSubscriptionLink() {
+      await command(() => client.mutations.switchOffSubscriptionLink());
     },
   };
 }

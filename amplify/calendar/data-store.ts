@@ -6,8 +6,8 @@
 import { getAmplifyDataClientConfig } from '@aws-amplify/backend/function/runtime';
 import { Amplify } from 'aws-amplify';
 import { generateClient } from 'aws-amplify/data';
-import type { Appointment, Store } from '../../src/lib/calendar';
-import { toAppointment } from '../../src/lib/calendarApi';
+import type { Appointment, Store, SubscriptionLink } from '../../src/lib/calendar';
+import { toAppointment, type AppointmentRow } from '../../src/lib/calendarApi';
 import type { Schema } from '../data/resource';
 
 type Models = ReturnType<typeof generateClient<Schema>>['models'];
@@ -15,8 +15,12 @@ type Models = ReturnType<typeof generateClient<Schema>>['models'];
 /** The part of the data API the store uses. */
 export interface DataClient {
   models: {
-    Appointment: Pick<Models['Appointment'], 'get' | 'create' | 'update' | 'delete'>;
+    Appointment: Pick<Models['Appointment'], 'get' | 'list' | 'create' | 'update' | 'delete'>;
     ActivityRecord: Pick<Models['ActivityRecord'], 'create'>;
+    SubscriptionLink: Pick<
+      Models['SubscriptionLink'],
+      'get' | 'create' | 'update' | 'delete' | 'subscriptionLinkByHash'
+    >;
   };
 }
 
@@ -25,8 +29,15 @@ function check<T>(result: { data: T; errors?: readonly { message: string }[] }):
   return result.data;
 }
 
+/** Only the fields a subscription link has; the data API adds its own beside them. */
+const toLink = ({ personId, hash, madeAt }: SubscriptionLink): SubscriptionLink => ({
+  personId,
+  hash,
+  madeAt,
+});
+
 export function dataStore(client: DataClient): Store {
-  const { Appointment, ActivityRecord } = client.models;
+  const { Appointment, ActivityRecord, SubscriptionLink } = client.models;
   /** Each Appointment as the core last read it here, until it is written. */
   const read = new Map<string, Appointment>();
   return {
@@ -61,6 +72,36 @@ export function dataStore(client: DataClient): Store {
     },
     async recordActivity(record) {
       check(await ActivityRecord.create(record));
+    },
+    async everyAppointment() {
+      const rows: AppointmentRow[] = [];
+      let nextToken: string | null | undefined;
+      do {
+        const page = await Appointment.list({ limit: 1000, nextToken });
+        rows.push(...check(page));
+        nextToken = page.nextToken;
+      } while (nextToken);
+      return rows.map(toAppointment);
+    },
+    async subscriptionLinkOf(personId) {
+      const row = check(await SubscriptionLink.get({ personId }));
+      return row ? toLink(row) : null;
+    },
+    // The feed does not read through here: the data API's reads are not strongly consistent, so it
+    // reads the tables itself (feed-store.ts). Found through an index, then checked against the
+    // person's link.
+    async subscriptionLinkByHash(hash) {
+      const [found] = check(await SubscriptionLink.subscriptionLinkByHash({ hash }, { limit: 1 }));
+      if (!found) return null;
+      const row = check(await SubscriptionLink.get({ personId: found.personId }));
+      return row && row.hash === hash ? toLink(row) : null;
+    },
+    async keepSubscriptionLink(link) {
+      const had = check(await SubscriptionLink.get({ personId: link.personId }));
+      check(await (had ? SubscriptionLink.update(link) : SubscriptionLink.create(link)));
+    },
+    async removeSubscriptionLink(personId) {
+      check(await SubscriptionLink.delete({ personId }));
     },
   };
 }

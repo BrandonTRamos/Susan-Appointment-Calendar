@@ -17,6 +17,8 @@ export interface RootProps {
   contactEmail: string | null;
   /** Who runs the calendar, as the public pages name them, or null when no name is set. */
   ownerName: string | null;
+  /** The calendar subscription feed's address, or null when the backend has none. */
+  subscriptionFeedUrl?: string | null;
 }
 
 /**
@@ -26,7 +28,13 @@ export interface RootProps {
  * The address is read once: every way between a public page and the calendar is a plain link, which
  * loads the page afresh.
  */
-export function Root({ backend, timeZone, contactEmail, ownerName }: RootProps) {
+export function Root({
+  backend,
+  timeZone,
+  contactEmail,
+  ownerName,
+  subscriptionFeedUrl = null,
+}: RootProps) {
   const publicPage = publicPageAt(window.location.pathname);
   if (publicPage)
     return (
@@ -40,7 +48,13 @@ export function Root({ backend, timeZone, contactEmail, ownerName }: RootProps) 
   if (!backend) return <SampleApp timeZone={timeZone} />;
   return (
     <SignedIn>
-      {(person) => <SignedInApp displayName={person.displayName} timeZone={timeZone} />}
+      {(person) => (
+        <SignedInApp
+          displayName={person.displayName}
+          timeZone={timeZone}
+          subscriptionFeedUrl={subscriptionFeedUrl}
+        />
+      )}
     </SignedIn>
   );
 }
@@ -55,8 +69,16 @@ function SampleApp({ timeZone }: { timeZone: string }) {
  * The calendar for a signed-in person. SignedIn mounts this afresh for each person, so what one
  * person's session read is never shown to the next.
  */
-function SignedInApp({ displayName, timeZone }: { displayName: string | null; timeZone: string }) {
-  const [calendar] = useState(createAmplifyCalendar);
+function SignedInApp({
+  displayName,
+  timeZone,
+  subscriptionFeedUrl,
+}: {
+  displayName: string | null;
+  timeZone: string;
+  subscriptionFeedUrl: string | null;
+}) {
+  const [calendar] = useState(() => createAmplifyCalendar(subscriptionFeedUrl));
   const [devices] = useState(createAppNotificationDevices);
   return (
     <App

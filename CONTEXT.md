@@ -67,3 +67,7 @@ _Avoid_: Message, instructions, comment
 **Private notes**:
 Words on an Appointment that Admins and Susan can read in the calendar but that are never sent in a Reminder.
 _Avoid_: Admin notes, internal notes, comments
+
+**Subscription link**:
+A person's own secret address for seeing Susan's Appointments in their own calendar app, view-only. It shows active Appointments without their Private notes. Each person has at most one; getting a new one switches off the old, and only a hash of it is kept.
+_Avoid_: iCal link, feed URL, share link, calendar sync
