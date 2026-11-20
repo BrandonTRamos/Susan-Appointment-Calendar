@@ -19,8 +19,10 @@ change it, cancel it, and delete one entered by mistake, and is warned when one 
 what one person changes shows for the others as it happens. Each Appointment carries its Reminders,
 showing when each goes out and the exact words Susan will read. The Month tab shows a month at a
 glance, and Past lists the Appointments that have already happened. Anyone signed in can also get
-their own [calendar subscription](#calendar-subscription) link. No text is sent yet: sending texts
-and Replies arrive with the later tickets.
+their own [calendar subscription](#calendar-subscription) link. Reminders go out on schedule and
+each Appointment shows every text about it with its status, but no text reaches a phone yet: until
+Textbelt is connected (ticket 13) a stand-in records each text instead (see
+[Texts to Susan](#texts-to-susan)). Replies arrive with a later ticket.
 
 ## Run it locally
 
@@ -72,8 +74,10 @@ sign up, sign-in has no second step, anyone signed in can read everything in the
 calendar core's commands (and turning app notifications on and off for a device) are the only way a
 signed-in person can change anything, nobody signed in can read the devices app notifications go to
 or the key that signs them, the app-notifications function reaches nothing else, a device is only
-ever deleted on a condition checked as it is deleted, no rule tells Susan from an Admin, every table can be restored to a
-point in time, and everything carries the cost tag.
+ever deleted on a condition checked as it is deleted, no rule tells Susan from an Admin, one
+scheduled run sends texts every minute and never overlaps itself, a text is claimed by creating its
+record, which fails when it is already there, every table can be restored to a point in time, and
+everything carries the cost tag.
 
 ## How the calendar is kept
 
@@ -82,7 +86,7 @@ is the only thing that writes calendar data.
 
 - The app reads Appointments straight from the data API and is sent every change as it happens.
 - The app changes the calendar only by calling the core's commands (add, change, cancel and delete an
-  Appointment). They run in a backend function, `calendar-commands`; nothing a signed-in person can
+  Appointment; change the settings; send a test text). They run in a backend function, `calendar-commands`; nothing a signed-in person can
   call writes calendar data any other way.
 - Each command is carried out as the signed-in person. The Appointment shows who added it and who
   last changed it, and the calendar keeps a record of each change.
@@ -92,6 +96,27 @@ is the only thing that writes calendar data.
 - The tables can be restored to any moment in the last 35 days, and on `main` they cannot be deleted
   by accident.
 - On sample data the same core runs in the browser, over a store kept in memory.
+
+## Texts to Susan
+
+Every minute the `send-texts` backend function runs the calendar core's "run what is due", which
+sends each Reminder that has come due, once, and keeps a record of every text: its kind, the
+Appointment it is about, its words, when it was due, and whether it is waiting, sent, delivered,
+failed or not sent. The Appointment's screen shows each Reminder's status and every text about it.
+
+- **Nothing reaches a phone yet.** Until ticket 13 connects Textbelt, texts go to a stand-in that
+  records them and sends nothing, in the backend and on sample data alike; Settings says so.
+- **Settings → Susan's phone and contact** holds Susan's mobile number, and the name and number the
+  automatic answer to a Reply will give her. With no number set, nothing is sent, and each Reminder
+  that comes due is recorded as not sent. **Send a test text** sends one by the same path and shows
+  its status.
+- A Reminder found late is still sent while its Appointment has not started, and recorded as not
+  sent once it has. One whose time had already passed when it was set is never sent. None is sent
+  for a cancelled Appointment.
+- Only one run goes at a time, and each text is claimed before it is sent, so none goes twice. A
+  send that might not have gone through is tried again, up to three times.
+- Logs never hold Susan's number or the words of a text: they say only how many texts ended up in
+  each status, and what broke.
 
 ## Calendar subscription
 

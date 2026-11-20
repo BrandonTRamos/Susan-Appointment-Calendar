@@ -1,5 +1,5 @@
 // The calendar core: every rule about the calendar, and the only thing that writes calendar data.
-// The app, and later the MCP server and the scheduled run, all change the calendar by calling the
+// The app, the scheduled run, and later the MCP server, all change the calendar by calling the
 // commands here, so none of them can get round a rule.
 //
 // It reaches the outside world only through its ports (ports.ts) and holds no provider-specific

@@ -205,6 +205,8 @@ Admins are kept in the loop. They get an Alert, by email and app notification, w
 - A new Appointment starts with one Reminder: the day before at 6:00 pm. The default set is not configurable in this version.
 - The form warns when a Reminder falls between 9:00 pm and 7:00 am, tells the person when a Reminder's time has already passed, and asks for confirmation before saving an Appointment with no Reminder still to be sent.
 - A due Reminder is sent on the next run. A Reminder found overdue is still sent as long as the Appointment has not started; otherwise it is recorded as not sent and an Alert is raised.
+- **Decided by the owner during ticket 11:** a Reminder whose due time had already passed when that time was set is never sent and leaves no record; the form already tells the person so. Only a Reminder whose time was still to come when it was set, and that became overdue while it waited, is caught up, and only while the Appointment has not started. So each Reminder keeps when its due time was last worked out (`setAt`): when it was set, changed or confirmed after review, or moved by its Appointment. An edit that leaves its time alone, such as a new note, leaves this alone too, and it is not a change to the Reminders that an Activity update reports.
+- Reminders kept before ticket 11 have no such record. Each is taken to have been set at its Appointment's last save, the latest moment anyone could have set it, until the next save records that moment for it; one whose Appointment has already started is let go without a record, since nothing was sending texts then.
 - A Reminder that was sent and whose Appointment then moves is due again at its newly calculated time.
 
 ### Wording
@@ -224,9 +226,13 @@ Admins are kept in the loop. They get an Alert, by email and app notification, w
 
 ### Sending and tracking texts
 
-- A scheduled run happens every minute, with no overlapping runs, and asks the core to send whatever is due.
+- A scheduled run happens every minute, with no overlapping runs, and asks the core to send whatever is due. Only one run may go at a time, and a run that cannot start is dropped rather than queued or retried, since the next is a minute away.
+- Until Textbelt is connected (ticket 13), and wherever its key is absent, including sample data, the text sender is a stand-in that records each text instead of sending it. The app says so in Settings.
 - Every text (Reminder, Change notice, automatic answer, test text) is recorded with its kind, the Appointment it concerns, its words, when it was due, and a status of waiting, sent, delivered, failed or not sent.
 - Each text has a deterministic identity derived from what it is about and when it was due, and is claimed before sending, so that two runs cannot send the same text twice. An ambiguous sending failure is retried a small number of times; a rare duplicate is preferred to a missed Reminder.
+- As built in ticket 11: a text is claimed by creating its record under that identity, which the data API refuses when the record exists. A Reminder's identity names the Appointment, the Reminder and its due time, so a Reminder whose Appointment moves is a new text at its new time. A send that might or might not have gone through stays waiting and is tried again by a later run, at least two minutes after the last try, up to three tries in all; a later run also takes up a claim a stopped run left behind. A refused send is failed at once and not tried again. A text that has waited past its Appointment's start, or whose Appointment was cancelled, is not tried again.
+- While Susan's mobile number is not set, nothing is sent: each Reminder that comes due is recorded as not sent, saying so, and setting the number later sends none of them.
+- Deleting an Appointment is refused once any text about it may have reached Susan: anything but a text recorded as not sent, or one the sender refused outright.
 - Textbelt does not report delivery by itself. Each run asks it for the status of every text that is sent but not yet settled, and passes the answer to the core. Textbelt's `DELIVERED` becomes delivered and `FAILED` becomes failed; `SENDING`, `SENT` and `UNKNOWN` leave the text as sent.
 - A text counts as failed when Textbelt refuses it or reports failure, when sending fails after retries, or when no delivery confirmation arrives within a configurable period (starting at 30 minutes). The Alert distinguishes "failed" from "not confirmed delivered".
 - "Delivered" means the carrier accepted the text for her phone. The app never claims she read it.
@@ -262,6 +268,7 @@ Admins are kept in the loop. They get an Alert, by email and app notification, w
 ### Settings and public page
 
 - Settings hold Susan's mobile number and the contact name and phone number for the automatic answer. The Textbelt key is held as a deployment secret, never in data or code.
+- Both numbers are US numbers, kept as +1 and ten digits however they were typed. Anyone signed in can read and change the settings, through the core's command; a change to them changes no Appointment and leaves no activity record. A "Send a test text" button beside them sends a Test text by the same path as a Reminder and shows its status as it changes.
 - A public page at `/about`, reachable without signing in, carries a short description of the service, a contact address, a statement that Susan has agreed to be texted with the Confirmation text beneath it, a privacy policy stating that phone numbers and consent are never shared with third parties, and terms covering message frequency, "message and data rates may apply", and STOP and HELP. The policy and the terms also have a page each, at `/privacy` and `/terms`, so that either can be handed to someone on its own. No registration depends on these pages (ADR 0002); they are the plain account of what the calendar texts and what it does with her number.
 - The contact address and the owner's name shown on the public pages are set at deploy, from the environment, and are not written in the repository.
 
