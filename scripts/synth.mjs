@@ -52,6 +52,22 @@ function stepWords(step, which) {
   return file ? readFileSync(join(out, `asset.${file}`), 'utf8') : '';
 }
 
+/** The data API's schema, as it was synthesized: kept in the stack or in a file beside it. */
+function schemaWords() {
+  const [schema] = resources('AWS::AppSync::GraphQLSchema');
+  if (typeof schema?.Definition === 'string') return schema.Definition;
+  const file = /[0-9a-f]{64}\.graphql/.exec(JSON.stringify(schema?.DefinitionS3Location ?? ''));
+  return file ? readFileSync(join(out, `asset.${file[0]}`), 'utf8') : '';
+}
+
+/** The fields of one type or input in a schema, by name, each with its type as written. */
+function fieldsOf(schema, kind, name) {
+  const body = new RegExp(`^${kind} ${name}\\b[^{]*\\{([^}]*)\\}`, 'm').exec(schema)?.[1] ?? '';
+  return new Map(
+    [...body.matchAll(/^\s*(\w+):\s*(\S+)/gm)].map(([, field, type]) => [field, type]),
+  );
+}
+
 // Amplify writes each operation's rule for a signed-in person between these two lines. Nothing
 // between them means a signed-in person may not call it.
 const SIGNED_IN = '#if( $util.authType() == "User Pool Authorization" )';
@@ -465,6 +481,8 @@ function checks() {
     /"condition":\s*\$condition/.test(words);
   /** The function URL a variable names, by the logical ID of its resource. */
   const urlOf = (value) => JSON.stringify(value ?? '');
+  const schema = schemaWords();
+  const told = fieldsOf(schema, 'type', 'Told');
   const mutations = openToSignedIn('Mutation');
   const subscriptions = openToSignedIn('Subscription');
   const tables = resources('Custom::AmplifyDynamoDBTable');
@@ -775,6 +793,20 @@ function checks() {
         retake.includes('$util.qr($UpdateItem.put("condition", $Conditions))') &&
         run.code.includes('updateText(input: $input, condition: $condition)') &&
         /status:\s*\{\s*eq:\s*"waiting"\s*\}/.test(run.code),
+    ],
+    [
+      // What each text told Susan (Told in src/lib/calendar/texts.ts) is kept on its own record,
+      // written by the claim and by the retake, so it outlives any later change to the Appointment.
+      // The scheduled run works out Change notices from it (src/lib/calendar/changeNotices.ts).
+      "every text's record keeps what it told Susan, from which the scheduled run works out Change notices",
+      fieldsOf(schema, 'type', 'Text').get('told') === 'Told' &&
+        told.get('date') === 'AWSDate!' &&
+        told.get('time') === 'String!' &&
+        told.get('cancelled') === 'Boolean!' &&
+        ['CreateTextInput', 'UpdateTextInput'].every(
+          (input) => fieldsOf(schema, 'input', input).get('told') === 'ToldInput',
+        ) &&
+        run.code.includes('changeNotice:'),
     ],
     [
       // Alerts (amplify/backend.ts): every Admin, with the address each signs in with, comes from

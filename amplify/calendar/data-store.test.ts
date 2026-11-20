@@ -635,6 +635,7 @@ describe('the calendar kept in the data API', () => {
       replyId: null,
       creditLeft: null,
       alert: null,
+      told: null,
     };
     await store.claimText(waiting);
     const again = { ...waiting, attempts: 2, triedAt: '2026-11-19T20:02:00.000Z' };
@@ -816,6 +817,8 @@ describe('the calendar kept in the data API', () => {
       replyId: null,
       creditLeft: 12,
       alert: null,
+      // What it told her goes in and comes back as it was.
+      told: { date: added.date, time: added.time, cancelled: false },
     };
     expect(await store.claimText(text)).toBe(true);
     expect(await store.textsAbout(added.id)).toEqual([text]);

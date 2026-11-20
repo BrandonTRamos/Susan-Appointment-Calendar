@@ -53,6 +53,13 @@ import {
   type ReminderUnit,
   type Stamp,
 } from './appointment';
+import {
+  changeNoticeCutoff,
+  changeNoticeOwed,
+  differsFrom,
+  lastTold,
+  toldOf,
+} from './changeNotices';
 import { calendarFeed } from './feed';
 import type {
   AdminMessenger,
@@ -63,7 +70,7 @@ import type {
   Store,
   TextSender,
 } from './ports';
-import { reminderDue, reminderWords, STARTING_REMINDER } from './reminders';
+import { changeNoticeWords, reminderDue, reminderWords, STARTING_REMINDER } from './reminders';
 import {
   AUTOMATIC_ANSWER_GAP,
   automaticAnswerNumber,
@@ -272,6 +279,11 @@ export interface CalendarCore {
   /**
    * The scheduled run: sends every text that is due, each once, and tries again any that might not
    * have gone. Answers with the record of each text it sent, tried or recorded as not sent.
+   *
+   * A Change notice is sent once an Appointment that Susan has been texted about differs from what
+   * she was last told, by its date and time or by being cancelled, a settling period after its last
+   * edit, and overnight not before 7:00 am unless its old or new time comes first
+   * (changeNotices.ts). It goes before any Reminder due in the same run.
    *
    * A due Reminder is sent; one found overdue is still sent while its Appointment has not started,
    * and recorded as not sent once it has. One whose time had already passed when it was set is never
@@ -1448,6 +1460,7 @@ export function createCalendarCore({
         reminderId: null,
         words: TEST_TEXT_WORDS,
         dueAt: at,
+        told: null,
       });
       if (!(await store.claimText(text)))
         throw new CalendarRefusal('invalid', 'A test text was sent just now. Wait a moment.');
@@ -1467,6 +1480,11 @@ export function createCalendarCore({
       const { susansNumber } = settings;
       const kept = new Map(texts.map((text) => [text.id, text]));
       const done: Text[] = [];
+      /** Keeps what became of a text, so that later decisions in this run see it. */
+      const did = (text: Text) => {
+        kept.set(text.id, text);
+        done.push(text);
+      };
 
       // Texts that were tried and might not have gone, and claims a run left behind.
       const waiting = texts
@@ -1488,28 +1506,59 @@ export function createCalendarCore({
               reason: 'numberChanged',
               triedAt: at,
             });
-            if (await store.retakeText(next, text)) done.push(next);
+            if (await store.retakeText(next, text)) did(next);
             continue;
           }
         }
-        const retry = retrying(text, appointments, now, Boolean(to));
+        const retry = retrying(text, appointments, texts, now, Boolean(to));
         if (retry === 'hold') continue;
         // Taken up only if no other run has taken it up since it was read.
         const next: Text = alertMarked(
           'reason' in retry
             ? { ...text, status: 'failed', reason: retry.reason, triedAt: at }
-            : { ...text, words: retry.words, attempts: text.attempts + 1, triedAt: at },
+            : {
+                ...text,
+                words: retry.words,
+                told: retry.told,
+                attempts: text.attempts + 1,
+                triedAt: at,
+              },
         );
         if (!(await store.retakeText(next, text))) continue;
         if ('reason' in retry) {
-          done.push(next);
+          did(next);
           continue;
         }
-        const startsAt =
-          text.kind === 'reminder'
-            ? (appointments.find((each) => each.id === text.appointmentId)?.startsAt ?? null)
-            : null;
-        done.push(await attempt(next, to!, { startsAt, tried: text.attempts }));
+        did(await attempt(next, to!, { startsAt: retry.cutoff, tried: text.attempts }));
+      }
+
+      // Change notices that have come due: before Reminders, so that she hears of a change first.
+      for (const appointment of appointments) {
+        const notice = changeNoticeOwed(appointment, [...kept.values()], now, timeZone);
+        if (!notice || notice.plan === 'later' || kept.has(notice.id)) continue;
+        const text = newText({
+          id: notice.id,
+          kind: 'changeNotice',
+          appointmentId: appointment.id,
+          reminderId: null,
+          // The days in words are right for the moment it goes out.
+          words: changeNoticeWords(
+            appointment,
+            notice,
+            { dueAt: notice.plan === 'send' ? at : notice.dueAt },
+            timeZone,
+          ),
+          dueAt: notice.dueAt,
+          told: notice.told,
+        });
+        if (notice.plan === 'tooLate' || !susansNumber) {
+          const reason: TextReason = notice.plan === 'tooLate' ? 'tooLate' : 'noNumber';
+          const notSent = alertMarked({ ...text, status: 'notSent', reason, attempts: 0 });
+          if (await store.claimText(notSent)) did(notSent);
+          continue;
+        }
+        if (!(await store.claimText(text))) continue;
+        did(await attempt(text, susansNumber, { startsAt: notice.cutoff, tried: 0 }));
       }
 
       // Reminders that have come due.
@@ -1535,15 +1584,16 @@ export function createCalendarCore({
             timeZone,
           ),
           dueAt: reminder.dueAt,
+          told: toldOf(appointment),
         });
         if (plan === 'tooLate' || !susansNumber) {
           const reason: TextReason = plan === 'tooLate' ? 'tooLate' : 'noNumber';
           const notSent = alertMarked({ ...text, status: 'notSent', reason, attempts: 0 });
-          if (await store.claimText(notSent)) done.push(notSent);
+          if (await store.claimText(notSent)) did(notSent);
           continue;
         }
         if (!(await store.claimText(text))) continue;
-        done.push(await attempt(text, susansNumber, { startsAt: appointment.startsAt, tried: 0 }));
+        did(await attempt(text, susansNumber, { startsAt: appointment.startsAt, tried: 0 }));
       }
 
       // The automatic answer to each Reply that has had none decided, the oldest first. At most one
@@ -1591,6 +1641,7 @@ export function createCalendarCore({
           reminderId: null,
           replyId: reply.id,
           words: automaticAnswerWords(current),
+          told: null,
           // When it was claimed for sending: what the gap is counted from.
           dueAt: now.toISOString(),
         });
@@ -1856,19 +1907,27 @@ export function createCalendarCore({
 
   /**
    * What to do with a text that was tried and might not have gone, now that it is due to be tried
-   * again: try it, with the words it would now have; hold it; or give it up as failed, since its
-   * earlier try may still have reached Susan. A Reminder is tried again only while it is still the
-   * same Reminder at the same time, on an Appointment that is active and has not started, and not
-   * while it is flagged for review.
+   * again: try it, with the words it would now have and the moment past which it is too late; hold
+   * it; or give it up as failed, since its earlier try may still have reached Susan. A Reminder is
+   * tried again only while it is still the same Reminder at the same time, on an Appointment that
+   * is active and has not started, and not while it is flagged for review. A Change notice is tried
+   * again only while the Appointment is still as it tells her, and its old or new time is to come.
    */
   function retrying(
     text: Text,
     appointments: readonly Appointment[],
+    texts: readonly Text[],
     now: Date,
     numberSet: boolean,
-  ): 'hold' | { reason: TextReason } | { words: string } {
+  ):
+    'hold' | { reason: TextReason } | { words: string; told: Text['told']; cutoff: string | null } {
     if (text.attempts >= SEND_ATTEMPTS) return { reason: 'gaveUp' };
-    if (text.kind !== 'reminder') return numberSet ? { words: text.words } : { reason: 'noNumber' };
+    if (text.kind === 'changeNotice')
+      return retryingNotice(text, appointments, texts, now, numberSet);
+    if (text.kind !== 'reminder')
+      return numberSet
+        ? { words: text.words, told: text.told, cutoff: null }
+        : { reason: 'noNumber' };
     const appointment = appointments.find((each) => each.id === text.appointmentId);
     if (!appointment || appointment.state !== 'active') return { reason: 'cancelled' };
     if (now.toISOString() >= appointment.startsAt) return { reason: 'tooLate' };
@@ -1880,7 +1939,29 @@ export function createCalendarCore({
     if (plan !== 'send') return { reason: 'outdated' };
     if (!numberSet) return { reason: 'noNumber' };
     // Its details may have changed since it was first tried: a Reminder carries them as they are.
-    return { words: reminderWords(appointment, { dueAt: now }, timeZone) };
+    return {
+      words: reminderWords(appointment, { dueAt: now }, timeZone),
+      told: toldOf(appointment),
+      cutoff: appointment.startsAt,
+    };
+  }
+
+  /** What to do with a Change notice that is due to be tried again (see `retrying`). */
+  function retryingNotice(
+    text: Text,
+    appointments: readonly Appointment[],
+    texts: readonly Text[],
+    now: Date,
+    numberSet: boolean,
+  ): { reason: TextReason } | { words: string; told: Text['told']; cutoff: string } {
+    const appointment = appointments.find((each) => each.id === text.appointmentId);
+    // Changed again since: what it says is no longer the outcome. A later notice tells her that.
+    if (!appointment || !text.told || differsFrom(text.told, appointment))
+      return { reason: 'outdated' };
+    const cutoff = changeNoticeCutoff(lastTold(appointment.id, texts, text), text.told, timeZone);
+    if (now.toISOString() >= cutoff) return { reason: 'tooLate' };
+    if (!numberSet) return { reason: 'noNumber' };
+    return { words: text.words, told: text.told, cutoff };
   }
 
   /**
@@ -1906,7 +1987,7 @@ export function createCalendarCore({
 
   /** The record of a text about to be tried for the first time. */
   function newText(
-    about: Pick<Text, 'id' | 'kind' | 'appointmentId' | 'reminderId' | 'words' | 'dueAt'> &
+    about: Pick<Text, 'id' | 'kind' | 'appointmentId' | 'reminderId' | 'words' | 'dueAt' | 'told'> &
       Partial<Pick<Text, 'replyId'>>,
   ): Text {
     return {

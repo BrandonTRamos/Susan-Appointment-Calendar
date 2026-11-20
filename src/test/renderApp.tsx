@@ -70,6 +70,7 @@ export async function sentReminder(calendar: SampleCalendar, appointment: Appoin
     replyId: null,
     creditLeft: null,
     alert: null,
+    told: { date: appointment.date, time: appointment.time, cancelled: false },
   };
   await calendar.store.claimText(text);
   return text;

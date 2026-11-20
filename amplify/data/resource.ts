@@ -172,6 +172,14 @@ const schema = a
         allow.ownerDefinedIn('personId').identityClaim('sub').to(['read']),
       ]),
 
+    // What a text told Susan of its Appointment (Told in src/lib/calendar/texts.ts): its date and
+    // time, Susan's local time, and whether it said it is cancelled.
+    Told: a.customType({
+      date: a.date().required(),
+      time: a.string().required(), // 'HH:MM'
+      cancelled: a.boolean().required(),
+    }),
+
     // Each person's agent keys (AgentKey in src/lib/calendar/agentKeys.ts), for their AI agent to use
     // the MCP server as them: a hash of each, never the key itself, which is also how the person
     // names one to revoke it. A signed-in person can read only their own, and nobody signed in can
@@ -218,6 +226,9 @@ const schema = a
         alertTriedAt: a.datetime(),
         alertSent: a.string().array(),
         alertRefused: a.string().array(),
+        // What it told her, from which Change notices are worked out. Missing on a test text, and
+        // on a text recorded before ticket 14.
+        told: a.ref('Told'),
       })
       .secondaryIndexes((index) => [index('appointmentId').queryField('textsByAppointment')])
       .authorization((allow) => [allow.authenticated().to(['read'])]),

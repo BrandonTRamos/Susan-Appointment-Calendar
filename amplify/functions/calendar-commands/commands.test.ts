@@ -309,6 +309,7 @@ describe('when a command cannot be carried out', () => {
       replyId: null,
       creditLeft: 40,
       alert: null,
+      told: { date: added.date, time: added.time, cancelled: false },
     });
     expect(await call('removeAppointment', { id })).toMatchObject({
       refusal: { reason: 'texted', message: expect.stringMatching(/Cancel it instead/) },

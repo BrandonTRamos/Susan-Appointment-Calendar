@@ -2,6 +2,7 @@
 import { act, cleanup, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createSampleCalendar } from '../data/sampleCalendar';
+import { changeNoticeOwed } from '../lib/calendar';
 import { atWidth, daysFromToday, EASTERN, linda, renderApp, sentReminder } from '../test/renderApp';
 
 const realMatchMedia = window.matchMedia;
@@ -199,6 +200,7 @@ describe.each(['phone', 'desktop'] as const)(
           replyId: null,
           creditLeft: null,
           alert: null,
+          told: { date: added.date, time: added.time, cancelled: false },
         });
       });
       expect(await inReminders('Sent')).toBeTruthy();
@@ -219,6 +221,80 @@ describe.each(['phone', 'desktop'] as const)(
         await inReminders(/goes out only once someone keeps its time or changes it/),
       ).toBeTruthy();
       expect(screen.queryByText('Waiting')).not.toBeInTheDocument();
+    });
+
+    it('shows a Change notice still to go out, with its words, once a reminded Appointment moves', async () => {
+      const calendar = createSampleCalendar(EASTERN, { empty: true });
+      const added = await calendar.core.addAppointment(linda, {
+        what: 'Eye exam',
+        date: daysFromToday(4),
+        time: '15:30',
+      });
+      await sentReminder(calendar, added);
+      await calendar.core.changeAppointment(linda, added.id, { time: '16:30' });
+      renderApp(`/appointments/${added.id}`, { calendar });
+      const list = within(await (await texts()).findByRole('list', { name: 'Texts to Susan' }));
+      const [notice, reminder] = list.getAllByRole('listitem');
+      expect(within(notice).getByText('Change notice')).toBeTruthy();
+      expect(within(notice).getByText('Waiting')).toBeTruthy();
+      expect(
+        within(notice).getByText(
+          /^Susan's Calendar: Change: Eye exam has moved from .* at 3:30 pm to .* at 4:30 pm\.$/,
+        ),
+      ).toBeTruthy();
+      expect(within(reminder).getByText('Reminder')).toBeTruthy();
+    });
+
+    it('says a Change notice still to go out will not be sent when its words hold a web address', async () => {
+      const calendar = createSampleCalendar(EASTERN, { empty: true });
+      const added = await calendar.core.addAppointment(linda, {
+        what: 'Eye exam',
+        date: daysFromToday(4),
+        time: '15:30',
+      });
+      await sentReminder(calendar, added);
+      await calendar.core.changeAppointment(linda, added.id, {
+        time: '16:30',
+        withWhom: 'eyes.example.com',
+      });
+      renderApp(`/appointments/${added.id}`, { calendar });
+      const list = within(await (await texts()).findByRole('list', { name: 'Texts to Susan' }));
+      const [notice] = list.getAllByRole('listitem');
+      expect(within(notice).getByText('Change notice')).toBeTruthy();
+      expect(within(notice).getByText('Will not be sent')).toBeTruthy();
+      expect(within(notice).getByText(/texts to Susan cannot carry one/)).toBeTruthy();
+    });
+
+    it('shows a Change notice that went out with its status, like a Reminder', async () => {
+      const calendar = createSampleCalendar(EASTERN, { empty: true });
+      const added = await calendar.core.addAppointment(linda, {
+        what: 'Eye exam',
+        date: daysFromToday(4),
+        time: '15:30',
+      });
+      const reminder = await sentReminder(calendar, added);
+      const words = "Susan's Calendar: Change: Eye exam, Monday at 3:30 pm, is cancelled.";
+      const cancelled = await calendar.core.cancelAppointment(linda, added.id);
+      // The notice the scheduled run would record, refused by the text sender.
+      const owed = changeNoticeOwed(cancelled, [reminder], new Date(), EASTERN);
+      await calendar.store.claimText({
+        ...reminder,
+        id: owed!.id,
+        dueAt: owed!.dueAt,
+        kind: 'changeNotice',
+        reminderId: null,
+        words,
+        status: 'failed',
+        reason: 'refused',
+        told: { date: added.date, time: added.time, cancelled: true },
+      });
+      renderApp(`/appointments/${added.id}`, { calendar });
+      const list = within(await (await texts()).findByRole('list', { name: 'Texts to Susan' }));
+      expect(list.getAllByRole('listitem')).toHaveLength(2);
+      expect(list.getByText('Change notice')).toBeTruthy();
+      expect(list.getByText('Failed')).toBeTruthy();
+      expect(list.getByText('The text was refused, so it did not go.')).toBeTruthy();
+      expect(list.getByText(words)).toBeTruthy();
     });
 
     it('says a cancelled Appointment sends none', async () => {
