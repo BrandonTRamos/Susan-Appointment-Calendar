@@ -14,6 +14,7 @@ import {
 import {
   COMMAND_FAILED,
   toAppointment,
+  toSeries,
   type AppointmentRow,
   type CommandAnswer,
 } from '../lib/calendarApi';
@@ -177,6 +178,17 @@ export function createAmplifyCalendar(feedUrl: string | null): CalendarClient {
     changeAppointment: (id, changes) =>
       changed(() => client.mutations.changeAppointment({ id, changes: JSON.stringify(changes) })),
     cancelAppointment: (id) => changed(() => client.mutations.cancelAppointment({ id })),
+    // The rest of a Series' Appointments, and those it changed, arrive as they are kept.
+    addSeries: (details, id) =>
+      changed(() => client.mutations.addSeries({ id, details: JSON.stringify(details) })),
+    changeSeries: (id, changes) =>
+      changed(() => client.mutations.changeSeries({ id, changes: JSON.stringify(changes) })),
+    endSeries: (id) => changed(() => client.mutations.endSeries({ id })),
+    async series(id) {
+      const { data, errors } = await client.models.Series.get({ id });
+      if (errors?.length) throw new Error(errors.map((e) => e.message).join('; '));
+      return data ? toSeries(data) : null;
+    },
     async deleteAppointment(id) {
       await command(() => client.mutations.removeAppointment({ id }));
       drop(id);

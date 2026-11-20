@@ -109,14 +109,22 @@ function onlyOwn(rules) {
 /** The calendar core's commands (amplify/data/resource.ts): the only way to change the calendar. */
 const COMMANDS = [
   'addAppointment',
+  'addSeries',
   'cancelAppointment',
   'changeAppointment',
+  'changeSeries',
+  'endSeries',
   'makeSubscriptionLink',
   'removeAppointment',
   'switchOffSubscriptionLink',
 ];
-/** The calendar (amplify/data/resource.ts). Only the commands function writes these directly. */
-const MODELS = ['Appointment', 'ActivityRecord'];
+/**
+ * The calendar (amplify/data/resource.ts). Only the functions that run the calendar core write
+ * these directly.
+ */
+const MODELS = ['Appointment', 'Series', 'ActivityRecord'];
+/** The query that lists a model, named as Amplify names it: Series is its own plural. */
+const listOf = (model) => (model.endsWith('s') ? `list${model}` : `list${model}s`);
 /** Kept per person, and read only by that person. Only the commands function writes these. */
 const OWN_MODELS = ['SubscriptionLink'];
 /**
@@ -139,18 +147,28 @@ const APP_NOTIFICATION_FIELDS = [
   'Query/getAppNotificationKey',
 ];
 
+/** All the Series top-up may call in the data API (amplify/backend.ts). */
+const SERIES_TOP_UP_FIELDS = [
+  'Mutation/createAppointment',
+  'Mutation/updateSeries',
+  'Query/getAppointment',
+  'Query/getSeries',
+  'Query/listAppointments',
+  'Query/listSeries',
+];
+
 /**
- * What the app-notifications function's role may call in the data API, as 'Type/field', or
- * 'Type/*' for a whole type. Its role is the one its own policies name.
+ * What a function's role may call in the data API, as 'Type/field', or 'Type/*' for a whole type.
+ * Its role is the one its own policies name, found by the start of its ID.
  */
-function appNotificationsAccess() {
+function dataApiAccess(rolePrefix) {
   return stacks()
     .flatMap((stack) => Object.values(stack))
     .filter(
       (resource) =>
         resource.Type === 'AWS::IAM::Policy' &&
         resource.Properties.Roles?.some((each) =>
-          /^appnotificationslambdaServiceRole/.test(each.Ref ?? ''),
+          new RegExp(`^${rolePrefix}`).test(each.Ref ?? ''),
         ),
     )
     .flatMap((policy) => policy.Properties.PolicyDocument.Statement)
@@ -314,7 +332,7 @@ function checks() {
     ],
     [
       'anyone signed in can read everything in the calendar',
-      MODELS.every((model) => queries.get(`get${model}`) && queries.get(`list${model}s`)),
+      MODELS.every((model) => queries.get(`get${model}`) && queries.get(listOf(model))),
     ],
     [
       'anyone signed in is sent every change to an Appointment as it happens',
@@ -349,7 +367,7 @@ function checks() {
     ],
     [
       'the app-notifications function may call only the device and key operations it needs',
-      appNotificationsAccess().join() === APP_NOTIFICATION_FIELDS.join(),
+      dataApiAccess('appnotificationslambdaServiceRole').join() === APP_NOTIFICATION_FIELDS.join(),
     ],
     [
       'a device is deleted only if the condition it is deleted on holds when DynamoDB deletes it',
@@ -430,10 +448,35 @@ function checks() {
       ),
     ],
     [
-      "the commands and feed functions are told Susan's time zone",
+      "the commands, Series top-up and feed functions are told Susan's time zone",
       resources('AWS::Lambda::Function').filter(
         (lambda) => lambda.Environment?.Variables?.SUSAN_TIME_ZONE,
-      ).length === 2,
+      ).length === 3,
+    ],
+    [
+      'the Series top-up runs once a day, one run at a time',
+      (() => {
+        const lambda = stacks()
+          .flatMap((stack) => Object.entries(stack))
+          .find(
+            ([id, resource]) =>
+              resource.Type === 'AWS::Lambda::Function' && /^seriestopuplambda[0-9A-F]+$/.test(id),
+          );
+        const schedules = resources('AWS::Scheduler::Schedule').filter(
+          (schedule) => schedule.Target?.Arn?.['Fn::GetAtt']?.[0] === lambda?.[0],
+        );
+        return (
+          lambda?.[1].Properties.ReservedConcurrentExecutions === 1 &&
+          schedules.length === 1 &&
+          /^cron\(\d+ \d+ \* \* \? \*\)$/.test(schedules[0].ScheduleExpression) &&
+          schedules[0].State === 'ENABLED'
+        );
+      })(),
+    ],
+    [
+      // It makes Appointments and notes how far each Series is made, and changes nothing else.
+      'the Series top-up may only read the calendar, add Appointments and note how far a Series is made',
+      dataApiAccess('seriestopuplambdaServiceRole').join() === SERIES_TOP_UP_FIELDS.join(),
     ],
     [
       // The feed has the only public address. Its link is checked inside the function.

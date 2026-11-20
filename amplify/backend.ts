@@ -62,25 +62,24 @@ backend.calendarCommands.addEnvironment('USER_POOL_ID', userPool.userPoolId);
 // Appointments at once.
 backend.seriesTopUp.resources.cfnResources.cfnFunction.reservedConcurrentExecutions = 1;
 
-// The app-notifications function may reach the devices app notifications go to and the key that
-// signs them, and nothing else in the data API: Amplify would let it call every query and mutation,
-// the calendar's included. `npm run synth` checks it.
-const APP_NOTIFICATION_FIELDS = {
-  Query: ['getAppNotificationKey'],
-  Mutation: [
-    'createAppNotificationDevice',
-    'updateAppNotificationDevice',
-    'deleteAppNotificationDevice',
-    'createAppNotificationKey',
-  ],
-};
-{
+/** Fields of the data API, by type: 'Query' or 'Mutation'. */
+type Fields = Record<'Query' | 'Mutation', string[]>;
+
+/**
+ * Lets a function call these fields of the data API and no others. Amplify would let a function the
+ * data schema names call every query and mutation; this narrows its one policy that does.
+ */
+function onlyDataApiFields(
+  lambda: { role?: { node: { defaultChild?: unknown } } },
+  name: string,
+  allowed: Fields,
+) {
   const api = backend.data.resources.graphqlApi;
   const dataStack = Stack.of(api);
-  const role = backend.appNotifications.resources.lambda.role?.node.defaultChild as CfnRole;
+  const role = lambda.role?.node.defaultChild as CfnRole;
   const roleRef = JSON.stringify(dataStack.resolve(role.ref));
-  const fields = Object.entries(APP_NOTIFICATION_FIELDS).flatMap(([type, names]) =>
-    names.map((name) => dataStack.resolve(`${api.arn}/types/${type}/fields/${name}`)),
+  const fields = Object.entries(allowed).flatMap(([type, names]) =>
+    names.map((field) => dataStack.resolve(`${api.arn}/types/${type}/fields/${field}`)),
   );
   const access = dataStack.node
     .findAll()
@@ -89,7 +88,7 @@ const APP_NOTIFICATION_FIELDS = {
     .filter((policy) =>
       JSON.stringify(dataStack.resolve(policy.policyDocument)).includes('appsync:GraphQL'),
     );
-  if (access.length !== 1) throw new Error('Could not find the app-notifications data API access.');
+  if (access.length !== 1) throw new Error(`Could not find the ${name} data API access.`);
   const document = dataStack.resolve(access[0].policyDocument) as {
     Statement: { Action: unknown; Resource: unknown }[];
   };
@@ -97,6 +96,27 @@ const APP_NOTIFICATION_FIELDS = {
     if (statement.Action === 'appsync:GraphQL') statement.Resource = fields;
   access[0].addPropertyOverride('PolicyDocument', document);
 }
+
+// The app-notifications function may reach the devices app notifications go to and the key that
+// signs them, and nothing else in the data API: Amplify would let it call every query and mutation,
+// the calendar's included. `npm run synth` checks it.
+onlyDataApiFields(backend.appNotifications.resources.lambda, 'app-notifications', {
+  Query: ['getAppNotificationKey'],
+  Mutation: [
+    'createAppNotificationDevice',
+    'updateAppNotificationDevice',
+    'deleteAppNotificationDevice',
+    'createAppNotificationKey',
+  ],
+});
+
+// The Series top-up reads every Series and the Appointments, adds the Appointments a Series still
+// needs, and notes how far each Series is made. It may do nothing else in the data API: it cannot
+// change or remove an Appointment, or record activity. `npm run synth` checks it.
+onlyDataApiFields(backend.seriesTopUp.resources.lambda, 'Series top-up', {
+  Query: ['getAppointment', 'listAppointments', 'getSeries', 'listSeries'],
+  Mutation: ['createAppointment', 'updateSeries'],
+});
 
 // When a write about a device is refused, the function reads whose the device is now straight from
 // its table, with a strongly consistent read, which the data API's reads are not
