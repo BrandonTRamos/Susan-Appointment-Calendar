@@ -7,6 +7,11 @@ const auth = vi.hoisted(() => ({ session: vi.fn() }));
 vi.mock('aws-amplify/auth', () => ({ fetchAuthSession: auth.session, signOut: vi.fn() }));
 vi.mock('aws-amplify/utils', () => ({ Hub: { listen: vi.fn(() => () => {}) } }));
 vi.mock('./SignInScreen', () => ({ default: () => <div>Sign-in screen</div> }));
+// The data API is stood in for by an empty calendar kept in memory.
+vi.mock('./data/amplifyCalendar', async () => {
+  const { createSampleCalendar } = await import('./data/sampleCalendar');
+  return { createAmplifyCalendar: () => createSampleCalendar('America/New_York', { empty: true }) };
+});
 
 const signedIn = {
   userSub: 'person-a',
@@ -62,9 +67,11 @@ describe('without signing in', () => {
 describe('signed in', () => {
   beforeEach(() => auth.session.mockResolvedValue(signedIn));
 
-  it('opens the calendar', async () => {
+  it('opens the calendar, read from the data API and not from sample data', async () => {
     renderRoot('/');
     expect(await screen.findByRole('heading', { level: 1, name: 'Upcoming' })).toBeInTheDocument();
+    expect(await screen.findByText('No upcoming Appointments.')).toBeInTheDocument();
+    expect(screen.queryByText(/Sample data/)).not.toBeInTheDocument();
   });
 
   it('still shows the public page at its address', () => {
@@ -81,6 +88,7 @@ describe('with no backend', () => {
     await settled();
     expect(screen.getByRole('heading', { level: 1, name: 'Upcoming' })).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent(/Sample data/);
+    expect(screen.getByRole('link', { name: /Cardiology check-up/ })).toBeInTheDocument();
     expect(auth.session).not.toHaveBeenCalled();
   });
 

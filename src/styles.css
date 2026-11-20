@@ -275,6 +275,155 @@ p {
   border-left: 1px solid var(--border);
 }
 
+/* ---------- Appointments: the list, one Appointment, and the form ----------
+   Plain on purpose. Ticket 06 gives these the chosen design. */
+.appointments {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.appointment-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 52px;
+  padding: 14px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  color: var(--text);
+  text-decoration: none;
+}
+.appointment-row:hover {
+  border-color: var(--accent);
+}
+.appointment-row .when {
+  color: var(--accent);
+  font-weight: 650;
+}
+.appointment-row .what {
+  font-size: 21px;
+}
+.what.cancelled {
+  text-decoration: line-through;
+}
+.badge {
+  align-self: flex-start;
+  display: inline-block;
+  padding: 2px 12px;
+  border-radius: 99px;
+  background: var(--notice-soft);
+  color: var(--notice);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+}
+.details dt {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 650;
+}
+.details dt:first-child {
+  margin-top: 0;
+}
+.details dd {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  font-size: 20px;
+  overflow-wrap: anywhere;
+}
+/* Notes keep the line breaks they were typed with. */
+.details .words {
+  white-space: pre-wrap;
+}
+.stamps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font-size: 16px;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.btn-danger {
+  border-color: transparent;
+  background: var(--danger);
+  color: var(--surface);
+}
+/* The calendar could not be read, or may be out of date. */
+.trouble {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-radius: 14px;
+  background: var(--notice-soft);
+  color: var(--notice);
+  font-weight: 600;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.field label {
+  font-weight: 650;
+}
+.field input,
+.field textarea {
+  width: 100%;
+  min-height: 52px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.field textarea {
+  resize: vertical;
+}
+.field [aria-invalid='true'] {
+  border-color: var(--danger);
+  border-width: 2px;
+}
+.field .hint {
+  font-size: 16px;
+}
+/* Two short fields that belong together sit side by side where there is room. */
+.field-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 18px;
+}
+
 /* ---------- settings ---------- */
 .settings-section {
   display: flex;

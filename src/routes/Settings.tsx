@@ -7,7 +7,12 @@ import { AppNotifications } from './settings/AppNotifications';
 import { CalendarSubscription } from './settings/CalendarSubscription';
 import { SusansPhoneAndContact } from './settings/SusansPhoneAndContact';
 
-export function Settings({ displayName, timeZone, sampleData, onSignOut }: AppProps) {
+export function Settings({
+  displayName,
+  timeZone,
+  sampleData,
+  onSignOut,
+}: Omit<AppProps, 'calendar'>) {
   return (
     <Page title="Settings">
       <SusansPhoneAndContact />

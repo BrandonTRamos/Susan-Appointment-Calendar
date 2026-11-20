@@ -1,27 +1,10 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { App } from './App';
-import { DESKTOP_WIDTH } from './lib/useDesktopWidth';
+import { atWidth, renderApp } from './test/renderApp';
 
 const realMatchMedia = window.matchMedia;
-
-/** Renders at a phone or desktop width: jsdom has no layout, so the width query is answered here. */
-function atWidth(width: 'phone' | 'desktop') {
-  window.matchMedia = (query: string) =>
-    ({
-      matches: width === 'desktop' && query === DESKTOP_WIDTH,
-      media: query,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    }) as unknown as MediaQueryList;
-}
-
-function renderApp(path = '/', props: Partial<Parameters<typeof App>[0]> = {}) {
-  window.history.pushState({}, '', path);
-  return render(<App displayName="Linda" timeZone="America/New_York" {...props} />);
-}
 
 const tabNames = () =>
   within(screen.getByRole('navigation', { name: 'Main' }))
@@ -42,12 +25,15 @@ describe('on a phone', () => {
     expect(screen.getByRole('link', { name: 'Upcoming' })).toHaveAttribute('aria-current', 'page');
   });
 
-  it('has no sidebar, New Appointment button or detail panel', () => {
+  it('has no sidebar or detail panel, and offers New Appointment on Upcoming itself', async () => {
     renderApp();
-    expect(screen.queryByRole('link', { name: 'New Appointment' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('banner')).not.toBeInTheDocument();
     expect(
       screen.queryByRole('complementary', { name: 'Appointment details' }),
     ).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('link', { name: 'New Appointment' }));
+    expect(window.location.pathname).toBe('/appointments/new');
+    expect(screen.getByRole('heading', { level: 1, name: 'New Appointment' })).toBeInTheDocument();
   });
 });
 
@@ -58,7 +44,10 @@ describe('on a desktop', () => {
     renderApp();
     const sidebar = screen.getByRole('banner');
     expect(within(sidebar).getByText("Susan's Calendar")).toBeInTheDocument();
-    expect(within(sidebar).getByRole('link', { name: 'New Appointment' })).toBeInTheDocument();
+    // The sidebar's is the only one: Upcoming does not repeat it at this width.
+    expect(screen.getAllByRole('link', { name: 'New Appointment' })).toEqual([
+      within(sidebar).getByRole('link', { name: 'New Appointment' }),
+    ]);
     expect(tabNames()).toEqual(['Upcoming', 'Month', 'Past', 'Replies', 'Settings']);
   });
 

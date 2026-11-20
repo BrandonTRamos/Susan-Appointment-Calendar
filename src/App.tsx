@@ -10,9 +10,12 @@ import {
 } from 'react-router-dom';
 import { Sidebar, TabBar } from './components/Navigation';
 import { Placeholder } from './components/Page';
+import { CalendarProvider } from './data/CalendarContext';
+import type { CalendarClient } from './data/calendarClient';
 import { useDesktopWidth } from './lib/useDesktopWidth';
+import { AppointmentDetail } from './routes/AppointmentDetail';
+import { EditAppointment, NewAppointment } from './routes/AppointmentForm';
 import { Month } from './routes/Month';
-import { NewAppointment } from './routes/NewAppointment';
 import { Past } from './routes/Past';
 import { Replies } from './routes/Replies';
 import { Settings } from './routes/Settings';
@@ -23,13 +26,15 @@ export interface AppProps {
   displayName: string | null;
   /** Susan's time zone (src/lib/timeZone.ts). */
   timeZone: string;
+  /** Reads the calendar and carries out its commands: the data API's, or sample data's. */
+  calendar: CalendarClient;
   /** No backend: the app shows sample data and nobody is signed in. */
   sampleData?: boolean;
   /** Missing when there is nobody to sign out (sample data). */
   onSignOut?: () => Promise<unknown>;
 }
 
-function Layout({ displayName, sampleData, onSignOut }: AppProps) {
+function Layout({ displayName, sampleData, onSignOut }: Omit<AppProps, 'calendar'>) {
   const desktop = useDesktopWidth();
   // A new screen opens at the top; Back (a POP) returns to where you were.
   const { pathname } = useLocation();
@@ -60,26 +65,30 @@ function Layout({ displayName, sampleData, onSignOut }: AppProps) {
         <Outlet />
       </div>
       <aside className="detail" aria-label="Appointment details">
-        <Placeholder>Pick an Appointment to see its details here.</Placeholder>
+        <Placeholder>The picked Appointment's details will show here.</Placeholder>
       </aside>
     </div>
   );
 }
 
-export function App(props: AppProps) {
+export function App({ calendar, ...props }: AppProps) {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route element={<Layout {...props} />}>
-          <Route index element={<Upcoming />} />
-          <Route path="month" element={<Month />} />
-          <Route path="past" element={<Past />} />
-          <Route path="replies" element={<Replies />} />
-          <Route path="settings" element={<Settings {...props} />} />
-          <Route path="appointments/new" element={<NewAppointment />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+    <CalendarProvider client={calendar} timeZone={props.timeZone}>
+      <BrowserRouter>
+        <Routes>
+          <Route element={<Layout {...props} />}>
+            <Route index element={<Upcoming />} />
+            <Route path="month" element={<Month />} />
+            <Route path="past" element={<Past />} />
+            <Route path="replies" element={<Replies />} />
+            <Route path="settings" element={<Settings {...props} />} />
+            <Route path="appointments/new" element={<NewAppointment />} />
+            <Route path="appointments/:id" element={<AppointmentDetail />} />
+            <Route path="appointments/:id/edit" element={<EditAppointment />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        </Routes>
+      </BrowserRouter>
+    </CalendarProvider>
   );
 }

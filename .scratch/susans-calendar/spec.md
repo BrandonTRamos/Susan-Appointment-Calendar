@@ -172,20 +172,23 @@ Admins are kept in the loop. They get an Alert, by email and app notification, w
 ### One calendar core
 
 - All rules live in a single module, the calendar core. It is the only thing that writes calendar data and the only thing that decides what gets sent to whom.
-- The core exposes commands (add, change and cancel an Appointment; add, change and end a Series; set Reminders; change settings; create and revoke agent keys and subscription links; send a test text), a clock-driven "run what is due" operation, and handlers for two inbound events (a delivery report and a Reply). Delivery reports are not pushed to the app: the scheduled run asks the text sender for the status of each text still unsettled and hands the core what it learns.
+- The core exposes commands (add, change, cancel and delete an Appointment; add, change and end a Series; set Reminders; change settings; create and revoke agent keys and subscription links; send a test text), a clock-driven "run what is due" operation, and handlers for two inbound events (a delivery report and a Reply). Delivery reports are not pushed to the app: the scheduled run asks the text sender for the status of each text still unsettled and hands the core what it learns.
 - The core depends on four narrow ports: a store, a text sender, an Admin messenger (email and app notification) and a clock. It contains no provider-specific code. Textbelt sits behind the text sender port, which is the single seam ADR 0002 keeps.
 - Every command carries the acting person and whether they acted through an agent, and the core stamps "added by" and "last changed by" from that.
 - The app reads data directly from the data API with live updates, but writes only by calling the core's commands, exposed as custom operations on the data API. The app, the MCP server and the scheduled run all go through the same core, so the rules cannot be bypassed by any of them.
+- In the backend the core writes through the data API, not straight to the tables, so that a change made by any of them reaches every open app (ADR 0003).
+- A command the core will not carry out is refused with words written for the person who asked, and changes nothing. A command that changes the calendar leaves exactly one activity record; a refused command, and one that changes nothing, leaves none. An add carries the new Appointment's ID, so that the same add sent twice is carried out once.
 
 ### Time
 
 - Every date and time means Susan's local time, in one configured time zone (US Eastern). Nothing depends on the time zone of the device or of the server. Daylight-saving changes are handled by resolving times in Susan's zone.
+- An Appointment's date and times are kept as Susan would say them, a date and a clock time, with the moment it starts worked out from them. A start time that does not exist, in the hour the clocks skip on the night they go forward, is refused. One that happens twice, on the night they go back, means the first of the two.
 
 ### Appointments and Series
 
 - An Appointment has: what it is and a date and start time (both required); who it is with; where (name and address); a Driver name and pickup time; a Note for Susan; Private notes; its Reminders; its state (active or cancelled); and who added and last changed it, and when.
 - There is no end time, no category and no attachment.
-- Cancelling keeps the Appointment. Deleting is refused once any text about it has gone to Susan.
+- Cancelling keeps the Appointment. Deleting is refused once any text about it has gone to Susan. A cancelled Appointment cannot be changed or cancelled again; it can still be deleted, on the same condition.
 - A Series holds a repeat pattern (weekly on chosen weekdays, every N weeks, or monthly), an end (a date, or none) and the details and Reminders its Appointments start with. The repeat-rule library used by Personal Command Center is the prior art for patterns.
 - Appointments in a Series are real Appointments, created ahead of time up to a rolling horizon and topped up periodically for a Series with no end.
 - "Only this one" changes that Appointment and marks it as individually changed. "This and all later ones" ends the Series at that point and continues it as a new Series with the new details; later Appointments are replaced, including ones individually changed.

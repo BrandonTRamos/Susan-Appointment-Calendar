@@ -9,12 +9,14 @@ installable web app on AWS Amplify Gen 2.
 - **The words the project uses:** [`CONTEXT.md`](CONTEXT.md)
 - **Chosen layouts:** [`docs/design/`](docs/design/README.md)
 - **Setting up text messages:** [`docs/text-message-setup.md`](docs/text-message-setup.md)
+- **Why the calendar is written through the data API:** [`docs/adr/0003-the-core-writes-through-the-data-api.md`](docs/adr/0003-the-core-writes-through-the-data-api.md)
 - **Why texts go through Textbelt:** [`docs/adr/0002-textbelt-for-text-messages.md`](docs/adr/0002-textbelt-for-text-messages.md), with the research in [`docs/research/`](docs/research/text-message-options.md)
 - **Notes for contributors and AI sessions:** [`AGENTS.md`](AGENTS.md) (`CLAUDE.md` is an identical copy)
 
-So far the app is a shell: sign-in, the tabs and a placeholder behind each one, plus the
-[public pages](#public-pages). Appointments, Reminders and everything else arrive with the later
-tickets.
+So far: sign-in, the [public pages](#public-pages), and Appointments. Anyone signed in can add an
+Appointment, see the upcoming ones, open one, change it, cancel it, and delete one entered by
+mistake; what one person changes shows for the others as it happens. Reminders, texts and the other
+tabs arrive with the later tickets, and the screens get their chosen design in ticket 06.
 
 ## Run it locally
 
@@ -26,7 +28,8 @@ npm run dev        # http://localhost:5173
 ```
 
 With no `amplify_outputs.json` in the repo root the app runs on **sample data**: nobody signs in,
-nothing is saved, and a notice at the top says so. This is the quickest way to work on screens.
+nothing is saved, and a notice at the top says so. It starts with a few invented Appointments, which
+you can add to and change; a reload starts again. This is the quickest way to work on screens.
 
 ## Run it against a sandbox backend
 
@@ -44,21 +47,41 @@ sandbox's user pool. Stop the sandbox with Ctrl+C; `npx ampx sandbox delete` rem
 
 ## Commands
 
-| Command             | What it does                                                                     |
-| ------------------- | -------------------------------------------------------------------------------- |
-| `npm run dev`       | Vite dev server                                                                  |
-| `npm run build`     | Type-check and build the app into `dist/`                                        |
-| `npm run check`     | Lint, format check, type-check, tests, build and synth: run it before finishing  |
-| `npm run lint`      | ESLint                                                                           |
-| `npm run format`    | Prettier, writing changes (`format:check` only reports)                          |
-| `npm run typecheck` | TypeScript for the app and `amplify/`                                            |
-| `npm test`          | Vitest (`test:watch` reruns on change)                                           |
-| `npm run synth`     | Build the backend with no AWS access, then check its sign-in rules and cost tags |
-| `npm run sandbox`   | Deploy a personal cloud sandbox (`npx ampx sandbox`)                             |
-| `npm run icons`     | Redraw the app icons (Python with Pillow)                                        |
+| Command             | What it does                                                                    |
+| ------------------- | ------------------------------------------------------------------------------- |
+| `npm run dev`       | Vite dev server                                                                 |
+| `npm run build`     | Type-check and build the app into `dist/`                                       |
+| `npm run check`     | Lint, format check, type-check, tests, build and synth: run it before finishing |
+| `npm run lint`      | ESLint                                                                          |
+| `npm run format`    | Prettier, writing changes (`format:check` only reports)                         |
+| `npm run typecheck` | TypeScript for the app and `amplify/`                                           |
+| `npm test`          | Vitest (`test:watch` reruns on change)                                          |
+| `npm run synth`     | Build the backend with no AWS access, then check its rules (see below)          |
+| `npm run sandbox`   | Deploy a personal cloud sandbox (`npx ampx sandbox`)                            |
+| `npm run icons`     | Redraw the app icons (Python with Pillow)                                       |
 
 GitHub runs lint, format check, type-check, tests, build and synth on every pull request
 (`.github/workflows/ci.yml`).
+
+`npm run synth` fails if the backend it built would break a rule the calendar depends on: nobody can
+sign up, sign-in has no second step, anyone signed in can read everything, the calendar core's
+commands are the only way a signed-in person can change anything, no rule tells Susan from an Admin,
+every table can be restored to a point in time, and everything carries the cost tag.
+
+## How the calendar is kept
+
+Every rule about the calendar lives in one module, the **calendar core** (`src/lib/calendar/`). It
+is the only thing that writes calendar data.
+
+- The app reads Appointments straight from the data API and is sent every change as it happens.
+- The app changes the calendar only by calling the core's commands (add, change, cancel and delete an
+  Appointment). They run in a backend function, `calendar-commands`; nothing a signed-in person can
+  call writes calendar data any other way.
+- Each command is carried out as the signed-in person. The Appointment shows who added it and who
+  last changed it, and the calendar keeps a record of each change.
+- The tables can be restored to any moment in the last 35 days, and on `main` they cannot be deleted
+  by accident.
+- On sample data the same core runs in the browser, over a store kept in memory.
 
 ## Hosting
 
@@ -128,9 +151,11 @@ Cognito emails the person a temporary password, and the app asks them to choose 
 time they sign in. The Cognito console can do the same two steps: create the user with a `name`
 attribute, then add it to the `Admins` group.
 
-- **Display name.** The `name` attribute is what the app shows for the person and, later, beside each
-  change they make. Every account must have one: if it is left out when the account is created, the
-  person is asked for it the first time they sign in.
+- **Display name.** The `name` attribute is what the app shows for the person, and what an
+  Appointment shows beside "Added by" and "Last changed by". Every account must have one: if it is
+  left out when the account is created, the person is asked for it the first time they sign in. A
+  corrected name shows on what the person does from a few minutes later; what they did before keeps
+  the name as it was.
 - **Admins.** Susan's account is the one account that is not in the `Admins` group. The group only
   decides who receives Alerts, passed-on Replies and Activity updates. It gives no extra rights:
   everyone signed in can do everything.

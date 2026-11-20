@@ -44,6 +44,10 @@ _Avoid_: Notification, failure notice, warning
 Word to the other Admins that someone has added, changed or cancelled an Appointment, naming who did it. Unlike an Alert, it reports normal use and not a problem.
 _Avoid_: Notification, change notice, audit alert
 
+**Activity record**:
+The calendar's own note that someone added, changed, cancelled or deleted an Appointment: who did it, what they did, to which Appointment, and whether through their agent. Each such act leaves exactly one. An Activity update is the message that tells the other Admins about one.
+_Avoid_: Audit log, history entry, event
+
 **Public pages**:
 The pages anyone can open without signing in: what the calendar is, its privacy policy and its terms. They exist so that Susan, and anyone who asks, can read what the calendar texts and what it does with her number.
 _Avoid_: Landing page, marketing site, legal pages
