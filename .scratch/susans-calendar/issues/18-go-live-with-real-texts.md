@@ -12,6 +12,7 @@
 
 - [ ] The Textbelt key is stored as the deployment secret the README names, and the app has been redeployed.
 - [ ] The key holds enough credit for the first months.
+- [ ] An account exists for Susan and for each Admin, each with a display name, and each Admin's account is marked as an Admin's (README, "Accounts"). Ticket 03 created only the owner's.
 - [ ] Susan's mobile number and the contact name and number are entered in Settings.
 - [ ] Susan has had the Confirmation text (ticket 05) before any other text: it is the one that tells her how to stop them.
 - [ ] The test text from Settings arrives on Susan's iPhone, and its status in the app reaches "delivered".
