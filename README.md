@@ -67,8 +67,7 @@ repository's `main` branch, in the same AWS account and region. Every push to `m
 deploys the backend, then builds and publishes the app (`amplify.yml`). A failing test stops the
 deploy before anything changes. `customHttp.yml` sets the security headers.
 
-Connecting the repository is ticket 03 and needs the owner. The app's address goes here once it
-exists: _not deployed yet_.
+The app is at <https://main.d3o9xocds2v1sa.amplifyapp.com>.
 
 ### Environment values
 
@@ -85,16 +84,14 @@ A change to any of these takes effect at the next deploy. Later tickets add to t
 
 ### Rewrite rule
 
-Each tab has its own URL, so the Hosting app needs one rule that sends those URLs to the app. Under
-**Hosting → Rewrites and redirects** add a rule of type **200 (Rewrite)** with target address
-`/index.html` and this source address:
-
-```
-</^[^.]+$|\.(?!(css|gif|ico|jpg|js|png|txt|svg|woff|woff2|ttf|map|json|webp|webmanifest)$)([^.]+$)/>
-```
+Each tab has its own URL, so the Hosting app needs one rule that sends those URLs to the app. It
+is the same rule Wellbeing has, under **Hosting → Rewrites and redirects**: source address `/<*>`,
+target address `/index.html`, type **404 (Rewrite)**. The app has it.
 
 Without it, reloading a tab or opening a link to one, such as `/month`, shows "not found". The
-public pages need it too.
+public pages need it too. With it, the server still marks its answer to those addresses as 404 while
+sending the app, so a browser shows the right page but a link preview or an uptime check may call
+the page missing. A rule of type **200 (Rewrite)** would answer 200; nothing needs that today.
 
 ## Public pages
 
