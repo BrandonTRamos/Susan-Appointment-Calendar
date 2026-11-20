@@ -69,6 +69,12 @@ export const BackIcon = (props: Props) => (
   </Icon>
 );
 
+export const ForwardIcon = (props: Props) => (
+  <Icon {...props}>
+    <path d="M9 5l7 7-7 7" />
+  </Icon>
+);
+
 export const PersonIcon = (props: Props) => (
   <Icon {...props}>
     <circle cx="12" cy="8" r="3.5" />

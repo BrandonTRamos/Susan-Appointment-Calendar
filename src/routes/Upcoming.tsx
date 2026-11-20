@@ -69,6 +69,12 @@ export function Upcoming() {
           </ul>
         </Section>
       )}
+      {/* The phone's tab bar has no room for Past; the desktop sidebar has it. */}
+      {!desktop && upcoming && (
+        <Link className="btn past-link" to="/past">
+          Past Appointments
+        </Link>
+      )}
     </Page>
   );
 }
@@ -86,14 +92,14 @@ function Section({ label, children }: { label: string; children: React.ReactNode
 }
 
 /** The Driver and pickup time as a sentence, or null when there is neither. */
-function driverSentence({ driverName, pickupTime }: Appointment): string | null {
+export function driverSentence({ driverName, pickupTime }: Appointment): string | null {
   if (driverName && pickupTime) return `${driverName} picks up at ${formatTime(pickupTime)}`;
   if (driverName) return `${driverName} is driving`;
   if (pickupTime) return `Pickup at ${formatTime(pickupTime)}`;
   return null;
 }
 
-const joined = (separator: string, ...parts: (string | null)[]) =>
+export const joined = (separator: string, ...parts: (string | null)[]) =>
   parts.filter(Boolean).join(separator);
 
 /** The next Appointment in full: the day in words, the time in large type, and every detail. */
