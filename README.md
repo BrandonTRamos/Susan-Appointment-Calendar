@@ -129,7 +129,7 @@ few months on the day it starts, ending on a date or never.
   on its own, or **this and all later ones**, which ends the Series the day before and continues it
   as a new Series. Later Appointments are replaced, including ones changed on their own: one on a
   date the new Series also has is changed in place, and any other is removed, or cancelled if Susan
-  may have been texted about it, which keeps it, and its texts, on record. Cancelling this and all later ones keeps them, marked cancelled. Deleting
+  may have been texted about it, which keeps it, and its texts, on record. Cancelling this and all later ones keeps them, marked cancelled. Later ones include those of a Series already continued from a later Appointment, which is replaced or cancelled too. A change or cancellation cut off partway can simply be sent again. Deleting
   one entered by mistake deletes only that one, and the top-up does not bring it back.
 - Adding, changing or cancelling a Series leaves one activity record and sends one Activity update,
   not one per Appointment. An Appointment in a Series shows **Repeats** in every list, and how it

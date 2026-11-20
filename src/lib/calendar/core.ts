@@ -718,6 +718,49 @@ export function createCalendarCore({
     }
   }
 
+  /**
+   * The ID of the Series that continues one from a date on, after "this and all later ones". The
+   * same change gives the same ID, and the Series it continues can be read from it.
+   */
+  const continuationId = (seriesId: string, date: string) => `${seriesId}-from-${date}`;
+
+  /**
+   * One line of Series from a date on: a Series, and every Series continued from it on that date
+   * or later, theirs included. A change or cancellation from that date is for all of them.
+   */
+  async function lineFrom(series: Series, date: string): Promise<Series[]> {
+    const prefix = `${series.id}-from-`;
+    const continued = (await store.everySeries()).filter(
+      (each) =>
+        each.id.startsWith(prefix) && each.id.slice(prefix.length, prefix.length + 10) >= date,
+    );
+    return [series, ...continued];
+  }
+
+  /**
+   * The Appointments of a line of Series from a date on, in date order: the first Series' from
+   * that date, and all of the rest's, which all come after it.
+   */
+  async function appointmentsInLine(line: Series[], date: string): Promise<Appointment[]> {
+    const ids = new Set(line.map((series) => series.id));
+    const [first] = line;
+    return inDateOrder(
+      (await store.everyAppointment()).filter(
+        ({ series: place }) =>
+          place && ids.has(place.id) && (place.id !== first.id || place.date >= date),
+      ),
+    );
+  }
+
+  /** Ends every Series in a line the day before a date, leaving one that already ends earlier. */
+  const endLine = (line: Series[], date: string, by: Actor, at: string) => {
+    const ends = addDays(date, -1);
+    return inBatches(
+      line.filter((series) => series.ends === null || series.ends > ends),
+      (series) => store.replaceSeries({ ...series, ends, lastChanged: stamp(by, at) }),
+    );
+  };
+
   /** A Series' Appointments as the calendar has them, in date order. */
   const appointmentsIn = async (seriesId: string) =>
     inDateOrder(
@@ -889,6 +932,11 @@ export function createCalendarCore({
     async changeSeries(by, id, sent) {
       const picked = await existing(id);
       const { place, series: old } = await seriesFrom(picked);
+      const line = await lineFrom(old, place.date);
+      // The new Series has the same ID whenever this change is sent, so that one cut off partway
+      // finds what it had done when it is sent again.
+      const nextId = continuationId(old.id, place.date);
+      const continued = line.find((series) => series.id === nextId);
       // What is not changed stays as the Series has it, which puts back what was changed on its own.
       const details = checked({ ...seriesDetailsOf(old), date: place.date, ...given(sent) });
       startOf(details);
@@ -899,12 +947,22 @@ export function createCalendarCore({
       else if (old.repeat.every === 'month' && starts !== place.date)
         repeat = { ...old.repeat, day: dayOfMonth(starts) };
       else repeat = onItsFirstDay(old.repeat, starts);
-      const ends = 'ends' in asked ? endsOf(asked.ends, starts) : old.ends;
+      // With no new end given, it ends where the line was going to: the end of its last Series
+      // still running, not the end a later split, or this one cut off partway, gave the old one.
+      const running = line.filter(
+        (series) => !(series.ends !== null && series.ends < series.starts),
+      );
+      const tail = running.reduce(
+        (last, series) => (series.starts > last.starts ? series : last),
+        old,
+      );
+      const ends = 'ends' in asked ? endsOf(asked.ends, starts) : tail.ends;
       if (ends && ends < starts)
         invalid(`It would end before its first Appointment, on ${formatDate(starts)}.`, 'ends');
       const reminders =
         asked.reminders !== undefined ? seriesRemindersOf(asked.reminders) : old.reminders;
       if (
+        line.length === 1 &&
         starts === place.date &&
         sameDetails(seriesDetailsOf(details), old) &&
         sameRepeat(repeat, old.repeat) &&
@@ -915,28 +973,31 @@ export function createCalendarCore({
 
       const at = clock.now().toISOString();
       const next: Series = {
-        id: crypto.randomUUID(),
+        id: nextId,
         ...seriesDetailsOf(details),
         repeat,
         starts,
         ends,
         reminders,
         madeThrough: '',
-        added: stamp(by, at),
+        added: continued?.added ?? stamp(by, at),
         lastChanged: null,
       };
       next.madeThrough = horizonOf(next);
       const dates = repeatDates(repeat, starts, ends, next.madeThrough);
-      // The old Series' end is written before its Appointments are read, so that a top-up running
-      // now either makes its Appointments before they are read here, or sees the end and makes
-      // none past it (topUpSeries).
-      await store.replaceSeries({
-        ...old,
-        ends: addDays(place.date, -1),
-        lastChanged: stamp(by, at),
-      });
-      const later = (await appointmentsIn(old.id)).filter(
-        (appointment) => appointment.id !== picked.id && appointment.series!.date >= place.date,
+      // The new Series is written first, with the end it keeps, so that a change cut off after
+      // this point still knows it when sent again. Then the old line is ended here, before its
+      // Appointments are read, so that a top-up running now either makes its Appointments before
+      // they are read, or sees the end and makes none past it (topUpSeries).
+      await (continued ? store.replaceSeries(next) : store.addSeries(next));
+      await endLine(
+        line.filter((series) => series.id !== nextId),
+        place.date,
+        by,
+        at,
+      );
+      const later = (await appointmentsInLine(line, place.date)).filter(
+        (appointment) => appointment.id !== picked.id,
       );
 
       // This one begins the new Series. A later one on a date it also has is changed in place, so
@@ -959,9 +1020,13 @@ export function createCalendarCore({
       const changed = reused.find((appointment) => appointment.id === picked.id)!;
 
       await inBatches(replaced, (appointment) => withdraw(appointment, stamp(by, at)));
-      await inBatches(reused, (appointment) => store.replaceAppointment(appointment));
+      await inBatches(
+        reused.filter((appointment) => appointment.id !== picked.id),
+        (appointment) => store.replaceAppointment(appointment),
+      );
       await addMissing(made);
-      await store.addSeries(next);
+      // This one last: until it is moved, sending the change again carries it out from the start.
+      await store.replaceAppointment(changed);
       await record('changed', changed, by, at, next.id);
       await tellOtherAdmins(
         by,
@@ -973,29 +1038,23 @@ export function createCalendarCore({
     async endSeries(by, id) {
       const picked = await existing(id);
       const { place, series } = await seriesFrom(picked);
+      const line = await lineFrom(series, place.date);
       const at = clock.now().toISOString();
       const cancel = (appointment: Appointment): Appointment => ({
         ...appointment,
         state: 'cancelled',
         lastChanged: stamp(by, at),
       });
-      // Its end is written first, as in changeSeries, so that a top-up running now makes nothing
+      // The line is ended first, as in changeSeries, so that a top-up running now makes nothing
       // after it that this does not cancel.
-      await store.replaceSeries({
-        ...series,
-        ends: addDays(place.date, -1),
-        lastChanged: stamp(by, at),
-      });
-      const later = (await appointmentsIn(series.id)).filter(
-        (appointment) =>
-          appointment.id !== picked.id &&
-          appointment.series!.date >= place.date &&
-          appointment.state === 'active',
+      await endLine(line, place.date, by, at);
+      const later = (await appointmentsInLine(line, place.date)).filter(
+        (appointment) => appointment.id !== picked.id && appointment.state === 'active',
       );
+      await inBatches(later.map(cancel), (appointment) => store.replaceAppointment(appointment));
+      // This one last: until it is cancelled, sending this again carries it out from the start.
       const cancelled = cancel(picked);
-      await inBatches([cancelled, ...later.map(cancel)], (appointment) =>
-        store.replaceAppointment(appointment),
-      );
+      await store.replaceAppointment(cancelled);
       await record('cancelled', cancelled, by, at, series.id);
       await tellOtherAdmins(
         by,

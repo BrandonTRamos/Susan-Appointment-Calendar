@@ -2431,6 +2431,133 @@ describe('a Series', () => {
       expect(inSeries(store, changed.series!.id)).toHaveLength(appointments.length);
     });
 
+    describe('cut off partway and sent again', () => {
+      /**
+       * A calendar whose store fails once, just after the Series write `failAfter` names (counted
+       * from 1), as when the function stops partway through a command.
+       */
+      async function cutOff(
+        failAfter: number,
+        ends: string | null = '2027-01-31',
+        write: 'replaceSeries' | 'replaceAppointment' = 'replaceSeries',
+      ) {
+        const { store, clock, messenger, sender } = calendar();
+        let writes = 0;
+        let failed = false;
+        const failing: MemoryStore = {
+          ...store,
+          async [write](kept: never) {
+            await (store[write] as (kept: never) => Promise<void>)(kept);
+            if (!failed && ++writes === failAfter) {
+              failed = true;
+              throw new Error('The function stopped');
+            }
+          },
+        };
+        const timeZone = EASTERN;
+        const core = createCalendarCore({
+          store: failing,
+          clock,
+          messenger,
+          textSender: sender,
+          timeZone,
+        });
+        const { series, appointments } = await core.addSeries(linda, { ...dialysis, ends });
+        return { core, store, series, appointments };
+      }
+
+      it('right after the old Series was given its new end, is carried out in full', async () => {
+        const { core, store, series, appointments } = await cutOff(1);
+        const [first, second, third] = appointments;
+        await expect(core.changeSeries(mark, third.id, { time: '10:00' })).rejects.toThrow();
+        const changed = await core.changeSeries(mark, third.id, { time: '10:00' });
+
+        expect(changed).toMatchObject({ id: third.id, time: '10:00' });
+        // It keeps the end the Series had, not the one it was cut back to.
+        expect(await store.series(changed.series!.id)).toMatchObject({
+          starts: '2026-11-30',
+          ends: '2027-01-31',
+        });
+        expect(await store.series(series.id)).toMatchObject({ ends: '2026-11-29' });
+        expect(inSeries(store, series.id).map(({ id }) => id)).toEqual([first.id, second.id]);
+        const later = inSeries(store, changed.series!.id);
+        expect(later.at(-1)?.date).toBe('2027-01-28');
+        expect(later.every(({ time }) => time === '10:00')).toBe(true);
+        const active = store.appointments().filter(({ state }) => state === 'active');
+        expect(new Set(datesOf(active)).size).toBe(active.length);
+        // One activity record for the change, as for one never cut off.
+        expect(store.activity().filter(({ action }) => action === 'changed')).toHaveLength(1);
+      });
+
+      it('partway through moving the later ones, is carried out in full', async () => {
+        const { core, store, series, appointments } = await cutOff(
+          3,
+          '2027-01-31',
+          'replaceAppointment',
+        );
+        const [first, second, third] = appointments;
+        await expect(core.changeSeries(mark, third.id, { time: '10:00' })).rejects.toThrow();
+        const changed = await core.changeSeries(mark, third.id, { time: '10:00' });
+        expect(inSeries(store, series.id).map(({ id }) => id)).toEqual([first.id, second.id]);
+        const later = inSeries(store, changed.series!.id);
+        expect(later[0].id).toBe(third.id);
+        expect(later.at(-1)?.date).toBe('2027-01-28');
+        expect(later.every(({ time }) => time === '10:00')).toBe(true);
+        const active = store.appointments().filter(({ state }) => state === 'active');
+        expect(new Set(datesOf(active)).size).toBe(active.length);
+        expect(store.activity().filter(({ action }) => action === 'changed')).toHaveLength(1);
+      });
+
+      it('keeps a Series with no end running with none', async () => {
+        const { core, store, appointments } = await cutOff(1, null);
+        await expect(
+          core.changeSeries(mark, appointments[2].id, { time: '10:00' }),
+        ).rejects.toThrow();
+        const changed = await core.changeSeries(mark, appointments[2].id, { time: '10:00' });
+        expect(await store.series(changed.series!.id)).toMatchObject({ ends: null });
+      });
+
+      it('cancelling this and all later ones, is carried out in full', async () => {
+        const { core, store, series, appointments } = await cutOff(1);
+        await expect(core.endSeries(mark, appointments[2].id)).rejects.toThrow();
+        await core.endSeries(mark, appointments[2].id);
+        const states = inSeries(store, series.id).map(({ state }) => state);
+        expect(states.slice(0, 2)).toEqual(['active', 'active']);
+        expect(states.slice(2).every((state) => state === 'cancelled')).toBe(true);
+      });
+    });
+
+    it('from an earlier one, after a later split, replaces the later split too', async () => {
+      const { core, store, series, appointments } = await changing();
+      const [first, second, , fourth] = appointments;
+      const split = await core.changeSeries(mark, fourth.id, { time: '10:00' });
+      const changed = await core.changeSeries(mark, second.id, { driverName: 'Mark' });
+      expect(inSeries(store, series.id).map(({ id }) => id)).toEqual([first.id]);
+      // Every later one is in the new Series, once each, with its details: the later split's
+      // own change is replaced, as one changed on its own would be.
+      const active = store.appointments().filter(({ state }) => state === 'active');
+      expect(new Set(datesOf(active)).size).toBe(active.length);
+      expect(active.slice(1).every(({ series: place }) => place?.id === changed.series!.id)).toBe(
+        true,
+      );
+      expect(
+        active.slice(1).every(({ time, driverName }) => time === '09:00' && driverName === 'Mark'),
+      ).toBe(true);
+      expect(inSeries(store, split.series!.id)).toEqual([]);
+      // The later split makes nothing more.
+      expect((await store.series(split.series!.id))!.ends! < '2026-11-26').toBe(true);
+    });
+
+    it('cancelling from an earlier one, after a later split, cancels the later split too', async () => {
+      const { core, store, appointments } = await changing();
+      const [, second, , fourth] = appointments;
+      const split = await core.changeSeries(mark, fourth.id, { time: '10:00' });
+      await core.endSeries(mark, second.id);
+      const active = store.appointments().filter(({ state }) => state === 'active');
+      expect(active.map(({ id }) => id)).toEqual([appointments[0].id]);
+      expect((await store.series(split.series!.id))!.ends! < '2026-11-26').toBe(true);
+    });
+
     it('is refused for an Appointment not in a Series, a cancelled one, or one not there', async () => {
       const { core, store, appointments } = await changing();
       const { id } = await core.addAppointment(linda, checkUp);
