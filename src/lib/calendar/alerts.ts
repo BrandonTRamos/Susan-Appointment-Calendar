@@ -35,7 +35,13 @@ export function troubleOf(text: Text): TextTrouble | null {
 }
 
 /** An Alert that is to be sent and has not been tried. */
-export const NEW_ALERT: TextAlert = { state: 'due', tries: 0, triedAt: null, sent: [] };
+export const NEW_ALERT: TextAlert = {
+  state: 'due',
+  tries: 0,
+  triedAt: null,
+  sent: [],
+  refused: [],
+};
 
 /**
  * The record as it is to be kept, with its Alert marked due when it has just come to need one.
@@ -168,6 +174,19 @@ const OPENS: Record<TextKind, string> = {
   test: '/settings',
 };
 
+/** A run of digits that could be a phone number: digits, with what people type between them. */
+const DIGITS = /\+?\(?\d[\d\s()./-]*\d/g;
+
+/**
+ * Words with any phone number in them left out: any run of seven or more digits, however it is
+ * written. An Appointment's name is free text, and someone may have typed a number into it.
+ */
+export function withoutPhoneNumbers(words: string): string {
+  return words.replace(DIGITS, (run) =>
+    run.replace(/\D/g, '').length >= 7 ? '(number left out)' : run,
+  );
+}
+
 /** An Alert, in both the forms it goes in. */
 export interface Alert {
   email: AdminEmail;
@@ -187,8 +206,14 @@ export function alertFor(text: Text, appointment: Appointment | null, timeZone: 
   const A = `${a.charAt(0).toUpperCase()}${a.slice(1)}`;
   const { became, why, after } = said(trouble, text);
   // Never a web address, as no text carries one: an Appointment named by one is named by its time.
+  // Never a phone number typed into its name either: that is left out, and its time still says
+  // which Appointment it is.
+  const title =
+    appointment && !holdsWebAddress(appointment.what)
+      ? withoutPhoneNumbers(appointment.what)
+      : 'an Appointment';
   const which = appointment
-    ? `${holdsWebAddress(appointment.what) ? 'an Appointment' : appointment.what}, ${formatDate(appointment.date, 'short')} at ${formatTime(appointment.time)}`
+    ? `${title}, ${formatDate(appointment.date, 'short')} at ${formatTime(appointment.time)}`
     : text.appointmentId
       ? 'one that is no longer in the calendar'
       : null;

@@ -786,17 +786,42 @@ export function createCalendarCore({
   }
 
   /**
+   * Records an Alert as raised without sending anything, because a run already took it up
+   * ALERT_ATTEMPTS times: the last of them stopped before it could say how it went. What had not
+   * been recorded as sent by then is given up. Logged in fixed words: how many deliveries had gone
+   * and how many were refused, never to whom.
+   */
+  async function giveUpAlert(text: Text) {
+    const alert = text.alert!;
+    try {
+      if (!(await store.changeText({ ...text, alert: { ...alert, state: 'raised' } }, text)))
+        return;
+      console.error(
+        `Alert gave up after ${alert.tries} tries, the last stopped part way (sent ${alert.sent.length}, refused ${alert.refused.length})`,
+      );
+    } catch (error) {
+      console.error(`Alert record could not be sent (${failureKind(error)})`);
+    }
+  }
+
+  /**
    * Sends one Alert to every Admin, by email and by app notification. Susan is not an Admin, so she
    * is never told. The run takes it up by a write that finds it as it was read, so two runs cannot
    * both send it, then sends each delivery the messenger has not already made, one Admin and one
-   * channel at a time, and records each that went as soon as it has. A delivery that failed is
-   * tried again by a later run, up to ALERT_ATTEMPTS tries; one with nothing to reach (a channel
-   * not set up, no device) or refused for good is not. If the run stops part way, a later run takes
-   * it up and sends only what had not been recorded as sent. What broke is logged in fixed words,
-   * without the Appointment or the text.
+   * channel at a time, and records each that went, or was refused for good, as soon as it has. A
+   * delivery that failed is tried again by a later run, up to ALERT_ATTEMPTS take-ups in all, a run
+   * that stopped part way included; one refused for good, or with nothing to reach (a channel not
+   * set up, no device), is not. If the run stops part way, a later run takes it up and sends only
+   * what had not been recorded. The one repeat that can happen: a delivery the email or push
+   * service accepted just before the run stopped, before its record was written, is sent again by
+   * the run that takes over. What broke is logged in fixed words, without the Appointment or the
+   * text.
    */
   async function raiseAlert(text: Text, appointments: readonly Appointment[]) {
     const alert = text.alert!;
+    // The cap holds for a run that stopped part way too: a claim left at the last try is not taken
+    // up a further time.
+    if (alert.tries >= ALERT_ATTEMPTS) return giveUpAlert(text);
     let held: Text = {
       ...text,
       alert: {
@@ -825,7 +850,8 @@ export function createCalendarCore({
     try {
       for (const admin of [...new Set(await messenger.admins())]) {
         for (const channel of ['email', 'app notification'] as const) {
-          const skip = held.alert!.sent;
+          // Leaves out what went, and what was refused for good: neither is sent again.
+          const skip = [...held.alert!.sent, ...held.alert!.refused];
           let went: Deliveries;
           try {
             went =
@@ -843,10 +869,15 @@ export function createCalendarCore({
           }
           if (went.refused.length)
             console.error(`Alert ${channel} was refused (refused ${went.refused.length})`);
-          if (went.sent.length === 0) continue;
-          const sent = [...new Set([...skip, ...went.sent])];
+          if (went.sent.length === 0 && went.refused.length === 0) continue;
+          const { sent, refused } = held.alert!;
+          const next = {
+            ...held.alert!,
+            sent: [...new Set([...sent, ...went.sent])],
+            refused: [...new Set([...refused, ...went.refused])],
+          };
           // Another run took it up: this one had stopped too long. It sends what is left.
-          if (!(await keep({ ...held, alert: { ...held.alert!, sent } }))) return;
+          if (!(await keep({ ...held, alert: next }))) return;
         }
       }
     } catch (error) {

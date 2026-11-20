@@ -194,14 +194,20 @@ Susan's account is not an Admin's, so she never gets one.
 - **Once, and to everyone.** One text raises one Alert. Each Admin gets it once by email and once
   on each device with app notifications on; each of those is recorded as soon as it goes and never
   sent again. One that failed is tried again by a later run, two minutes on, up to three tries in
-  all, while the others are not repeated. One refused for good (an address SES will not send to),
-  and one with nothing to reach (email not set up, no address, no device turned on), is not tried
-  again: that is not a failure. If a run stops part way, a later run sends only what had not gone.
+  all, while the others are not repeated. One refused for good (an address SES will not send to)
+  is recorded as such and never tried again, even while another on the same Alert is retried. One
+  with nothing to reach (email not set up, no address, no device turned on) is not tried again
+  either: that is not a failure. If a run stops part way, a later run sends only what had not been
+  recorded, and a run that stopped on the last of the three tries is not followed by a fourth: what
+  had not gone is given up, and the log says how many had gone, never to whom. The one repeat that
+  can happen: a delivery that SES or a push service accepted just before the run stopped, before
+  the run could record it, goes again from the run that takes over.
 - **What it says.** Which Appointment (what it is, its date and time), which text (its kind, and
   when it was due), and why: "failed", "was not confirmed delivered", "could not be sent in time"
   or "was not sent" because her number was not set. A test text's Alert says it was sent from
   Settings. Nothing more personal: never Susan's number, the text's words, the place, the Driver or
-  the notes. The email ends with a link to the Appointment (or Settings), and tapping the app
+  the notes. A phone number typed into an Appointment's name is left out of the Alert, which still
+  names it by its date and time. The email ends with a link to the Appointment (or Settings), and tapping the app
   notification opens it.
 - **The banner.** While the most recent text to Susan, of any kind, failed or did not get through,
   a banner shows at the top of every screen, with a link to the text. It says what happened to

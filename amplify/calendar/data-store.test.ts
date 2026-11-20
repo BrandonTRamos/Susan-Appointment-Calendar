@@ -326,20 +326,29 @@ describe('the calendar kept in the data API', () => {
       ...sent,
       status: 'failed' as const,
       reason: 'unconfirmed' as const,
-      alert: { state: 'due' as const, tries: 0, triedAt: null, sent: [] },
+      alert: { state: 'due' as const, tries: 0, triedAt: null, sent: [], refused: [] },
     };
     expect(await store.changeText(failed, sent)).toBe(true);
     // A second run read it as sent too: it has been settled since, so its write is refused.
     expect(await store.changeText({ ...sent, status: 'delivered' }, sent)).toBe(false);
     const taken = {
       ...failed,
-      alert: { state: 'sending' as const, tries: 1, triedAt: '2026-11-19T20:01:00.000Z', sent: [] },
+      alert: {
+        state: 'sending' as const,
+        tries: 1,
+        triedAt: '2026-11-19T20:01:00.000Z',
+        sent: [],
+        refused: [],
+      },
     };
     expect(await store.changeText(taken, failed)).toBe(true);
     // Taken up once: a second run that read it as due cannot take it up too.
     expect(await store.changeText(taken, failed)).toBe(false);
     // The run holding it records each delivery as it goes.
-    const progress = { ...taken, alert: { ...taken.alert, sent: ['email:person-linda'] } };
+    const progress = {
+      ...taken,
+      alert: { ...taken.alert, sent: ['email:person-linda'], refused: ['email:person-mark'] },
+    };
     expect(await store.changeText(progress, taken)).toBe(true);
     // A run that takes it over later, at another moment, leaves the first run's writes refused.
     const over = {
@@ -360,6 +369,7 @@ describe('the calendar kept in the data API', () => {
       alertTries: 2,
       alertTriedAt: '2026-11-19T20:04:00.000Z',
       alertSent: ['email:person-linda'],
+      alertRefused: ['email:person-mark'],
     });
   });
 

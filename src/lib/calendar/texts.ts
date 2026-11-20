@@ -99,6 +99,8 @@ export interface TextAlert {
   triedAt: string | null;
   /** Each delivery known to have gone, as the messenger names it, such as 'email:<person ID>'. */
   sent: string[];
+  /** Each delivery refused for good, such as by an address SES will not send to: never retried. */
+  refused: string[];
 }
 
 /** How many times a run takes up an Alert whose deliveries keep failing, before giving them up. */

@@ -2640,6 +2640,7 @@ describe('Alerts', () => {
       tries: 1,
       triedAt: added.reminders[0].dueAt,
       sent: ADMINS.flatMap((id) => [`email:${id}`, `app:${id}`]),
+      refused: [],
     });
   });
 
@@ -2977,6 +2978,94 @@ describe('Alerts', () => {
       app: ['person-linda', 'person-mark'],
     });
     expect(cal.store.texts()).toMatchObject([{ alert: { state: 'raised', tries: 1 } }]);
+  });
+
+  it('never send again one refused for good, while retrying one that failed, on the same Alert', async () => {
+    const cal = await ready();
+    cal.sender.refuseNext();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    // Mark's address will not be sent to, for good; Ann's email fails this once.
+    cal.messenger.refuseFor('email', 'person-mark');
+    cal.messenger.failFor('email', 'person-ann');
+    // Count every email asked for, refused ones included.
+    const asked: string[] = [];
+    const sendEmail = cal.messenger.sendEmail.bind(cal.messenger);
+    cal.messenger.sendEmail = async (to, email, skip = []) => {
+      for (const id of to) if (!skip.includes(`email:${id}`)) asked.push(id);
+      return sendEmail(to, email, skip);
+    };
+    await cal.core.runDue();
+    expect(cal.store.texts()[0].alert).toMatchObject({
+      state: 'due',
+      tries: 1,
+      refused: ['email:person-mark'],
+    });
+    await later(cal, 2);
+    vi.restoreAllMocks();
+    expect(asked).toEqual(['person-linda', 'person-mark', 'person-ann', 'person-ann']);
+    expect(reached(cal.messenger)).toEqual({
+      email: ['person-linda', 'person-ann'],
+      app: ADMINS,
+    });
+    expect(cal.store.texts()[0].alert).toMatchObject({
+      state: 'raised',
+      tries: 2,
+      refused: ['email:person-mark'],
+    });
+  });
+
+  it('are not taken up past the last try by a run that stopped on it', async () => {
+    const cal = await ready();
+    cal.sender.refuseNext();
+    cal.messenger.fail(true); // nobody can be told: the Alert is left due after each try
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await cal.core.runDue();
+    cal.messenger.fail(false);
+    const [text] = cal.store.texts();
+    // A run took it up for the last time, sent to Linda by email, and stopped.
+    const stopped: Text = {
+      ...text,
+      alert: {
+        state: 'sending',
+        tries: ALERT_ATTEMPTS,
+        triedAt: cal.clock.now().toISOString(),
+        sent: ['email:person-linda'],
+        refused: [],
+      },
+    };
+    expect(await cal.store.changeText(stopped, text)).toBe(true);
+    errors.mockClear();
+    await later(cal, 1); // still held: it may be going
+    await later(cal, 1);
+    await later(cal, 5);
+    expect(reached(cal.messenger)).toEqual({ email: [], app: [] });
+    expect(cal.store.texts()[0].alert).toEqual({ ...stopped.alert, state: 'raised' });
+    // Said once, in fixed words: how many went and were refused, never to whom.
+    const said = errors.mock.calls.flat().join('\n');
+    expect(said).toBe(
+      `Alert gave up after ${ALERT_ATTEMPTS} tries, the last stopped part way (sent 1, refused 0)`,
+    );
+    vi.restoreAllMocks();
+  });
+
+  it("leave out a phone number typed into the Appointment's name, in both channels", async () => {
+    const { core, sender, messenger, added } = await ready({
+      what: 'Dentist, call (555) 555-0142 first',
+    });
+    sender.refuseNext();
+    await core.runDue();
+    const { emails, notifications } = alerts(messenger);
+    expect(emails).toHaveLength(ADMINS.length);
+    expect(notifications).toHaveLength(ADMINS.length);
+    for (const said of [
+      ...emails.map(({ email }) => `${email.subject} ${email.body}`),
+      ...notifications.map(({ notification }) => `${notification.title} ${notification.body}`),
+    ]) {
+      expect(said).not.toMatch(/555|0142/);
+      expect(said).toMatch(/Dentist, call \(number left out\) first, Fri, Nov 20, 2026 at 2:00 pm/);
+    }
+    expect(emails[0].email.opens).toBe(`/appointments/${added.id}`);
+    expect(notifications[0].notification.opens).toBe(`/appointments/${added.id}`);
   });
 
   it('are finished by a later run, without repeats, when a run stops part way through', async () => {

@@ -86,7 +86,7 @@ export function toAppointment(row: Kept<AppointmentRow, Appointment>): Appointme
 export type TextRow = Schema['Text']['type'];
 
 /** The fields that hold a text's Alert, flat beside the rest, so that a write can be conditioned on them. */
-type AlertColumns = 'alertTries' | 'alertTriedAt' | 'alertSent';
+type AlertColumns = 'alertTries' | 'alertTriedAt' | 'alertSent' | 'alertRefused';
 
 /** A text's record as the data API carries it. */
 export function toText(row: Kept<TextRow, Text> & Partial<Pick<TextRow, AlertColumns>>): Text {
@@ -111,6 +111,7 @@ export function toText(row: Kept<TextRow, Text> & Partial<Pick<TextRow, AlertCol
           tries: row.alertTries ?? 0,
           triedAt: row.alertTriedAt ?? null,
           sent: (row.alertSent ?? []).filter((each): each is string => Boolean(each)),
+          refused: (row.alertRefused ?? []).filter((each): each is string => Boolean(each)),
         }
       : null,
   };
@@ -124,6 +125,7 @@ export function textRow({ alert, ...text }: Text) {
     alertTries: alert?.tries ?? null,
     alertTriedAt: alert?.triedAt ?? null,
     alertSent: alert?.sent ?? null,
+    alertRefused: alert?.refused ?? null,
   };
 }
 
