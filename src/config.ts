@@ -6,7 +6,12 @@ import { resolveContactEmail, resolveOwnerName } from './lib/publicPage';
 import { resolveTimeZone } from './lib/timeZone';
 
 type Outputs = ResourcesConfig & {
-  custom?: { timeZone?: string; contactEmail?: string; ownerName?: string };
+  custom?: {
+    timeZone?: string;
+    contactEmail?: string;
+    ownerName?: string;
+    subscriptionFeedUrl?: string;
+  };
 };
 
 const found = Object.values(
@@ -28,3 +33,6 @@ export const contactEmail = found
 
 /** Who runs the calendar, as the public pages name them: the backend's OWNER_NAME, or null. */
 export const ownerName = resolveOwnerName(found?.custom?.ownerName);
+
+/** The calendar subscription feed's address (amplify/backend.ts), or null when the backend has none. */
+export const subscriptionFeedUrl = found?.custom?.subscriptionFeedUrl || null;

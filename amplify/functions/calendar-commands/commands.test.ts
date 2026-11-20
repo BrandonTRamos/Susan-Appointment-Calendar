@@ -76,6 +76,26 @@ describe('the commands, as the data API calls them', () => {
     expect(store.activity()).toHaveLength(1);
   });
 
+  it("make and switch off the caller's own subscription link", async () => {
+    const { store, call } = commands();
+    const made = await call('makeSubscriptionLink', {});
+    expect(made).toEqual({
+      subscriptionLink: { secret: expect.stringMatching(/^[\w-]{43}$/), madeAt: expect.any(String) },
+    });
+    expect(store.subscriptionLinks()).toMatchObject([{ personId: 'person-linda' }]);
+    expect(await call('switchOffSubscriptionLink', {})).toEqual({ subscriptionLink: null });
+    expect(store.subscriptionLinks()).toEqual([]);
+    expect(store.activity()).toEqual([]);
+  });
+
+  it("never touch another person's link, whatever was sent", async () => {
+    const { store, call } = commands({ 'account-linda': 'Linda', 'account-mark': 'Mark' });
+    const mark = { identity: { sub: 'person-mark', username: 'account-mark' } };
+    await call('makeSubscriptionLink', {}, mark);
+    await call('switchOffSubscriptionLink', { personId: 'person-mark', id: 'person-mark' });
+    expect(store.subscriptionLinks()).toMatchObject([{ personId: 'person-mark' }]);
+  });
+
   it('also take a mutation named the way AppSync names it, with arguments not as text', async () => {
     const { store, handler } = commands();
     await handler({

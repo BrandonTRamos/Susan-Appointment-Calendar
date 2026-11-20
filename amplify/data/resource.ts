@@ -1,6 +1,7 @@
 import { a, defineData, type ClientSchema } from '@aws-amplify/backend';
 import { ACTIVITY_ACTIONS, APPOINTMENT_STATES } from '../../src/lib/calendar';
 import { calendarCommands } from '../functions/calendar-commands/resource';
+import { subscriptionFeed } from '../functions/subscription-feed/resource';
 
 // Calendar data, and the only way to change it.
 //
@@ -64,6 +65,20 @@ const schema = a
       })
       .authorization((allow) => [allow.authenticated().to(['read'])]),
 
+    // Each person's calendar subscription link (SubscriptionLink in
+    // src/lib/calendar/subscription.ts): a hash of it, never the link itself. A signed-in person can
+    // read only their own, and nobody signed in can write one directly. The feed finds a link by
+    // its hash.
+    SubscriptionLink: a
+      .model({
+        personId: a.string().required(),
+        hash: a.string().required(),
+        madeAt: a.datetime().required(),
+      })
+      .identifier(['personId'])
+      .secondaryIndexes((index) => [index('hash').queryField('subscriptionLinkByHash')])
+      .authorization((allow) => [allow.ownerDefinedIn('personId').identityClaim('sub').to(['read'])]),
+
     // The core's commands. Each answers with a CommandAnswer (src/lib/calendarApi.ts): the
     // Appointment as it now is, or the core's refusal. `removeAppointment` is the core's "delete":
     // the name deleteAppointment belongs to the model's own mutation, which only the function may
@@ -76,10 +91,17 @@ const schema = a
     }),
     cancelAppointment: command().arguments({ id: a.id().required() }),
     removeAppointment: command().arguments({ id: a.id().required() }),
+    // Each answers with a CommandAnswer: the new link's secret, shown this once, or null.
+    makeSubscriptionLink: command(),
+    switchOffSubscriptionLink: command(),
   })
   // Lets the function write through the data API, so that every change reaches everyone looking at
   // the calendar (docs/adr/0003-the-core-writes-through-the-data-api.md).
-  .authorization((allow) => [allow.resource(calendarCommands).to(['query', 'mutate'])]);
+  // The feed only reads.
+  .authorization((allow) => [
+    allow.resource(calendarCommands).to(['query', 'mutate']),
+    allow.resource(subscriptionFeed).to(['query']),
+  ]);
 
 export type Schema = ClientSchema<typeof schema>;
 

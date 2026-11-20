@@ -1,6 +1,7 @@
 // Synthesizes the Amplify backend with CDK locally, without AWS credentials. It catches CDK and
 // bundling errors before a deploy, then checks the sign-in rules, the rules about who may read and
-// write calendar data, and the cost tags in what was synthesized. Usage: npm run synth
+// write calendar data and subscription links, the feed's public address, and the cost tags in what
+// was synthesized. Usage: npm run synth
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -51,13 +52,9 @@ function stepWords(step, which) {
 const SIGNED_IN = '#if( $util.authType() == "User Pool Authorization" )';
 const AFTER_SIGNED_IN = '#if( !$isAuthorized';
 
-/**
- * The data API's operations of one kind ('Query', 'Mutation' or 'Subscription'), by name, each
- * with whether a signed-in person may call it. An operation with no rule at all counts as open, so
- * that it is noticed.
- */
-function openToSignedIn(kind) {
-  const open = new Map();
+/** Each data API operation of one kind, by name, with the words of the steps that hold its rules. */
+function ruleSteps(kind) {
+  const found = new Map();
   for (const stack of stacks()) {
     for (const { Type, Properties } of Object.values(stack)) {
       if (Type !== 'AWS::AppSync::Resolver' || Properties.TypeName !== kind) continue;
@@ -65,18 +62,52 @@ function openToSignedIn(kind) {
         .map((step) => stack[step['Fn::GetAtt']?.[0]]?.Properties ?? {})
         .flatMap((step) => [stepWords(step, 'Request'), stepWords(step, 'Response')])
         .filter((words) => words.includes(SIGNED_IN));
-      const allows = (words) =>
-        words.split(SIGNED_IN)[1].split(AFTER_SIGNED_IN)[0].replace('#end', '').trim() !== '';
-      open.set(Properties.FieldName, rules.length === 0 || rules.some(allows));
+      found.set(Properties.FieldName, rules);
     }
   }
-  return open;
+  return found;
+}
+
+/**
+ * The data API's operations of one kind ('Query', 'Mutation' or 'Subscription'), by name, each
+ * with whether a signed-in person may call it. An operation with no rule at all counts as open, so
+ * that it is noticed.
+ */
+function openToSignedIn(kind) {
+  const allows = (words) =>
+    words.split(SIGNED_IN)[1].split(AFTER_SIGNED_IN)[0].replace('#end', '').trim() !== '';
+  return new Map(
+    [...ruleSteps(kind)].map(([name, rules]) => [name, rules.length === 0 || rules.some(allows)]),
+  );
+}
+
+/**
+ * Whether a signed-in person may call an operation only on rows whose `personId` is the `sub` they
+ * signed in with: Amplify's rule for a model owned by the person named in `personId`, and no rule
+ * that lets in everyone signed in.
+ */
+function onlyOwn(rules) {
+  const everyone = /User Pool Authorization" \)\s*#set\( \$isAuthorized = true \)/;
+  return (
+    rules.length > 0 &&
+    rules.every((words) => !everyone.test(words)) &&
+    rules.some((words) => /claims\.get\("sub"\)/.test(words) && /"?personId"?/.test(words))
+  );
 }
 
 /** The calendar core's commands (amplify/data/resource.ts): the only way to change the calendar. */
-const COMMANDS = ['addAppointment', 'cancelAppointment', 'changeAppointment', 'removeAppointment'];
-/** What is kept (amplify/data/resource.ts). Only the commands function writes these directly. */
+const COMMANDS = [
+  'addAppointment',
+  'cancelAppointment',
+  'changeAppointment',
+  'makeSubscriptionLink',
+  'removeAppointment',
+  'switchOffSubscriptionLink',
+];
+/** The calendar (amplify/data/resource.ts). Only the commands function writes these directly. */
 const MODELS = ['Appointment', 'ActivityRecord'];
+/** Kept per person, and read only by that person. Only the commands function writes these. */
+const OWN_MODELS = ['SubscriptionLink'];
 
 /** What the synthesized backend must say. Each entry is [what is being checked, whether it holds]. */
 function checks() {
@@ -86,6 +117,7 @@ function checks() {
   const pool = pools[0] ?? {};
   const client = clients[0] ?? {};
   const queries = openToSignedIn('Query');
+  const queryRules = ruleSteps('Query');
   const mutations = openToSignedIn('Mutation');
   const subscriptions = openToSignedIn('Subscription');
   const tables = resources('Custom::AmplifyDynamoDBTable');
@@ -151,20 +183,38 @@ function checks() {
         .join() === COMMANDS.join(),
     ],
     [
-      'nobody signed in can write calendar data directly',
-      MODELS.every((model) =>
+        'a signed-in person can read their own subscription link and nobody else\'s',
+      OWN_MODELS.every((model) =>
+        [`get${model}`, `list${model}s`, `${model[0].toLowerCase()}${model.slice(1)}ByHash`].every(
+          (query) => onlyOwn(queryRules.get(query) ?? []),
+        ),
+      ),
+    ],
+    [
+      'nobody signed in can write calendar data or a subscription link directly',
+      [...MODELS, ...OWN_MODELS].every((model) =>
         ['create', 'update', 'delete'].every((verb) => mutations.get(`${verb}${model}`) === false),
       ),
     ],
     [
-      "the commands function is told Susan's time zone",
+      "the commands and feed functions are told Susan's time zone",
       resources('AWS::Lambda::Function').filter(
         (lambda) => lambda.Environment?.Variables?.SUSAN_TIME_ZONE,
-      ).length === 1,
+      ).length === 2,
+    ],
+    [
+      // The feed has the only public address. Its link is checked inside the function.
+      'the subscription feed has a public address, with a cap on requests at once',
+      resources('AWS::Lambda::Url').length === 1 &&
+        resources('AWS::Lambda::Url')[0].AuthType === 'NONE' &&
+        resources('AWS::Lambda::Function').filter(
+          (lambda) =>
+            lambda.ReservedConcurrentExecutions > 0 && lambda.Environment?.Variables?.SUSAN_TIME_ZONE,
+        ).length === 1,
     ],
     [
       'every table can be restored to a point in time',
-      tables.length === MODELS.length &&
+      tables.length === MODELS.length + OWN_MODELS.length &&
         tables.every(
           (table) => table.pointInTimeRecoverySpecification?.pointInTimeRecoveryEnabled === true,
         ),
