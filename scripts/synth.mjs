@@ -1,7 +1,7 @@
 // Synthesizes the Amplify backend with CDK locally, without AWS credentials. It catches CDK and
 // bundling errors before a deploy, then checks the sign-in rules, the rules about who may read and
 // write calendar data and subscription links, the feed's public address, the scheduled run that
-// sends texts, and the cost tags in what was synthesized. Usage: npm run synth
+// sends texts and raises Alerts, and the cost tags in what was synthesized. Usage: npm run synth
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -249,8 +249,9 @@ function feedFunction() {
 }
 
 /**
- * The scheduled run's function: the one a schedule invokes. Gives its schedules, its properties, and
- * its settings for being invoked by the schedule.
+ * The scheduled run's function: the one a schedule invokes. Gives its schedules, its properties,
+ * its settings for being invoked by the schedule, what its role may do outside the data API, and
+ * the code it runs as bundled for the deploy.
  */
 function scheduledFunction() {
   const all = stacks().flatMap((stack) => Object.entries(stack));
@@ -268,7 +269,30 @@ function scheduledFunction() {
     .filter((config) => config.FunctionName?.Ref === name);
   const asset = /^([0-9a-f]{64})\.zip$/.exec(lambda?.Properties.Code?.S3Key ?? '')?.[1];
   const code = asset ? readFileSync(join(out, `asset.${asset}`, 'index.mjs'), 'utf8') : '';
-  return { schedules, properties: lambda?.Properties ?? {}, invoke, code };
+  const role = lambda?.Properties.Role?.['Fn::GetAtt']?.[0];
+  const statements = all
+    .filter(
+      ([, resource]) =>
+        resource.Type === 'AWS::IAM::Policy' &&
+        resource.Properties.Roles?.some((each) => each.Ref === role),
+    )
+    .flatMap(([, policy]) => policy.Properties.PolicyDocument.Statement)
+    .filter((statement) => !String(statement.Action).startsWith('appsync:'));
+  return { schedules, properties: lambda?.Properties ?? {}, invoke, code, statements };
+}
+
+/** Every statement of every role's policies that lets it do something in a service, such as 'ses'. */
+function statementsFor(service) {
+  return resources('AWS::IAM::Policy')
+    .flatMap((policy) =>
+      (policy.PolicyDocument?.Statement ?? []).map((statement) => ({
+        roles: policy.Roles ?? [],
+        statement,
+      })),
+    )
+    .filter(({ statement }) =>
+      [statement.Action].flat().some((action) => String(action).startsWith(`${service}:`)),
+    );
 }
 
 /** The words of the step that writes a data API operation's row: the one that holds its condition. */
@@ -526,6 +550,51 @@ function checks() {
         retake.includes('$util.qr($UpdateItem.put("condition", $Conditions))') &&
         run.code.includes('updateText(input: $input, condition: $condition)') &&
         /status:\s*\{\s*eq:\s*"waiting"\s*\}/.test(run.code),
+    ],
+    [
+      // Alerts (amplify/backend.ts): every Admin, with the address each signs in with, comes from
+      // the Admins group.
+      'the scheduled run can find out who the Admins are and their addresses, and nothing more',
+      (() => {
+        const cognito = run.statements.filter((statement) =>
+          [statement.Action].flat().some((action) => String(action).startsWith('cognito-idp:')),
+        );
+        return (
+          cognito.length === 1 &&
+          JSON.stringify([cognito[0].Action].flat()) === '["cognito-idp:ListUsersInGroup"]' &&
+          Boolean(run.properties.Environment?.Variables?.USER_POOL_ID)
+        );
+      })(),
+    ],
+    [
+      // Alert emails (amplify/calendar/alert-email.ts): the scheduled run alone may send email,
+      // and only through identities in its own account and region, which in the SES sandbox must
+      // be verified, recipients included. It is told the address to send from (empty for none).
+      'only the scheduled run may send email, and only through its own account and region',
+      (() => {
+        const ses = statementsFor('ses');
+        const runRole = run.properties.Role?.['Fn::GetAtt']?.[0];
+        const resource = JSON.stringify(ses[0]?.statement.Resource ?? '');
+        return (
+          ses.length === 1 &&
+          ses[0].roles.length === 1 &&
+          ses[0].roles[0].Ref === runRole &&
+          JSON.stringify([ses[0].statement.Action].flat()) === '["ses:SendEmail"]' &&
+          resource.includes(':identity/*') &&
+          resource.includes('AWS::Region') &&
+          resource.includes('AWS::AccountId') &&
+          typeof run.properties.Environment?.Variables?.ALERT_EMAIL_FROM === 'string'
+        );
+      })(),
+    ],
+    [
+      // An Alert is marked raised by the run whose write finds it still due (changeText in
+      // amplify/calendar/data-store.ts), so two runs cannot both raise it.
+      'an Alert is raised once, by a write whose condition holds as it is written',
+      retake.includes('$util.qr($UpdateItem.put("condition", $Conditions))') &&
+        run.code.includes('updateText(input: $input, condition: $condition)') &&
+        /\{\s*alert:\s*\{\s*eq:/.test(run.code) &&
+        /alert:\s*"raised"/.test(run.code),
     ],
     [
       // The feed has the only public address. Its link is checked inside the function.

@@ -8,6 +8,7 @@
 import { failureKind } from '../failure';
 import { formatDate, formatTime, isDate, isTime, momentOf } from '../localTime';
 import { activityUpdate } from './activityUpdate';
+import { alertFor, alertMarked, deliveredText, type DeliveryOutcome } from './alerts';
 import {
   DETAIL_NAMES as NAMES,
   DETAILS,
@@ -145,6 +146,13 @@ export interface CalendarCore {
    * number is not set each text that comes due is recorded as not sent.
    */
   runDue(): Promise<Text[]>;
+  /**
+   * What became of a text after the text sender took it, as the scheduled run learns it: delivered,
+   * reported not delivered, or never confirmed delivered in the time allowed. Only a text still
+   * recorded as sent is changed, once; anything else is ignored and answers null. A text that did
+   * not get through raises an Alert. Answers with its record as it now is.
+   */
+  recordDelivery(report: { textId: string; outcome: DeliveryOutcome }): Promise<Text | null>;
 }
 
 export interface CalendarCoreOptions {
@@ -636,10 +644,11 @@ export function createCalendarCore({
         const retry = retrying(text, appointments, now, Boolean(susansNumber));
         if (retry === 'hold') continue;
         // Taken up only if no other run has taken it up since it was read.
-        const next: Text =
+        const next: Text = alertMarked(
           'reason' in retry
             ? { ...text, status: 'failed', reason: retry.reason, triedAt: at }
-            : { ...text, words: retry.words, attempts: text.attempts + 1, triedAt: at };
+            : { ...text, words: retry.words, attempts: text.attempts + 1, triedAt: at },
+        );
         if (!(await store.retakeText(next, text))) continue;
         if ('reason' in retry) {
           done.push(next);
@@ -678,16 +687,77 @@ export function createCalendarCore({
         });
         if (plan === 'tooLate' || !susansNumber) {
           const reason: TextReason = plan === 'tooLate' ? 'tooLate' : 'noNumber';
-          const notSent: Text = { ...text, status: 'notSent', reason, attempts: 0 };
+          const notSent = alertMarked({ ...text, status: 'notSent', reason, attempts: 0 });
           if (await store.claimText(notSent)) done.push(notSent);
           continue;
         }
         if (!(await store.claimText(text))) continue;
         done.push(await attempt(text, susansNumber, { startsAt: appointment.startsAt, tried: 0 }));
       }
+
+      // Alerts about the texts this run settled, and any a run that stopped left due.
+      const latest = new Map(texts.map((text) => [text.id, text]));
+      for (const text of done) latest.set(text.id, text);
+      await raiseAlerts([...latest.values()], appointments);
       return done;
     },
+
+    async recordDelivery({ textId, outcome }) {
+      const text = (await store.everyText()).find((each) => each.id === textId);
+      if (text?.status !== 'sent') return null;
+      const next = deliveredText(text, outcome);
+      // Only if no other run has settled it since it was read.
+      if (!(await store.changeText(next, text))) return null;
+      const appointment = next.appointmentId ? await store.appointment(next.appointmentId) : null;
+      await raiseAlerts([next], appointment ? [appointment] : []);
+      return next;
+    },
   };
+
+  /**
+   * Raises each Alert that is due among these texts, once: it is marked raised by a write that
+   * finds it still due, so two runs cannot both raise it, and then goes to every Admin by email and
+   * by app notification. Susan is not an Admin, so she is never told. A channel that fails does
+   * not stop the other; when both fail, nobody was told, so it is left due for the next run. What
+   * broke is logged in fixed words, without the Appointment or the text.
+   */
+  async function raiseAlerts(texts: readonly Text[], appointments: readonly Appointment[]) {
+    const due = texts
+      .filter((text) => text.alert === 'due')
+      .sort((a, b) => a.triedAt.localeCompare(b.triedAt) || a.id.localeCompare(b.id));
+    if (due.length === 0) return;
+    let admins: string[];
+    try {
+      admins = [...new Set(await messenger.admins())];
+    } catch (error) {
+      // Left due: the next run tries again.
+      console.error(`Alert could not be sent (${failureKind(error)})`);
+      return;
+    }
+    for (const text of due) {
+      const raised: Text = { ...text, alert: 'raised' };
+      try {
+        if (!(await store.changeText(raised, text))) continue;
+      } catch (error) {
+        console.error(`Alert could not be sent (${failureKind(error)})`);
+        continue;
+      }
+      if (admins.length === 0) continue;
+      const appointment = appointments.find((each) => each.id === text.appointmentId) ?? null;
+      const { email, notification } = alertFor(text, appointment, timeZone);
+      const sent = await Promise.allSettled([
+        messenger.sendEmail(admins, email),
+        messenger.sendAppNotification(admins, notification),
+      ]);
+      for (const [n, result] of sent.entries())
+        if (result.status === 'rejected')
+          console.error(
+            `Alert ${n === 0 ? 'email' : 'app notification'} could not be sent (${failureKind(result.reason)})`,
+          );
+      if (sent.every((result) => result.status === 'rejected'))
+        await store.changeText(text, raised).catch(() => {});
+    }
+  }
 
   /**
    * What to do with a text that was tried and might not have gone, now that it is due to be tried
@@ -730,6 +800,7 @@ export function createCalendarCore({
       triedAt: clock.now().toISOString(),
       sentAt: null,
       reference: null,
+      alert: null,
     };
   }
 
@@ -747,10 +818,11 @@ export function createCalendarCore({
     // The cutoff is the Appointment's start as it is at the moment of sending, not when the run
     // began: an earlier slow send can carry the clock past it. Nothing goes once it has started.
     if (startsAt && clock.now().toISOString() >= startsAt) {
-      next =
+      next = alertMarked(
         tried === 0
           ? { ...text, status: 'notSent', reason: 'tooLate', attempts: 0 }
-          : { ...text, status: 'failed', reason: 'tooLate', attempts: tried };
+          : { ...text, status: 'failed', reason: 'tooLate', attempts: tried },
+      );
       await store.replaceText(next);
       return next;
     }
@@ -768,6 +840,7 @@ export function createCalendarCore({
       if (text.attempts < SEND_ATTEMPTS) return text;
       next = { ...text, status: 'failed', reason: 'gaveUp' };
     }
+    next = alertMarked(next);
     await store.replaceText(next);
     return next;
   }

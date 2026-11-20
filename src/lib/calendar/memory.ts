@@ -3,6 +3,7 @@
 
 import { inDateOrder, type ActivityRecord, type Appointment } from './appointment';
 import type {
+  AdminEmail,
   AdminMessenger,
   AppNotification,
   Clock,
@@ -74,6 +75,19 @@ export function createMemoryStore(): MemoryStore {
         kept?.status === 'waiting' &&
         kept.attempts === current.attempts &&
         kept.triedAt === current.triedAt;
+      if (!still) return false;
+      texts.set(next.id, structuredClone(next));
+      changed();
+      return true;
+    },
+    async changeText(next, current) {
+      const kept = texts.get(next.id);
+      const still =
+        kept !== undefined &&
+        kept.status === current.status &&
+        kept.attempts === current.attempts &&
+        kept.triedAt === current.triedAt &&
+        (current.alert === null || kept.alert === current.alert);
       if (!still) return false;
       texts.set(next.id, structuredClone(next));
       changed();
@@ -196,14 +210,20 @@ export function createStandInSender(): StandInSender {
 export interface MemoryMessenger extends AdminMessenger {
   /** Every app notification sent, oldest first, with the person IDs it went to. */
   appNotifications(): { to: string[]; notification: AppNotification }[];
+  /** Every email sent, oldest first, with the person IDs it went to. */
+  emails(): { to: string[]; email: AdminEmail }[];
   /** Makes the messenger fail, as when the push service or the user pool is not answering. */
   fail(failing: boolean): void;
+  /** Makes only email fail, as when the email service is not answering. */
+  failEmail(failing: boolean): void;
 }
 
 /** `admins` is the person ID of every Admin. */
 export function createMemoryMessenger(admins: readonly string[] = []): MemoryMessenger {
   const sent: { to: string[]; notification: AppNotification }[] = [];
+  const emailed: { to: string[]; email: AdminEmail }[] = [];
   let failing = false;
+  let failingEmail = false;
   const check = () => {
     if (failing) throw new Error('The messenger is not answering');
   };
@@ -216,9 +236,20 @@ export function createMemoryMessenger(admins: readonly string[] = []): MemoryMes
       check();
       sent.push(structuredClone({ to: [...to], notification }));
     },
+    async sendEmail(to, email) {
+      check();
+      if (failingEmail) throw new Error('The email service is not answering');
+      // As the backend's does, it emails only Admins.
+      const reached = to.filter((id) => admins.includes(id));
+      if (reached.length) emailed.push(structuredClone({ to: reached, email }));
+    },
     appNotifications: () => structuredClone(sent),
+    emails: () => structuredClone(emailed),
     fail(next) {
       failing = next;
+    },
+    failEmail(next) {
+      failingEmail = next;
     },
   };
 }

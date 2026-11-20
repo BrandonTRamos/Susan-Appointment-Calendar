@@ -1,25 +1,34 @@
-import {
-  createCalendarCore,
-  NO_ADMIN_MESSENGER,
-  systemClock,
-  type CalendarCore,
-} from '../../../src/lib/calendar';
+import { createCalendarCore, systemClock, type CalendarCore } from '../../../src/lib/calendar';
 import { resolveTimeZone } from '../../../src/lib/timeZone';
-import { createDataStore } from '../../calendar/data-store';
+import { sesEmailSender } from '../../calendar/alert-email';
+import { adminMessenger, userPoolAdmins, webPushSender } from '../../calendar/admin-messenger';
+import { dataApiDevices, type DeviceClient } from '../../calendar/app-notification-devices';
+import { connectDataApi, dataStore, type DataClient } from '../../calendar/data-store';
 import { textSenderFor } from '../../calendar/text-sender';
 import { sendTextsHandler } from './run';
+
+const appUrl = process.env.APP_URL ?? 'mailto:noreply@example.com';
+/** The verified address Alerts are emailed from; unset, they go by app notification only. */
+const alertsFrom = process.env.ALERT_EMAIL_FROM;
 
 let core: Promise<CalendarCore> | undefined;
 
 function getCore() {
-  core ??= createDataStore()
-    .then((store) =>
+  core ??= connectDataApi()
+    .then((client: unknown) =>
       createCalendarCore({
-        store,
+        // The data API's own client type is too deep to compare against both narrow ones.
+        store: dataStore(client as DataClient),
         clock: systemClock,
         textSender: textSenderFor(),
-        // The run tells no Admin anything yet: Alerts arrive with ticket 15.
-        messenger: NO_ADMIN_MESSENGER,
+        // Alerts go to every Admin, by app notification and by email (amplify/calendar).
+        messenger: adminMessenger({
+          admins: userPoolAdmins(process.env.USER_POOL_ID ?? ''),
+          devices: dataApiDevices(client as DeviceClient),
+          push: webPushSender(appUrl),
+          email: alertsFrom ? sesEmailSender({ from: alertsFrom }) : null,
+          appUrl,
+        }),
         timeZone: resolveTimeZone(process.env.SUSAN_TIME_ZONE),
       }),
     )

@@ -32,6 +32,13 @@ export interface Store {
    * can. Answers whether it was replaced.
    */
   retakeText(next: Text, current: Text): Promise<boolean>;
+  /**
+   * Replaces the record of a text with `next`, only if it is still as `current` has it: the same
+   * status, tries and last try, and, when `current` has an Alert, that same Alert. In one step, so
+   * that of two runs settling a sent text, or raising its Alert, only one can. Answers whether it
+   * was replaced.
+   */
+  changeText(next: Text, current: Text): Promise<boolean>;
   /** Replaces the record of a text that this run holds, by its claim or retake, with this one. */
   replaceText(text: Text): Promise<void>;
   /** Where texts go, and who Susan is told to call; NO_SETTINGS until someone sets them. */
@@ -99,8 +106,20 @@ export interface AppNotification {
 }
 
 /**
- * How the core tells Admins anything. For now it has one channel, app notifications; ticket 15
- * adds email. The core decides who is told: this only knows who the Admins are and reaches them.
+ * An email to Admins. The core writes every word of it; the messenger adds only the app's address
+ * for `opens`, on a line of its own, so the reader can open what it is about.
+ */
+export interface AdminEmail {
+  subject: string;
+  /** Plain text. */
+  body: string;
+  /** The app's address it is about, such as '/appointments/<id>'. */
+  opens: string;
+}
+
+/**
+ * How the core tells Admins anything, by app notification and by email. The core decides who is
+ * told: this only knows who the Admins are and reaches them.
  */
 export interface AdminMessenger {
   /** The person ID of every Admin: every account marked as an Admin's. Susan is never one. */
@@ -110,6 +129,11 @@ export interface AdminMessenger {
    * A device that reports its subscription gone is forgotten.
    */
   sendAppNotification(to: readonly string[], notification: AppNotification): Promise<void>;
+  /**
+   * Emails each of these people at the address they sign in with, each on their own. Only an
+   * Admin's address is ever used. Throws when it reached none of them.
+   */
+  sendEmail(to: readonly string[], email: AdminEmail): Promise<void>;
 }
 
 /**
@@ -119,6 +143,9 @@ export interface AdminMessenger {
 export const NO_ADMIN_MESSENGER: AdminMessenger = {
   admins: async () => [],
   sendAppNotification: async () => {
+    throw new Error('This calendar only reads: it tells nobody anything.');
+  },
+  sendEmail: async () => {
     throw new Error('This calendar only reads: it tells nobody anything.');
   },
 };

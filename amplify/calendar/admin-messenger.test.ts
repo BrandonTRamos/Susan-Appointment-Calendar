@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fromBase64Url } from '../../src/lib/vapid';
+import type { EmailResult, EmailSender, OutgoingEmail } from './alert-email';
 import {
   adminMessenger,
   userPoolAdmins,
@@ -373,6 +374,10 @@ describe('keeping a device up to date as the app opens', () => {
   });
 });
 
+/** Admins' accounts, each signing in with an invented address at example.com. */
+const accounts = (...ids: string[]) =>
+  ids.map((id) => ({ id, email: `${id.replace('person-', '')}@example.com` }));
+
 describe('app notifications to Admins', () => {
   async function messenger(answers: Record<string, PushResult> = {}) {
     const api = dataApi();
@@ -383,7 +388,7 @@ describe('app notifications to Admins', () => {
     await devices.save('person-mark', subscription('marks-phone'));
     await devices.save('person-ann', subscription('anns-phone'));
     const push = pushService(answers);
-    const admins = async () => ['person-linda', 'person-mark', 'person-ann'];
+    const admins = async () => accounts('person-linda', 'person-mark', 'person-ann');
     return { ...api, push, messenger: adminMessenger({ admins, devices, push: push.sender }) };
   }
 
@@ -431,7 +436,7 @@ describe('app notifications to Admins', () => {
     await devices.save('person-linda', subscription('shared'));
     const push = pushService({ 'https://web.push.apple.com/shared': 'gone' });
     const m = adminMessenger({
-      admins: async () => ['person-linda'],
+      admins: async () => accounts('person-linda'),
       devices,
       push: push.sender,
     });
@@ -446,7 +451,7 @@ describe('app notifications to Admins', () => {
     const api = dataApi();
     const push = pushService();
     const m = adminMessenger({
-      admins: async () => ['person-linda'],
+      admins: async () => accounts('person-linda'),
       devices: dataApiDevices(api.client),
       push: push.sender,
     });
@@ -460,7 +465,14 @@ describe('who the Admins are', () => {
     const pages = [
       {
         Users: [
-          { Enabled: true, Attributes: [{ Name: 'sub', Value: 'person-linda' }] },
+          {
+            Enabled: true,
+            Attributes: [
+              { Name: 'sub', Value: 'person-linda' },
+              { Name: 'email', Value: 'linda@example.com' },
+              { Name: 'name', Value: 'Linda' },
+            ],
+          },
           { Enabled: false, Attributes: [{ Name: 'sub', Value: 'person-gone' }] },
         ],
         NextToken: 'page-2',
@@ -469,11 +481,99 @@ describe('who the Admins are', () => {
     ];
     const send = vi.fn(async () => pages.shift());
     const admins = userPoolAdmins('pool-1', { send } as never);
-    expect(await admins()).toEqual(['person-linda', 'person-mark']);
+    expect(await admins()).toEqual([
+      { id: 'person-linda', email: 'linda@example.com' },
+      { id: 'person-mark', email: null },
+    ]);
     expect(send).toHaveBeenCalledTimes(2);
     expect(send.mock.calls[0]).toMatchObject([
       { input: { UserPoolId: 'pool-1', GroupName: 'Admins' } },
     ]);
     expect(send.mock.calls[1]).toMatchObject([{ input: { NextToken: 'page-2' } }]);
+  });
+});
+
+describe('emails to Admins', () => {
+  /** An email sender that keeps what it is asked to send, and answers as it is told to. */
+  function emailService(answers: Record<string, EmailResult> = {}) {
+    const sent: OutgoingEmail[] = [];
+    return {
+      sent,
+      sender: {
+        async send(email: OutgoingEmail) {
+          sent.push(email);
+          return answers[email.to] ?? 'sent';
+        },
+      } satisfies EmailSender,
+    };
+  }
+  const alert = {
+    subject: "Susan's Calendar alert: a Reminder failed",
+    body: 'A Reminder to Susan failed.',
+    opens: '/appointments/a1',
+  };
+  function messenger(
+    answers: Record<string, EmailResult> = {},
+    appUrl = 'https://calendar.example.com',
+  ) {
+    const email = emailService(answers);
+    const m = adminMessenger({
+      // Susan's account is not in the Admins group, so it is never among these.
+      admins: async () => accounts('person-linda', 'person-mark', 'person-ann'),
+      devices: dataApiDevices(dataApi().client),
+      push: pushService().sender,
+      email: email.sender,
+      appUrl,
+    });
+    return { ...email, messenger: m };
+  }
+
+  it('go to the address each Admin named signs in with, one email each, with a link to open', async () => {
+    const { messenger: m, sent } = messenger();
+    await m.sendEmail(['person-linda', 'person-ann'], alert);
+    expect(sent).toEqual([
+      {
+        to: 'linda@example.com',
+        subject: alert.subject,
+        body: 'A Reminder to Susan failed.\n\nhttps://calendar.example.com/appointments/a1',
+      },
+      {
+        to: 'ann@example.com',
+        subject: alert.subject,
+        body: 'A Reminder to Susan failed.\n\nhttps://calendar.example.com/appointments/a1',
+      },
+    ]);
+  });
+
+  it('never go to anyone who is not an Admin, such as Susan', async () => {
+    const { messenger: m, sent } = messenger();
+    await m.sendEmail(['person-susan'], alert);
+    expect(sent).toEqual([]);
+  });
+
+  it('carry no link while the app has no address of its own, as in a sandbox', async () => {
+    const { messenger: m, sent } = messenger({}, 'mailto:noreply@example.com');
+    await m.sendEmail(['person-mark'], alert);
+    expect(sent[0].body).toBe('A Reminder to Susan failed.');
+  });
+
+  it('still reach the others when one cannot be sent, and fail only when none could', async () => {
+    const some = messenger({ 'linda@example.com': 'rejected' });
+    await some.messenger.sendEmail(['person-linda', 'person-mark'], alert);
+    expect(some.sent.map((email) => email.to)).toEqual(['linda@example.com', 'mark@example.com']);
+    const none = messenger({ 'linda@example.com': 'rejected', 'mark@example.com': 'failed' });
+    await expect(none.messenger.sendEmail(['person-linda', 'person-mark'], alert)).rejects.toThrow(
+      'No Alert email could be sent',
+    );
+  });
+
+  it('are not sent, and nothing fails, where email is not set up', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const m = adminMessenger({
+      admins: async () => accounts('person-linda'),
+      devices: dataApiDevices(dataApi().client),
+      push: pushService().sender,
+    });
+    await expect(m.sendEmail(['person-linda'], alert)).resolves.toBeUndefined();
   });
 });

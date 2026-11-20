@@ -1,6 +1,7 @@
 import { a, defineData, type ClientSchema } from '@aws-amplify/backend';
 import {
   ACTIVITY_ACTIONS,
+  ALERT_STATES,
   APPOINTMENT_STATES,
   REMINDER_SHAPES,
   REMINDER_UNITS,
@@ -126,6 +127,9 @@ const schema = a
         triedAt: a.datetime().required(),
         sentAt: a.datetime(),
         reference: a.string(),
+        // The Alert about it: due, then raised once by a conditional write. Missing on a text
+        // recorded before ticket 15, which raises none.
+        alert: a.enum(ALERT_STATES),
       })
       .secondaryIndexes((index) => [index('appointmentId').queryField('textsByAppointment')])
       .authorization((allow) => [allow.authenticated().to(['read'])]),

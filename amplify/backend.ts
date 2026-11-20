@@ -60,6 +60,23 @@ userPool.grant(
 );
 backend.calendarCommands.addEnvironment('USER_POOL_ID', userPool.userPoolId);
 
+// The scheduled run raises Alerts: it lists the Admins group to find every Admin and the address
+// each signs in with, and nothing more of the user pool. It emails them through AWS's email service
+// (amplify/calendar/alert-email.ts), from and to identities verified in this account and region,
+// which is all the sandbox allows. It may send email and do nothing else there. `npm run synth`
+// checks both.
+userPool.grant(backend.sendTexts.resources.lambda, 'cognito-idp:ListUsersInGroup');
+backend.sendTexts.addEnvironment('USER_POOL_ID', userPool.userPoolId);
+{
+  const stack = Stack.of(backend.sendTexts.resources.lambda);
+  backend.sendTexts.resources.lambda.addToRolePolicy(
+    new PolicyStatement({
+      actions: ['ses:SendEmail'],
+      resources: [`arn:${stack.partition}:ses:${stack.region}:${stack.account}:identity/*`],
+    }),
+  );
+}
+
 // The app-notifications function may reach the devices app notifications go to and the key that
 // signs them, and nothing else in the data API: Amplify would let it call every query and mutation,
 // the calendar's included. `npm run synth` checks it.

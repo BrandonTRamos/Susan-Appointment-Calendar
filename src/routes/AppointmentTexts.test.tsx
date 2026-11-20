@@ -113,6 +113,7 @@ describe.each(['phone', 'desktop'] as const)(
           triedAt: added.reminders[0].dueAt,
           sentAt: added.reminders[0].dueAt,
           reference: null,
+          alert: null,
         });
       });
       expect(await inReminders('Sent')).toBeTruthy();

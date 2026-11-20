@@ -1,6 +1,7 @@
 // The calendar core's Admin messenger in the backend. It finds the Admins in the user pool and
-// reaches them by app notification: web push to each device they turned notifications on for,
-// signed with the key pair kept in the data API, as Wellbeing does. Ticket 15 adds email.
+// reaches them by app notification, web push to each device they turned notifications on for,
+// signed with the key pair kept in the data API, as Wellbeing does; and by email, through AWS's
+// email service to the address each signs in with (alert-email.ts).
 
 import {
   CognitoIdentityProviderClient,
@@ -9,6 +10,7 @@ import {
 import webpush from 'web-push';
 import type { AdminMessenger, AppNotification } from '../../src/lib/calendar';
 import type { VapidKeys } from '../../src/lib/vapid';
+import type { EmailSender } from './alert-email';
 import type { Device, Devices } from './app-notification-devices';
 
 /** The group the owner puts each Admin's account in (README, "Accounts"). */
@@ -55,13 +57,19 @@ export function webPushSender(subject: string): PushSender {
   };
 }
 
-/** The person ID (the account's `sub`) of everyone in the Admins group. */
+/** An Admin's account: its person ID (the account's `sub`) and the address it signs in with. */
+export interface AdminAccount {
+  id: string;
+  email: string | null;
+}
+
+/** Everyone in the Admins group whose account is enabled. Susan's account is never in it. */
 export function userPoolAdmins(
   userPoolId: string,
   client = new CognitoIdentityProviderClient({}),
-): () => Promise<string[]> {
+): () => Promise<AdminAccount[]> {
   return async () => {
-    const admins: string[] = [];
+    const admins: AdminAccount[] = [];
     let NextToken: string | undefined;
     do {
       const page = await client.send(
@@ -73,8 +81,10 @@ export function userPoolAdmins(
       );
       for (const user of page.Users ?? []) {
         if (user.Enabled === false) continue;
-        const sub = user.Attributes?.find((attribute) => attribute.Name === 'sub')?.Value;
-        if (sub) admins.push(sub);
+        const attribute = (name: string) =>
+          user.Attributes?.find((each) => each.Name === name)?.Value ?? null;
+        const sub = attribute('sub');
+        if (sub) admins.push({ id: sub, email: attribute('email') });
       }
       NextToken = page.NextToken;
     } while (NextToken);
@@ -83,14 +93,26 @@ export function userPoolAdmins(
 }
 
 export interface MessengerDependencies {
-  admins: () => Promise<string[]>;
+  admins: () => Promise<AdminAccount[]>;
   devices: Devices;
   push: PushSender;
+  /** How email is sent; null where it is not set up, and then none is. */
+  email?: EmailSender | null;
+  /** The app's address, which an email's link is made from (amplify/app-url.ts). */
+  appUrl?: string;
 }
 
-export function adminMessenger({ admins, devices, push }: MessengerDependencies): AdminMessenger {
+export function adminMessenger({
+  admins,
+  devices,
+  push,
+  email = null,
+  appUrl = '',
+}: MessengerDependencies): AdminMessenger {
   return {
-    admins,
+    async admins() {
+      return (await admins()).map((admin) => admin.id);
+    },
     async sendAppNotification(to, notification: AppNotification) {
       if (to.length === 0) return;
       const [keys, reached] = await Promise.all([devices.keys(), devices.of(to)]);
@@ -110,6 +132,25 @@ export function adminMessenger({ admins, devices, push }: MessengerDependencies)
           });
         }),
       );
+    },
+    // Only to an Admin's own sign-in address: a person ID that is not an Admin's, such as Susan's,
+    // reaches nobody.
+    async sendEmail(to, { subject, body, opens }) {
+      if (to.length === 0) return;
+      if (!email) {
+        console.log('Alert email is not set up, so none was sent');
+        return;
+      }
+      const addresses = (await admins())
+        .filter((admin) => to.includes(admin.id))
+        .flatMap((admin) => admin.email ?? []);
+      if (addresses.length === 0) return;
+      // The only words the messenger adds: the address of what it is about, on a line of its own.
+      const link = /^https?:\/\//.test(appUrl) ? `\n\n${new URL(opens, appUrl).href}` : '';
+      const results: string[] = [];
+      for (const address of [...new Set(addresses)])
+        results.push(await email.send({ to: address, subject, body: `${body}${link}` }));
+      if (!results.includes('sent')) throw new Error('No Alert email could be sent');
     },
   };
 }

@@ -23,12 +23,16 @@ export const TEXT_REASONS = [
   'outdated',
   'refused',
   'gaveUp',
+  'undelivered',
+  'unconfirmed',
 ] as const;
 /**
  * Why a text failed or was not sent. noNumber: Susan's mobile number is not set. tooLate: the
  * Appointment had started. cancelled: the Appointment was cancelled while the text waited.
  * outdated: its Reminder was removed, or its time changed, while it waited to be tried again.
  * refused: the text sender would not take it. gaveUp: sending failed every time it was tried.
+ * undelivered: after it was sent, the text sender reported that it could not be delivered.
+ * unconfirmed: after it was sent, it was never confirmed delivered ("not confirmed delivered").
  */
 export type TextReason = (typeof TEXT_REASONS)[number];
 
@@ -56,7 +60,17 @@ export interface Text {
   sentAt: string | null;
   /** The text sender's own name for it, for asking later what became of it. */
   reference: string | null;
+  /**
+   * The Alert about it (alerts.ts): due when it failed or could not be sent and the Admins are
+   * still to be told, raised once they have been. Null for a text that needs none, and for one
+   * recorded before the calendar raised Alerts.
+   */
+  alert: AlertState | null;
 }
+
+export const ALERT_STATES = ['due', 'raised'] as const;
+/** Whether the Admins are still to be told about a text that did not reach Susan, or have been. */
+export type AlertState = (typeof ALERT_STATES)[number];
 
 /** Where texts go, and who Susan is told to call. Changed only through the calendar core. */
 export interface CalendarSettings {

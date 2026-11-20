@@ -17,6 +17,9 @@ import {
   type NewAppointment,
   type ReminderSetting,
   NO_TEXT_SENDER,
+  reminderTextId,
+  textTrouble,
+  type Text,
 } from './index';
 
 const EASTERN = 'America/New_York';
@@ -1742,6 +1745,7 @@ describe('sending texts on schedule', () => {
         triedAt: '2026-11-19T23:00:30.000Z',
         sentAt: '2026-11-19T23:00:30.000Z',
         reference: expect.any(String),
+        alert: null,
       },
     ]);
     // The record holds neither Susan's number nor the Private notes.
@@ -1851,6 +1855,7 @@ describe('sending texts on schedule', () => {
       triedAt: reminder.dueAt,
       sentAt: null,
       reference: null,
+      alert: null,
     });
     clock.set('2026-11-19T23:05:00.000Z');
     await core.runDue();
@@ -2513,5 +2518,411 @@ describe('the settings for texts', () => {
     clock.set('2026-11-19T21:00:00.000Z');
     expect(await core.changeSettings(mark, { susansNumber: '555 555 0123' })).toEqual(first);
     expect(store.activity()).toEqual([]);
+  });
+});
+
+describe('Alerts', () => {
+  /** Every Alert sent so far: by email and by app notification, with who each went to. */
+  const alerts = (messenger: ReturnType<typeof calendar>['messenger']) => ({
+    emails: messenger.emails(),
+    notifications: messenger
+      .appNotifications()
+      .filter(({ notification }) => notification.tag.startsWith('alert-')),
+  });
+
+  /** A calendar with Susan's number set and the check-up tomorrow at 2:00 pm, its Reminder due. */
+  async function ready(details: Partial<NewAppointment> = {}) {
+    const cal = calendar();
+    await cal.core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    const added = await cal.core.addAppointment(mark, { ...everyDetail, ...details });
+    cal.clock.set(added.reminders[0].dueAt); // 6:00 pm, the day before
+    return { ...cal, added };
+  }
+
+  it('tell every Admin by email and app notification when a text to Susan fails', async () => {
+    const { core, sender, store, messenger, added } = await ready();
+    sender.refuseNext();
+    await core.runDue();
+    const [text] = store.texts();
+    expect(text).toMatchObject({ status: 'failed', reason: 'refused' });
+    const { emails, notifications } = alerts(messenger);
+    expect(emails).toEqual([
+      {
+        to: ADMINS,
+        email: {
+          subject: "Susan's Calendar alert: a Reminder failed",
+          body:
+            'A Reminder to Susan failed: the text was refused, so it did not go. ' +
+            'She may not have been reminded.\n\n' +
+            'Appointment: Cardiology check-up, Fri, Nov 20, 2026 at 2:00 pm\n' +
+            'Text: the Reminder due Thu, Nov 19, 2026 at 6:00 pm\n\n' +
+            'You may want to call Susan. The Appointment and its texts are in the app.',
+          opens: `/appointments/${added.id}`,
+        },
+      },
+    ]);
+    expect(notifications).toEqual([
+      {
+        to: ADMINS,
+        notification: {
+          title: "Susan's Calendar alert",
+          body: 'A Reminder failed: Cardiology check-up, Fri, Nov 20, 2026 at 2:00 pm. She may not have been reminded.',
+          opens: `/appointments/${added.id}`,
+          tag: `alert-${text.id}`,
+        },
+      },
+    ]);
+  });
+
+  it('go to every Admin, the one who made the Appointment included, and never to Susan', async () => {
+    const { core, clock, sender, messenger } = calendar();
+    // Susan adds an Appointment herself; its Reminder is then refused.
+    await core.changeSettings(susan, { susansNumber: SUSANS_NUMBER });
+    const added = await core.addAppointment(susan, checkUp);
+    clock.set(added.reminders[0].dueAt);
+    sender.refuseNext();
+    await core.runDue();
+    const { emails, notifications } = alerts(messenger);
+    for (const { to } of [...emails, ...notifications]) {
+      expect(to).toEqual(ADMINS);
+      expect(to).not.toContain(susan.person.id);
+    }
+    expect(emails).toHaveLength(1);
+    expect(notifications).toHaveLength(1);
+  });
+
+  it('raise one Alert for one failed text, however many runs see it', async () => {
+    const { core, clock, sender, messenger, store } = await ready();
+    sender.breakNext(3);
+    for (const at of ['23:00', '23:02', '23:04', '23:06', '23:08', '23:30']) {
+      clock.set(`2026-11-19T${at}:00.000Z`);
+      await core.runDue();
+    }
+    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'gaveUp' }]);
+    const { emails, notifications } = alerts(messenger);
+    expect(emails).toHaveLength(1);
+    expect(emails[0].email.body).toMatch(
+      /^A Reminder to Susan failed: sending did not go through after 3 tries\./,
+    );
+    expect(notifications).toHaveLength(1);
+  });
+
+  it('raise one Alert when two runs overlap', async () => {
+    const { core, clock, sender, messenger, store } = await ready();
+    const other = createCalendarCore({
+      store,
+      clock,
+      messenger,
+      textSender: sender,
+      timeZone: EASTERN,
+    });
+    sender.refuseNext();
+    await Promise.all([core.runDue(), other.runDue(), core.runDue()]);
+    expect(alerts(messenger).emails).toHaveLength(1);
+    expect(alerts(messenger).notifications).toHaveLength(1);
+  });
+
+  it('tell every Admin when a text is marked not confirmed delivered, and say so, not "failed"', async () => {
+    const { core, store, messenger, added } = await ready();
+    await core.runDue();
+    const [sent] = store.texts();
+    expect(sent.status).toBe('sent');
+    expect(alerts(messenger).emails).toEqual([]);
+
+    const marked = await core.recordDelivery({ textId: sent.id, outcome: 'unconfirmed' });
+    expect(marked).toMatchObject({ status: 'failed', reason: 'unconfirmed' });
+    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'unconfirmed' }]);
+    const { emails, notifications } = alerts(messenger);
+    expect(emails).toHaveLength(1);
+    expect(emails[0].to).toEqual(ADMINS);
+    expect(emails[0].email.subject).toBe(
+      "Susan's Calendar alert: a Reminder was not confirmed delivered",
+    );
+    expect(emails[0].email.body).toMatch(
+      /^A Reminder to Susan was not confirmed delivered: her phone company has not confirmed that it reached her phone\./,
+    );
+    expect(`${emails[0].email.subject} ${emails[0].email.body}`).not.toMatch(/failed/i);
+    expect(emails[0].email.opens).toBe(`/appointments/${added.id}`);
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0].notification.body).toMatch(/^A Reminder was not confirmed delivered: /);
+    expect(notifications[0].notification.body).not.toMatch(/failed/i);
+
+    // Marked once: hearing of it again changes nothing and raises no second Alert.
+    expect(await core.recordDelivery({ textId: sent.id, outcome: 'unconfirmed' })).toBeNull();
+    expect(await core.recordDelivery({ textId: sent.id, outcome: 'delivered' })).toBeNull();
+    expect(alerts(messenger).emails).toHaveLength(1);
+  });
+
+  it('tell every Admin when a text is reported as not delivered, as a failure', async () => {
+    const { core, store, messenger } = await ready();
+    await core.runDue();
+    const [sent] = store.texts();
+    await core.recordDelivery({ textId: sent.id, outcome: 'undelivered' });
+    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'undelivered' }]);
+    const [{ email }] = alerts(messenger).emails;
+    expect(email.subject).toBe("Susan's Calendar alert: a Reminder failed");
+    expect(email.body).toMatch(/failed: her phone company reported that it could not be delivered/);
+  });
+
+  it('raise none for a text confirmed delivered', async () => {
+    const { core, store, messenger } = await ready();
+    await core.runDue();
+    const [sent] = store.texts();
+    expect(await core.recordDelivery({ textId: sent.id, outcome: 'delivered' })).toMatchObject({
+      status: 'delivered',
+      reason: null,
+    });
+    expect(alerts(messenger)).toEqual({ emails: [], notifications: [] });
+  });
+
+  it('ignore a delivery report for a text that is not in the calendar or was never sent', async () => {
+    const { core, sender, store, messenger } = await ready();
+    expect(
+      await core.recordDelivery({ textId: 'reminder:nothing', outcome: 'unconfirmed' }),
+    ).toBeNull();
+    sender.breakNext();
+    await core.runDue();
+    const [waiting] = store.texts();
+    expect(await core.recordDelivery({ textId: waiting.id, outcome: 'undelivered' })).toBeNull();
+    expect(store.texts()).toMatchObject([{ status: 'waiting' }]);
+    expect(alerts(messenger).emails).toEqual([]);
+  });
+
+  it('tell every Admin when a Reminder could not be sent in time', async () => {
+    const { core, clock, sender, store, messenger } = await ready();
+    clock.set('2026-11-20T19:00:00.000Z'); // the runs stopped until the Appointment started
+    await core.runDue();
+    expect(sender.taken()).toEqual([]);
+    expect(store.texts()).toMatchObject([{ status: 'notSent', reason: 'tooLate' }]);
+    const { emails, notifications } = alerts(messenger);
+    expect(emails).toHaveLength(1);
+    expect(emails[0].email.subject).toBe(
+      "Susan's Calendar alert: a Reminder could not be sent in time",
+    );
+    expect(emails[0].email.body).toMatch(
+      /^A Reminder to Susan could not be sent in time: the Appointment had started before it could go\. She was not reminded\./,
+    );
+    expect(notifications[0].notification.body).toMatch(/^A Reminder could not be sent in time: /);
+    clock.set('2026-11-20T19:05:00.000Z');
+    await core.runDue();
+    expect(alerts(messenger).emails).toHaveLength(1);
+  });
+
+  it("tell every Admin when a Reminder was not sent only because Susan's number is not set, as a setup problem", async () => {
+    const { core, clock, store, messenger } = calendar();
+    const added = await core.addAppointment(linda, checkUp);
+    clock.set(added.reminders[0].dueAt);
+    await core.runDue();
+    expect(store.texts()).toMatchObject([{ status: 'notSent', reason: 'noNumber' }]);
+    const { emails, notifications } = alerts(messenger);
+    expect(emails).toHaveLength(1);
+    expect(emails[0].email.subject).toBe(
+      "Susan's Calendar alert: a Reminder was not sent, because Susan's mobile number is not set",
+    );
+    expect(emails[0].email.body).toMatch(
+      /^A Reminder to Susan was not sent: her mobile number is not set in Settings, so no texts are being sent to her\./,
+    );
+    // Not a failure, nor a text that could not be sent in time.
+    expect(`${emails[0].email.subject} ${emails[0].email.body}`).not.toMatch(/failed|in time/i);
+    expect(notifications[0].notification.body).toMatch(
+      /^A Reminder was not sent: Susan's mobile number is not set\./,
+    );
+  });
+
+  it('say which Appointment and which text, and nothing more personal than that', async () => {
+    const { core, sender, messenger } = await ready();
+    sender.refuseNext();
+    await core.runDue();
+    const { emails, notifications } = alerts(messenger);
+    const said = JSON.stringify([emails, notifications]);
+    expect(said).toMatch(/Cardiology check-up, Fri, Nov 20, 2026 at 2:00 pm/);
+    // Not her number, nor the text's words, the Private notes, the Note for Susan, the place, the
+    // Driver or who it is with: whoever reads it opens the Appointment for those.
+    expect(said).not.toMatch(
+      /555|0123|Bring your list|prescription|Heart Clinic|400 Main|Dr\. Patel|Linda|13:15|1:15/,
+    );
+  });
+
+  it('raise an Alert for a Change notice that fails, naming it as one', async () => {
+    const { core, store, messenger, added } = await ready();
+    // A Change notice, as ticket 14 sends them, that has just failed.
+    const failed: Text = {
+      id: `changeNotice:${added.id}:2026-11-19T23:00:00.000Z`,
+      kind: 'changeNotice',
+      appointmentId: added.id,
+      reminderId: null,
+      words: "Susan's Calendar: Change: Cardiology check-up is cancelled.",
+      dueAt: '2026-11-19T23:00:00.000Z',
+      status: 'sent',
+      reason: null,
+      attempts: 1,
+      triedAt: '2026-11-19T23:00:00.000Z',
+      sentAt: '2026-11-19T23:00:00.000Z',
+      reference: 'stand-in-9',
+      alert: null,
+    };
+    await store.claimText(failed);
+    await core.recordDelivery({ textId: failed.id, outcome: 'undelivered' });
+    const [{ email }] = alerts(messenger).emails;
+    expect(email.subject).toBe("Susan's Calendar alert: a Change notice failed");
+    expect(email.body).toMatch(/Text: the Change notice due Thu, Nov 19, 2026 at 6:00 pm/);
+    expect(email.body).toMatch(/She may not know the Appointment changed\./);
+  });
+
+  it('raise none for a test text that fails: whoever sent it sees its status', async () => {
+    const { core, sender, messenger } = calendar();
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    sender.refuseNext();
+    await core.sendTestText(linda);
+    await core.runDue();
+    expect(alerts(messenger)).toEqual({ emails: [], notifications: [] });
+  });
+
+  it('raise none for a text that failed before the calendar raised Alerts', async () => {
+    const { core, clock, store, messenger, added } = await ready();
+    const [reminder] = added.reminders;
+    await store.claimText({
+      id: reminderTextId(added, reminder),
+      kind: 'reminder',
+      appointmentId: added.id,
+      reminderId: reminder.id,
+      words: "Susan's Calendar: Cardiology check-up.",
+      dueAt: reminder.dueAt,
+      status: 'failed',
+      reason: 'gaveUp',
+      attempts: 3,
+      triedAt: reminder.dueAt,
+      sentAt: null,
+      reference: null,
+      alert: null,
+    });
+    clock.set('2026-11-19T23:10:00.000Z');
+    await core.runDue();
+    expect(alerts(messenger)).toEqual({ emails: [], notifications: [] });
+  });
+
+  it('are raised by the next run when a run stopped before raising one', async () => {
+    const { core, clock, sender, store, messenger } = await ready();
+    sender.refuseNext();
+    messenger.fail(true);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await core.runDue();
+    // What broke is logged in fixed words, without the Appointment or the text.
+    expect(errors.mock.calls.flat().join(' ')).toMatch(/^Alert could not be sent \(\w+\)/);
+    expect(errors.mock.calls.flat().join(' ')).not.toMatch(/Cardiology|555/);
+    errors.mockRestore();
+    expect(store.texts()).toMatchObject([{ status: 'failed', alert: 'due' }]);
+    messenger.fail(false);
+    clock.set('2026-11-19T23:01:00.000Z');
+    await core.runDue();
+    expect(alerts(messenger).emails).toHaveLength(1);
+    expect(alerts(messenger).notifications).toHaveLength(1);
+    expect(store.texts()).toMatchObject([{ alert: 'raised' }]);
+    clock.set('2026-11-19T23:02:00.000Z');
+    await core.runDue();
+    expect(alerts(messenger).emails).toHaveLength(1);
+  });
+
+  it('still go by app notification when email cannot be sent', async () => {
+    const { core, sender, messenger } = await ready();
+    sender.refuseNext();
+    messenger.failEmail(true);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await core.runDue();
+    vi.restoreAllMocks();
+    expect(alerts(messenger).notifications).toHaveLength(1);
+  });
+
+  it('do not undo or stop the run when they cannot be sent', async () => {
+    const { core, clock, sender, store, messenger } = await ready();
+    await core.addAppointment(linda, {
+      what: 'Blood draw',
+      date: '2026-11-20',
+      time: '13:00',
+      reminders: [{ shape: 'at', date: '2026-11-19', time: '18:00' }],
+    });
+    sender.refuseNext();
+    messenger.fail(true);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    clock.set('2026-11-19T23:00:00.000Z');
+    await core.runDue();
+    vi.restoreAllMocks();
+    expect(
+      store
+        .texts()
+        .map((text) => text.status)
+        .sort(),
+    ).toEqual(['failed', 'sent']);
+  });
+});
+
+describe('the trouble with texts to Susan', () => {
+  /** A text's record, settled at a moment, as the core keeps it. */
+  const text = (triedAt: string, settled: Partial<Text>): Text => ({
+    id: `reminder:a:${triedAt}`,
+    kind: 'reminder',
+    appointmentId: 'a',
+    reminderId: 'r',
+    words: "Susan's Calendar: Cardiology check-up.",
+    dueAt: triedAt,
+    status: 'sent',
+    reason: null,
+    attempts: 1,
+    triedAt,
+    sentAt: triedAt,
+    reference: null,
+    alert: null,
+    ...settled,
+  });
+
+  it('is none while nothing has been sent, or the most recent text went', () => {
+    expect(textTrouble([])).toBeNull();
+    expect(textTrouble([text('2026-11-19T23:00:00.000Z', {})])).toBeNull();
+    expect(
+      textTrouble([
+        text('2026-11-19T22:00:00.000Z', { status: 'failed', reason: 'refused' }),
+        text('2026-11-19T23:00:00.000Z', { status: 'delivered' }),
+      ]),
+    ).toBeNull();
+  });
+
+  it('is the most recent text, while it failed, whatever kind it is', () => {
+    const failed = text('2026-11-19T23:00:00.000Z', {
+      kind: 'test',
+      appointmentId: null,
+      status: 'failed',
+      reason: 'refused',
+    });
+    expect(
+      textTrouble([failed, text('2026-11-19T22:00:00.000Z', { status: 'delivered' })]),
+    ).toEqual({ trouble: 'failed', text: failed });
+  });
+
+  it('tells "not confirmed delivered", "not sent in time" and "no number" apart from "failed"', () => {
+    const at = '2026-11-19T23:00:00.000Z';
+    expect(textTrouble([text(at, { status: 'failed', reason: 'unconfirmed' })])?.trouble).toBe(
+      'unconfirmed',
+    );
+    expect(textTrouble([text(at, { status: 'notSent', reason: 'tooLate' })])?.trouble).toBe(
+      'tooLate',
+    );
+    expect(textTrouble([text(at, { status: 'notSent', reason: 'noNumber' })])?.trouble).toBe(
+      'noNumber',
+    );
+  });
+
+  it('looks past a text still being sent, to the last one settled', () => {
+    expect(
+      textTrouble([
+        text('2026-11-19T22:00:00.000Z', { status: 'failed', reason: 'gaveUp' }),
+        text('2026-11-19T23:00:00.000Z', { status: 'waiting', sentAt: null }),
+      ])?.trouble,
+    ).toBe('failed');
+  });
+
+  it('clears once a later text goes', () => {
+    const failed = text('2026-11-19T22:00:00.000Z', { status: 'failed', reason: 'refused' });
+    expect(textTrouble([failed])?.trouble).toBe('failed');
+    expect(textTrouble([failed, text('2026-11-19T22:05:00.000Z', {})])).toBeNull();
   });
 });

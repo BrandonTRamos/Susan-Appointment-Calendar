@@ -100,6 +100,8 @@ export function toText(row: Kept<TextRow, Text>): Text {
     triedAt: row.triedAt,
     sentAt: row.sentAt ?? null,
     reference: row.reference ?? null,
+    // Null too for a text recorded before the calendar raised Alerts.
+    alert: row.alert ?? null,
   };
 }
 

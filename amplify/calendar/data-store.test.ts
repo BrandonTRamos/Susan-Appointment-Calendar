@@ -305,6 +305,7 @@ describe('the calendar kept in the data API', () => {
       triedAt: '2026-11-19T20:00:00.000Z',
       sentAt: null,
       reference: null,
+      alert: null,
     };
     await store.claimText(waiting);
     const again = { ...waiting, attempts: 2, triedAt: '2026-11-19T20:02:00.000Z' };
@@ -314,6 +315,34 @@ describe('the calendar kept in the data API', () => {
       false,
     );
     expect(await store.everyText()).toEqual([again]);
+  });
+
+  it('settles a text, or raises its Alert, only while it is as it was read', async () => {
+    const { store, core } = calendar();
+    await core.changeSettings(linda, { susansNumber: '555 555 0123' });
+    const sent = await core.sendTestText(linda);
+    const failed = {
+      ...sent,
+      status: 'failed' as const,
+      reason: 'unconfirmed' as const,
+      alert: 'due' as const,
+    };
+    expect(await store.changeText(failed, sent)).toBe(true);
+    // A second run read it as sent too: it has been settled since, so its write is refused.
+    expect(await store.changeText({ ...sent, status: 'delivered' }, sent)).toBe(false);
+    const raised = { ...failed, alert: 'raised' as const };
+    expect(await store.changeText(raised, failed)).toBe(true);
+    // Raised once: a second run that read it as due cannot raise it again.
+    expect(await store.changeText(raised, failed)).toBe(false);
+    expect(await store.everyText()).toEqual([raised]);
+  });
+
+  it('reads a text kept before Alerts as having none', async () => {
+    const { api, store, core } = calendar();
+    await core.changeSettings(linda, { susansNumber: '555 555 0123' });
+    const text = await core.sendTestText(linda);
+    delete api.texts()[0].alert;
+    expect(await store.everyText()).toEqual([{ ...text, alert: null }]);
   });
 
   it('finds the texts about an Appointment, which decide whether it can be deleted', async () => {
@@ -333,6 +362,7 @@ describe('the calendar kept in the data API', () => {
       triedAt: reminder.dueAt,
       sentAt: reminder.dueAt,
       reference: null,
+      alert: null,
     };
     expect(await store.claimText(text)).toBe(true);
     expect(await store.textsAbout(added.id)).toEqual([text]);

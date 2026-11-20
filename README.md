@@ -76,8 +76,10 @@ signed-in person can change anything, nobody signed in can read the devices app 
 or the key that signs them, the app-notifications function reaches nothing else, a device is only
 ever deleted on a condition checked as it is deleted, no rule tells Susan from an Admin, one
 scheduled run sends texts every minute and never overlaps itself, a text is claimed by creating its
-record, which fails when it is already there, and taken up again only by a conditional write, every table can be restored to a point in time, and
-everything carries the cost tag.
+record, which fails when it is already there, and taken up again only by a conditional write, an
+Alert is raised only by a conditional write, only the scheduled run may send email and only through
+its own account and region, every table can be restored to a point in time, and everything carries
+the cost tag.
 
 ## How the calendar is kept
 
@@ -121,6 +123,31 @@ failed or not sent. The Appointment's screen shows each Reminder's status and ev
 - Logs never hold Susan's number or the words of a text: they say only how many texts ended up in
   each status, and, when something fails, which operation and what kind of failure.
 
+## Alerts
+
+When a Reminder or Change notice does not get through, every Admin is told by email and by app
+notification. Susan's account is not an Admin's, so she never gets one.
+
+- **When.** A text fails (refused, or sending did not go through after its tries), is marked not
+  confirmed delivered (once ticket 13 asks Textbelt), or could not be sent before its Appointment
+  started. A Reminder that was not sent only because Susan's mobile number is not set in Settings
+  raises one too, worded as a gap in the setup rather than a failure. A test text that fails raises
+  none: whoever sent it sees its status. Texts recorded before Alerts existed raise none.
+- **Once.** One text raises one Alert, however many runs see it. If a run stops before telling
+  anyone, the next run does. If email cannot be sent, the app notification still goes, and the
+  other way round.
+- **What it says.** Which Appointment (what it is, its date and time), which text (a Reminder or a
+  Change notice, and when it was due), and why: "failed", "was not confirmed delivered", "could not
+  be sent in time" or "was not sent" because her number is not set. Nothing more personal: never
+  Susan's number, the text's words, the place, the Driver or the notes. The email ends with a link
+  to the Appointment, and tapping the app notification opens it.
+- **The banner.** While the most recent text to Susan, of any kind, failed or did not get through,
+  a banner shows at the top of every screen, with a link to the text. It clears once a later text
+  goes, so a test text from Settings clears it once texts work again. While no texts go to her
+  because her number is not set, it says so and links to Settings.
+- **Setting up the emails.** See [Alert emails](#alert-emails). Without `ALERT_EMAIL_FROM`, Alerts go
+  by app notification only.
+
 ## Calendar subscription
 
 Under **Settings → Calendar subscription**, anyone signed in can get their own link to paste into
@@ -160,13 +187,14 @@ The app is at <https://main.d3o9xocds2v1sa.amplifyapp.com>.
 
 Set these on the Amplify app under **Hosting → Environment variables**, for all branches.
 
-| Name              | Value              | What it does                                                                                                                                                  |
-| ----------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SUSAN_TIME_ZONE` | `America/New_York` | Susan's time zone. Every date and time in the calendar means her local time. US Eastern if unset; a wrong name fails the deploy.                              |
-| `COST_TAG`        | `susans-calendar`  | The `project` tag on every backend resource and on the Hosting app, so the app's cost shows on its own in billing. This is the default.                       |
-| `CONTACT_EMAIL`   | your email address | The contact address on the [public pages](#public-pages). They say none has been set if it is missing; a value that is not an email address fails the deploy. |
-| `OWNER_NAME`      | your full name     | Who the public pages say runs the calendar. They say "a private individual" if it is missing.                                                                 |
-| `APP_URL`         | (leave unset)      | The address app notifications give the push services as their sender. It is worked out from the Amplify app; set it only if the app moves to its own domain.  |
+| Name               | Value                               | What it does                                                                                                                                                  |
+| ------------------ | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUSAN_TIME_ZONE`  | `America/New_York`                  | Susan's time zone. Every date and time in the calendar means her local time. US Eastern if unset; a wrong name fails the deploy.                              |
+| `COST_TAG`         | `susans-calendar`                   | The `project` tag on every backend resource and on the Hosting app, so the app's cost shows on its own in billing. This is the default.                       |
+| `CONTACT_EMAIL`    | your email address                  | The contact address on the [public pages](#public-pages). They say none has been set if it is missing; a value that is not an email address fails the deploy. |
+| `OWNER_NAME`       | your full name                      | Who the public pages say runs the calendar. They say "a private individual" if it is missing.                                                                 |
+| `APP_URL`          | (leave unset)                       | The address app notifications give the push services as their sender. It is worked out from the Amplify app; set it only if the app moves to its own domain.  |
+| `ALERT_EMAIL_FROM` | an address you have verified in SES | The address [Alert emails](#alert-emails) come from. Without it, Alerts go by app notification only; a value that is not an email address fails the deploy.   |
 
 A change to any of these takes effect at the next deploy. Later tickets add to this table.
 
@@ -196,6 +224,35 @@ addresses must not change. The contact address and the owner's name come from `C
 `OWNER_NAME` above, so neither is written in the repository. The Confirmation text, the first text
 Susan gets, is in `src/lib/consent.ts` and in
 [`docs/text-message-setup.md`](docs/text-message-setup.md); a test fails if the two differ.
+
+### Alert emails
+
+Alerts are emailed through AWS's email service (SES), in the same region as the Amplify app, to the
+address each Admin signs in with. A new AWS account's SES is in the _sandbox_: it can send only from
+and to addresses verified in SES, at most 200 emails a day and one a second, separately in each
+region (AWS's [production access page](https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html),
+checked on 20 November 2026). That is plenty for a handful of Admins, so no production access
+request is needed. The owner does these steps once; nothing in the repository does them.
+
+1. In the SES console, in the Amplify app's region, open **Identities → Create identity → Email
+   address**, enter the address Alerts should come from, and click the link SES emails to it. An
+   address at a domain you control is best: mail from a large provider's address sent by SES can be
+   marked as spam by that provider's own rules.
+2. Do the same for each Admin's sign-in address. Each Admin clicks the link SES sends them. An
+   Admin added later needs the same before their Alerts arrive; until then their email is refused
+   (logged as `MessageRejected`) and their app notifications still go.
+3. Set `ALERT_EMAIL_FROM` to the first address under **Hosting → Environment variables**, and
+   redeploy.
+
+The scheduled run may send email through SES identities in its own account and region and nothing
+else there. SES charges about $0.10 per thousand emails.
+
+**Try it once, by hand.** In the SES console, **Send test email** from the sender to one Admin's
+address proves the two are verified. Then, before Susan's number is entered (ticket 18), add an
+Appointment for later today with one Reminder a few minutes ahead and leave Susan's mobile number
+empty in Settings. When the Reminder comes due, every Admin should get an email and an app
+notification saying it was not sent because her number is not set, each opening the Appointment,
+and the banner should show. Delete the Appointment afterwards: nothing was sent, so it can be.
 
 ## Accounts
 
@@ -240,7 +297,7 @@ Screen**. It then opens like an app. When a new version has been deployed, a bar
 An Admin turns them on for each phone or laptop in **Settings → App notifications → Turn on for this
 device**. On an iPhone the app must be added to the home screen first, and opened from there; the
 section says so. From then on that device gets an Activity update whenever someone else adds,
-changes or cancels an Appointment. Alerts will arrive the same way (ticket 15).
+changes or cancels an Appointment, and every [Alert](#alerts).
 
 - They are web push, as in Wellbeing. The key pair that signs them is made by the backend the first
   time anyone turns them on and kept in the data API, so there is no secret to set up. The private

@@ -1,7 +1,13 @@
 // How a text's status reads to a person: on the Appointment detail and in Settings. The calendar
 // core decides what becomes of each text (src/lib/calendar/texts.ts); this only puts it in words.
 
-import { SEND_ATTEMPTS, type ReminderPlan, type Text, type TextKind } from './calendar';
+import {
+  SEND_ATTEMPTS,
+  type ReminderPlan,
+  type Text,
+  type TextKind,
+  type TextTrouble,
+} from './calendar';
 import { formatMoment } from './localTime';
 
 /** A text's status in a word or two, and what more there is to say about it. */
@@ -64,6 +70,10 @@ function failedBecause(text: Text): string {
       return 'The Appointment was cancelled before sending went through.';
     case 'outdated':
       return 'Its Reminder was changed or removed before sending went through.';
+    case 'undelivered':
+      return 'Her phone company reported that it could not be delivered.';
+    case 'unconfirmed':
+      return 'Not confirmed delivered: her phone company did not confirm that it reached her phone.';
     default:
       return `Sending did not go through after ${SEND_ATTEMPTS} tries.`;
   }
@@ -77,6 +87,40 @@ function notSentBecause(text: Text): string {
       return 'The Appointment was cancelled.';
     default:
       return 'Its time had passed and the Appointment had started before it could go.';
+  }
+}
+
+/**
+ * The banner's words while the most recent text to Susan did not get through, and where to look
+ * into it: the Appointment it was about, or Settings.
+ */
+export function troubleWords(
+  trouble: TextTrouble,
+  text: Text,
+): { words: string; opens: string; label: string } {
+  const look = text.appointmentId
+    ? { opens: `/appointments/${text.appointmentId}`, label: 'See the text' }
+    : { opens: '/settings', label: 'Open Settings' };
+  const kind = KIND_NAMES[text.kind];
+  switch (trouble) {
+    case 'failed':
+      return { words: `The last text to Susan, a ${kind}, failed.`, ...look };
+    case 'unconfirmed':
+      return {
+        words: `The last text to Susan, a ${kind}, was not confirmed delivered. Her phone may be off.`,
+        ...look,
+      };
+    case 'tooLate':
+      return {
+        words: `The last text to Susan, a ${kind}, could not be sent in time.`,
+        ...look,
+      };
+    case 'noNumber':
+      return {
+        words: 'No texts are going to Susan: her mobile number is not set in Settings.',
+        opens: '/settings',
+        label: 'Open Settings',
+      };
   }
 }
 

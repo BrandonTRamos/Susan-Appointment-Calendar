@@ -1,6 +1,7 @@
 // The calendar core, as the rest of the code sees it. Import from here, not from the files beside
 // this one.
 
+export * from './alerts';
 export * from './appointment';
 export { calendarFeed, FEED_NAME } from './feed';
 export {
@@ -35,6 +36,7 @@ export type {
 } from './memory';
 export { NO_ADMIN_MESSENGER, NO_TEXT_SENDER, systemClock } from './ports';
 export type {
+  AdminEmail,
   AdminMessenger,
   AppNotification,
   Clock,
