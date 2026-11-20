@@ -96,15 +96,20 @@ export function momentOf(date: string, time: string, zone: string): Date | null 
 }
 
 /**
- * The moment a date and time happen in a zone, reading a time the clocks skip as the same time an
- * hour later, when they have landed. For times worked out by the calendar rather than typed by a
- * person, which have to happen at some moment.
+ * The moment a date and time happen in a zone, reading a time the clocks skip as that time moved on
+ * by the gap the clocks jump: 2:30 am becomes 3:30 am where they go forward an hour, 2:45 am where
+ * they go forward half an hour. For times worked out by the calendar rather than typed by a person,
+ * which have to happen at some moment.
  */
 export function momentOrSkipped(date: string, time: string, zone: string): Date {
   const moment = momentOf(date, time, zone);
   if (moment) return moment;
-  const later = localDateTime(new Date(asIfUtc(date, time) + 60 * MINUTE), 'UTC');
-  return momentOf(later.date, later.time, zone) ?? new Date(asIfUtc(date, time));
+  // Read with the zone's distance from UTC before the clocks jumped, the time lands as far past
+  // the jump as it was meant to be past its start.
+  const wall = asIfUtc(date, time);
+  const probe = wall - DAY;
+  const local = localDateTime(new Date(probe), zone);
+  return new Date(wall - (asIfUtc(local.date, local.time) - probe));
 }
 
 const weekdayAndDate = (style: 'long' | 'short') =>

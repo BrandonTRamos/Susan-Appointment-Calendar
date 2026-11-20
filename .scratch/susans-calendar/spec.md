@@ -199,6 +199,9 @@ Admins are kept in the loop. They get an Alert, by email and app notification, w
 - A Reminder has one of three shapes: a gap before the Appointment's start (minutes, hours or days); a number of days before at a fixed clock time (the shape of the default, "the day before at 6:00 pm"); or an exact date and time.
 - Gaps are measured from the Appointment's start time, not the pickup time.
 - The first two shapes are recalculated whenever the Appointment's time changes. An exact-time Reminder keeps its time and is flagged for review when its Appointment moves.
+- Reminders are set in the same save as the Appointment's details, so a save that adds or changes an Appointment and its Reminders leaves one activity record.
+- A Reminder that is newly set, changed, or confirmed after review must go out strictly before the Appointment starts; one at or after the start is refused. An exact-time Reminder that a move leaves at or after the new start is kept, shown and flagged until someone changes or removes it. A move that would put a recalculated Reminder (a same-day clock time) at or after the new start is refused, naming that Reminder.
+- A newly chosen exact time that the clocks skip when they go forward is refused. A Reminder worked out from a gap in days or a clock time that lands in that skipped time goes out that much later, moved on by the gap the clocks jump (2:30 am becomes 3:30 am in US Eastern).
 - A new Appointment starts with one Reminder: the day before at 6:00 pm. The default set is not configurable in this version.
 - The form warns when a Reminder falls between 9:00 pm and 7:00 am, tells the person when a Reminder's time has already passed, and asks for confirmation before saving an Appointment with no Reminder still to be sent.
 - A due Reminder is sent on the next run. A Reminder found overdue is still sent as long as the Appointment has not started; otherwise it is recorded as not sent and an Alert is raised.

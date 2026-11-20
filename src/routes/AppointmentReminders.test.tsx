@@ -190,6 +190,23 @@ describe('an exact-time Reminder whose Appointment has moved', () => {
     expect(within(list).getByText(/has moved since this Reminder was set/)).toBeInTheDocument();
   });
 
+  it('stays on the Appointment, flagged, when the move puts it after the new start', async () => {
+    const calendar = emptyCalendar();
+    const date = daysFromToday(4);
+    const appointment = await calendar.core.addAppointment(linda, {
+      what: 'Cardiology check-up',
+      date,
+      time: '14:00',
+      reminders: [{ shape: 'at', date: addDays(date, -1), time: '17:00' }],
+    });
+    // Two days earlier: the Reminder, the day before the old date, is now a day after the start.
+    await calendar.core.changeAppointment(mark, appointment.id, { date: addDays(date, -2) });
+    renderApp(`/appointments/${appointment.id}`, { calendar });
+    const list = await screen.findByRole('list', { name: 'Reminders' });
+    expect(within(list).getByText(goesOut(addDays(date, -1), '17:00'))).toBeInTheDocument();
+    expect(within(list).getByText(/has moved since this Reminder was set/)).toBeInTheDocument();
+  });
+
   it('can be kept at its time in the form, which clears the flag', async () => {
     const { calendar, appointment } = await moved();
     renderApp(`/appointments/${appointment.id}/edit`, { calendar });

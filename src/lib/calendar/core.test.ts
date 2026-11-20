@@ -758,7 +758,9 @@ describe('Reminders on an Appointment', () => {
     ['a shape there is not', { shape: 'weekly', days: 1 }],
     ['not a Reminder at all', 'the day before'],
     ['an exact time after the start', { shape: 'at', date: '2027-03-15', time: '15:00' }],
+    ['an exact time at the start', { shape: 'at', date: '2027-03-15', time: '14:00' }],
     ['a same-day time after the start', { shape: 'daysBefore', days: 0, time: '15:00' }],
+    ['a same-day time at the start', { shape: 'daysBefore', days: 0, time: '14:00' }],
     ['an exact time the clocks skip', { shape: 'at', date: '2027-03-14', time: '02:30' }],
   ])('refuses %s, saying which Reminder, and keeps nothing', async (_name, reminder) => {
     const { core, store } = calendar();
@@ -819,6 +821,25 @@ describe('Reminders on an Appointment', () => {
     expect(changed.reminders[1].dueAt).toBe('2026-11-20T16:00:00.000Z');
     expect(changed.reminders.map((r) => r.id)).not.toContain(atEight.id);
     expect(changed.lastChanged).toMatchObject({ personName: 'Mark' });
+  });
+
+  it('are set by the same save as the details, which leaves one activity record', async () => {
+    const { core, store } = calendar();
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      reminders: [dayBeforeAtSix, twoHoursBefore],
+    });
+    expect(added.reminders).toHaveLength(2);
+    expect(store.activity()).toMatchObject([{ action: 'added' }]);
+    const changed = await core.changeAppointment(mark, added.id, {
+      time: '15:30',
+      reminders: [thursdayAtEight],
+    });
+    expect(changed).toMatchObject({ time: '15:30', reminders: [thursdayAtEight] });
+    expect(store.activity()).toMatchObject([{ action: 'added' }, { action: 'changed' }]);
+    // A save that changes only the Reminders is a change too, and one record.
+    await core.changeAppointment(linda, added.id, { reminders: [] });
+    expect(store.activity()).toHaveLength(3);
   });
 
   it('does nothing when the Reminders sent are the ones it has', async () => {
@@ -919,6 +940,39 @@ describe('when an Appointment moves', () => {
     );
   });
 
+  it('a flagged Reminder now exactly at the start is kept too, and cannot be confirmed there', async () => {
+    const { core, added } = await moving();
+    // Thursday at 8:00 pm, exactly when the exact-time Reminder goes out.
+    const moved = await core.changeAppointment(mark, added.id, {
+      date: '2026-11-19',
+      time: '20:00',
+    });
+    expect(moved.reminders.find((r) => r.shape === 'at')).toMatchObject({
+      dueAt: moved.startsAt,
+      needsReview: true,
+    });
+    await refused(
+      core.changeAppointment(linda, added.id, {
+        reminders: moved.reminders.map((r) => (r.shape === 'at' ? { ...r, reviewed: true } : r)),
+      }),
+      'invalid',
+    );
+  });
+
+  it('a move that would put a same-day Reminder at or after the new start is refused, naming it', async () => {
+    const { core, store } = calendar();
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      reminders: [{ shape: 'daysBefore', days: 0, time: '09:00' }],
+    });
+    const refusal = await refused(
+      core.changeAppointment(mark, added.id, { time: '09:00' }),
+      'invalid',
+    );
+    expect(refusal.message).toMatch(/^Reminder 1: /);
+    expect(store.appointments()).toEqual([added]);
+  });
+
   it('a change to the pickup time or any other detail moves no Reminder and flags none', async () => {
     const { core, added } = await moving();
     const changed = await core.changeAppointment(mark, added.id, {
@@ -978,6 +1032,30 @@ describe('Reminders across a clock change', () => {
     });
     // 3:30 am EDT on Sunday 14 March.
     expect(dueTimes(added)).toEqual(['2027-03-14T07:30:00.000Z']);
+  });
+
+  it('a gap in days that lands on a time the clocks skip goes out when they land', async () => {
+    const { core } = calendar();
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      date: '2027-03-15',
+      time: '02:30',
+      reminders: [{ shape: 'before', amount: 1, unit: 'days' }],
+    });
+    // Sunday 14 March at 2:30 am does not exist; it goes out at 3:30 am EDT.
+    expect(dueTimes(added)).toEqual(['2027-03-14T07:30:00.000Z']);
+  });
+
+  it('an exact time the clocks skip is refused when it is set, and when it is changed to', async () => {
+    const { core } = calendar();
+    const added = await core.addAppointment(linda, { ...checkUp, date: '2027-03-15' });
+    const refusal = await refused(
+      core.changeAppointment(mark, added.id, {
+        reminders: [{ shape: 'at', date: '2027-03-14', time: '02:30' }],
+      }),
+      'invalid',
+    );
+    expect(refusal.message).toMatch(/clocks go forward/);
   });
 
   it('follows an Appointment that moves across the change', async () => {

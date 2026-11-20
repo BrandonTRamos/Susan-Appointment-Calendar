@@ -59,7 +59,12 @@ describe("Susan's local time", () => {
     );
   });
 
-  it('can read a time the clocks skip as the same time an hour later', () => {
+  it('can read a time the clocks skip as that time moved on by the gap they jump', () => {
+    // Lord Howe Island's clocks go forward half an hour, from 2:00 to 2:30 am on 4 October 2026.
+    const lordHowe = 'Australia/Lord_Howe';
+    const moment = momentOrSkipped('2026-10-04', '02:15', lordHowe);
+    expect(localDateTime(moment, lordHowe)).toEqual({ date: '2026-10-04', time: '02:45' });
+
     expect(momentOrSkipped('2027-03-14', '02:30', EASTERN).toISOString()).toBe(
       '2027-03-14T07:30:00.000Z',
     );
