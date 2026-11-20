@@ -198,6 +198,7 @@ describe.each(['phone', 'desktop'] as const)(
           sentAt: added.reminders[0].dueAt,
           reference: null,
           creditLeft: null,
+          alert: null,
           told: { date: added.date, time: added.time, cancelled: false },
         });
       });

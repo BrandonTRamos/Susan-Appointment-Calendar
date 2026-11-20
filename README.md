@@ -79,8 +79,10 @@ or the key that signs them, the app-notifications function reaches nothing else,
 ever deleted on a condition checked as it is deleted, no rule tells Susan from an Admin, one
 scheduled run sends texts every minute and never overlaps itself, a text is claimed by creating its
 record, which fails when it is already there, and taken up again only by a conditional write, the
-Textbelt key reaches only the commands function and the scheduled run, and only as a secret, every
-table can be restored to a point in time, and everything carries the cost tag.
+Textbelt key reaches only the commands function and the scheduled run, and only as a secret, an
+Alert is taken up and recorded only by conditional writes, only the scheduled run may send email,
+only from its configured address and only through its own account and region, every table can be
+restored to a point in time, and everything carries the cost tag.
 
 ## How the calendar is kept
 
@@ -181,6 +183,49 @@ Nothing goes to Susan's phone before go-live (ticket 18). To see real texts befo
 
 Every text spends credit, the test text included.
 
+## Alerts
+
+When a text to Susan does not get through, every Admin is told by email and by app notification.
+Susan's account is not an Admin's, so she never gets one.
+
+- **When.** A text of any kind (a Reminder, a Change notice, a test text) fails: refused, sending
+  did not go through after its tries, or reported not delivered. Or it is marked not confirmed
+  delivered (once ticket 13 asks Textbelt), or could not be sent before its Appointment started.
+  A text not sent because its words held a web address raises one saying so, without the address.
+  A Reminder that was not sent only because Susan's mobile number was not set raises one too,
+  worded as a gap in the setup rather than a failure. Until her number is entered (ticket 18),
+  that means an Alert for every Reminder that comes due. A Reminder held for review sends nothing
+  and raises none. Texts recorded before Alerts existed raise none.
+- **Who sends it.** The scheduled run, every minute, after its sends and after it has asked Textbelt
+  about every text still only sent. A text that asking settles as not delivered, or not confirmed
+  delivered, is settled once, by a conditional write that also marks its Alert due; the Alerts then
+  go one delivery at a time, never one burst per answer. A failed test text is marked by the
+  command that sent it, and the next run sends its Alert, within a minute.
+- **Once, and to everyone.** One text raises one Alert. Each Admin gets it once by email and once
+  on each device with app notifications on; each of those is recorded as soon as it goes and never
+  sent again. One that failed is tried again by a later run, two minutes on, up to three tries in
+  all, while the others are not repeated. One refused for good (an address SES will not send to)
+  is recorded as such and never tried again, even while another on the same Alert is retried. One
+  with nothing to reach (email not set up, no address, no device turned on) is not tried again
+  either: that is not a failure. If a run stops part way, a later run sends only what had not been
+  recorded, and a run that stopped on the last of the three tries is not followed by a fourth: what
+  had not gone is given up, and the log says how many had gone, never to whom. The one repeat that
+  can happen: a delivery that SES or a push service accepted just before the run stopped, before
+  the run could record it, goes again from the run that takes over.
+- **What it says.** Which Appointment (what it is, its date and time), which text (its kind, and
+  when it was due), and why: "failed", "was not confirmed delivered", "could not be sent in time"
+  or "was not sent" because her number was not set. A test text's Alert says it was sent from
+  Settings. Nothing more personal: never Susan's number, the text's words, the place, the Driver or
+  the notes. A phone number typed into an Appointment's name is left out of the Alert, which still
+  names it by its date and time. The email ends with a link to the Appointment (or Settings), and tapping the app
+  notification opens it.
+- **The banner.** While the most recent text to Susan, of any kind, failed or did not get through,
+  a banner shows at the top of every screen, with a link to the text. It says what happened to
+  that text, so after a missing number is entered it still reads "was not sent: her mobile number
+  was not set". It clears once a later text goes: send a test text from Settings to clear it.
+- **Setting up the emails.** See [Alert emails](#alert-emails). Without `ALERT_EMAIL_FROM`, Alerts go
+  by app notification only, and the scheduled run may not send email at all.
+
 ## Calendar subscription
 
 Under **Settings → Calendar subscription**, anyone signed in can get their own link to paste into
@@ -220,14 +265,15 @@ The app is at <https://main.d3o9xocds2v1sa.amplifyapp.com>.
 
 Set these on the Amplify app under **Hosting → Environment variables**, for all branches.
 
-| Name                        | Value              | What it does                                                                                                                                                                                          |
-| --------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SUSAN_TIME_ZONE`           | `America/New_York` | Susan's time zone. Every date and time in the calendar means her local time. US Eastern if unset; a wrong name fails the deploy.                                                                      |
-| `COST_TAG`                  | `susans-calendar`  | The `project` tag on every backend resource and on the Hosting app, so the app's cost shows on its own in billing. This is the default.                                                               |
-| `CONTACT_EMAIL`             | your email address | The contact address on the [public pages](#public-pages). They say none has been set if it is missing; a value that is not an email address fails the deploy.                                         |
-| `OWNER_NAME`                | your full name     | Who the public pages say runs the calendar. They say "a private individual" if it is missing.                                                                                                         |
-| `APP_URL`                   | (leave unset)      | The address app notifications give the push services as their sender. It is worked out from the Amplify app; set it only if the app moves to its own domain.                                          |
-| `TEXT_CONFIRMATION_MINUTES` | (leave unset)      | How long after it was sent a text with no confirmation of delivery is marked failed as "not confirmed delivered". 30 if unset; anything but a whole number of minutes, up to 10080, fails the deploy. |
+| Name                        | Value                               | What it does                                                                                                                                                                                          |
+| --------------------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUSAN_TIME_ZONE`           | `America/New_York`                  | Susan's time zone. Every date and time in the calendar means her local time. US Eastern if unset; a wrong name fails the deploy.                                                                      |
+| `COST_TAG`                  | `susans-calendar`                   | The `project` tag on every backend resource and on the Hosting app, so the app's cost shows on its own in billing. This is the default.                                                               |
+| `CONTACT_EMAIL`             | your email address                  | The contact address on the [public pages](#public-pages). They say none has been set if it is missing; a value that is not an email address fails the deploy.                                         |
+| `OWNER_NAME`                | your full name                      | Who the public pages say runs the calendar. They say "a private individual" if it is missing.                                                                                                         |
+| `APP_URL`                   | (leave unset)                       | The address app notifications give the push services as their sender. It is worked out from the Amplify app; set it only if the app moves to its own domain.                                          |
+| `TEXT_CONFIRMATION_MINUTES` | (leave unset)                       | How long after it was sent a text with no confirmation of delivery is marked failed as "not confirmed delivered". 30 if unset; anything but a whole number of minutes, up to 10080, fails the deploy. |
+| `ALERT_EMAIL_FROM`          | an address you have verified in SES | The address [Alert emails](#alert-emails) come from. Without it, Alerts go by app notification only; a value that is not an email address fails the deploy.                                           |
 
 A change to any of these takes effect at the next deploy. Later tickets add to this table. The
 Textbelt key is not one of these: it is a secret (see [The Textbelt key](#the-textbelt-key)).
@@ -258,6 +304,44 @@ addresses must not change. The contact address and the owner's name come from `C
 `OWNER_NAME` above, so neither is written in the repository. The Confirmation text, the first text
 Susan gets, is in `src/lib/consent.ts` and in
 [`docs/text-message-setup.md`](docs/text-message-setup.md); a test fails if the two differ.
+
+### Alert emails
+
+Alerts are emailed through AWS's email service (SES), in the same region as the Amplify app, to the
+address each Admin signs in with. A new AWS account's SES is in the _sandbox_: it can send only from
+and to addresses verified in SES, at most 200 emails a day and one a second, separately in each
+region (AWS's [production access page](https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html),
+checked on 20 November 2026). That is plenty for a handful of Admins, so no production access
+request is needed. The owner does these steps once; nothing in the repository does them.
+
+1. In the SES console, in the Amplify app's region, open **Identities → Create identity → Email
+   address**, enter the address Alerts should come from, and click the link SES emails to it. An
+   address at a domain you control is best: mail from a large provider's address sent by SES can be
+   marked as spam by that provider's own rules.
+2. Do the same for each Admin's sign-in address. Each Admin clicks the link SES sends them. An
+   Admin added later needs the same before their Alerts arrive; until then their email is refused
+   (logged as `MessageRejected`) and their app notifications still go.
+3. Set `ALERT_EMAIL_FROM` to the first address under **Hosting → Environment variables**, and
+   redeploy.
+
+The scheduled run may call `ses:SendEmail` and nothing else in SES: only with `ALERT_EMAIL_FROM` as
+the From address (the `ses:FromAddress` condition), and only through identities in its own account
+and region. AWS's [SES v2 authorization reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_sesv2.html),
+read on 20 November 2026, lists `SendEmail` on the `identity` resource with that condition key. The
+grant covers every identity in the account and region, not only the sender's, because the sender
+may be verified as an address or as its domain, and in the sandbox the recipients are verified
+identities too. `npm run synth` checks it. SES charges for each email, and the price depends on the plan the account uses: the à-la-carte
+pricing or the Essentials plan. See [AWS's SES pricing](https://aws.amazon.com/ses/pricing/) for
+the current figures rather than one written here.
+
+**Try it once, by hand.** In the SES console, **Send test email** from the sender to one Admin's
+address proves the two are verified. Then make a text fail on purpose. Once ticket 13 sends real
+texts, a test text to a mistyped number does it (ticket 18 asks for this). Before then, add an
+Appointment for later today with one Reminder a few minutes ahead and leave Susan's mobile number
+empty in Settings. Within a minute of the failure every Admin should get an email and an app
+notification, each opening the Appointment or Settings, and the banner should show. Delete the
+Appointment afterwards (nothing was sent, so it can be), then send a test text to clear the
+banner.
 
 ## Accounts
 
@@ -302,7 +386,7 @@ Screen**. It then opens like an app. When a new version has been deployed, a bar
 An Admin turns them on for each phone or laptop in **Settings → App notifications → Turn on for this
 device**. On an iPhone the app must be added to the home screen first, and opened from there; the
 section says so. From then on that device gets an Activity update whenever someone else adds,
-changes or cancels an Appointment. Alerts will arrive the same way (ticket 15).
+changes or cancels an Appointment, and every [Alert](#alerts).
 
 - They are web push, as in Wellbeing. The key pair that signs them is made by the backend the first
   time anyone turns them on and kept in the data API, so there is no secret to set up. The private

@@ -239,6 +239,7 @@ describe('when a command cannot be carried out', () => {
       sentAt: reminder.dueAt,
       reference: '12345',
       creditLeft: 40,
+      alert: null,
       told: { date: added.date, time: added.time, cancelled: false },
     });
     expect(await call('removeAppointment', { id })).toMatchObject({

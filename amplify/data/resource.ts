@@ -1,6 +1,7 @@
 import { a, defineData, type ClientSchema } from '@aws-amplify/backend';
 import {
   ACTIVITY_ACTIONS,
+  ALERT_STATES,
   APPOINTMENT_STATES,
   REMINDER_SHAPES,
   REMINDER_UNITS,
@@ -135,6 +136,15 @@ const schema = a
         sentAt: a.datetime(),
         reference: a.string(),
         creditLeft: a.integer(),
+        // The Alert about it (TextAlert in src/lib/calendar/texts.ts), flat so that a write can be
+        // conditioned on it: its state, how many times a run took it up and when it last did,
+        // each delivery known to have gone, and each refused for good. Missing on a text recorded before ticket 15, which
+        // raises none.
+        alert: a.enum(ALERT_STATES),
+        alertTries: a.integer(),
+        alertTriedAt: a.datetime(),
+        alertSent: a.string().array(),
+        alertRefused: a.string().array(),
         // What it told her, from which Change notices are worked out. Missing on a test text, and
         // on a text recorded before ticket 14.
         told: a.ref('Told'),

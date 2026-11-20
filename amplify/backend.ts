@@ -6,6 +6,7 @@ import { CfnSchedule } from 'aws-cdk-lib/aws-scheduler';
 import { resolveContactEmail, resolveOwnerName } from '../src/lib/publicPage';
 import { resolveTimeZone } from '../src/lib/timeZone';
 import { auth } from './auth/resource';
+import { resolveAlertSender } from './calendar/alert-email';
 import { configureProjectTags } from './cost-tags';
 import { data } from './data/resource';
 import { appNotifications } from './functions/app-notifications/resource';
@@ -58,6 +59,31 @@ userPool.grant(
   'cognito-idp:ListUsersInGroup',
 );
 backend.calendarCommands.addEnvironment('USER_POOL_ID', userPool.userPoolId);
+
+// The scheduled run raises Alerts: it lists the Admins group to find every Admin and the address
+// each signs in with, and nothing more of the user pool. `npm run synth` checks it.
+userPool.grant(backend.sendTexts.resources.lambda, 'cognito-idp:ListUsersInGroup');
+backend.sendTexts.addEnvironment('USER_POOL_ID', userPool.userPoolId);
+
+// It emails them through AWS's email service (amplify/calendar/alert-email.ts). Per the SES v2
+// Service Authorization Reference (list_sesv2.html, read 20 November 2026), ses:SendEmail is
+// authorized on an `identity` resource, `arn:${Partition}:ses:${Region}:${Account}:identity/
+// ${IdentityName}`, and supports the condition key ses:FromAddress. So it may send only from the
+// one configured address, through identities in this account and region. The resource is every
+// identity there rather than one, because the sender may be verified as an address or as its
+// domain, and in the SES sandbox the recipients are verified identities too. Without
+// ALERT_EMAIL_FROM it may not send email at all. `npm run synth` checks it.
+const alertsFrom = resolveAlertSender(process.env.ALERT_EMAIL_FROM);
+if (alertsFrom) {
+  const stack = Stack.of(backend.sendTexts.resources.lambda);
+  backend.sendTexts.resources.lambda.addToRolePolicy(
+    new PolicyStatement({
+      actions: ['ses:SendEmail'],
+      resources: [`arn:${stack.partition}:ses:${stack.region}:${stack.account}:identity/*`],
+      conditions: { StringEquals: { 'ses:FromAddress': alertsFrom } },
+    }),
+  );
+}
 
 // The app-notifications function may reach the devices app notifications go to and the key that
 // signs them, and nothing else in the data API: Amplify would let it call every query and mutation,

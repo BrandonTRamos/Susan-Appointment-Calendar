@@ -11,6 +11,7 @@ import {
 } from 'react-router-dom';
 import { PickedFrom, Sidebar, TabBar } from './components/Navigation';
 import { InPanel, Placeholder } from './components/Page';
+import { TextsBanner } from './components/TextsBanner';
 import { CalendarProvider, useCalendar } from './data/CalendarContext';
 import type { CalendarClient } from './data/calendarClient';
 import { forgetAtSignOut, type DeviceRegistry } from './lib/appNotifications';
@@ -77,6 +78,7 @@ function Layout(props: Omit<AppProps, 'calendar'>) {
       <PickedFrom.Provider value={pickedFrom}>
         <div className={onAppointment ? 'app phone full-screen' : 'app phone'}>
           {notice}
+          <TextsBanner />
           <Outlet />
           {!onAppointment && <TabBar />}
         </div>
@@ -88,6 +90,7 @@ function Layout(props: Omit<AppProps, 'calendar'>) {
         <Sidebar displayName={displayName} onSignOut={onSignOut} />
         <div className="middle">
           {notice}
+          <TextsBanner />
           {/* An Appointment opens beside the tab it was picked from. */}
           {onAppointment ? <Tab path={pickedFrom} {...props} /> : <Outlet />}
         </div>

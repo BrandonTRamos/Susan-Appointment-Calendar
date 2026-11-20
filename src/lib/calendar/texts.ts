@@ -89,12 +89,44 @@ export interface Text {
    */
   creditLeft: number | null;
   /**
+   * The Alert about it (alerts.ts), once it failed or could not be sent; null for a text that needs
+   * none, and for one recorded before the calendar raised Alerts.
+   */
+  alert: TextAlert | null;
+  /**
    * What it told Susan of its Appointment, from which the calendar works out whether a Change
    * notice is due (changeNotices.ts). Null for a test text, and for one recorded before the
    * calendar kept this.
    */
   told: Told | null;
 }
+
+export const ALERT_STATES = ['due', 'sending', 'raised'] as const;
+/**
+ * Where the Alert about a text has got to. Due: to be sent, or sent in part and to be tried again.
+ * Sending: a run holds it and is sending it now. Raised: every delivery went, or was given up.
+ */
+export type AlertState = (typeof ALERT_STATES)[number];
+
+/**
+ * The one Alert about a text, and how far it has got. It goes to each Admin by each channel; each
+ * of those deliveries is named by the Admin messenger, and one known to have gone is never sent
+ * again.
+ */
+export interface TextAlert {
+  state: AlertState;
+  /** How many times a run has taken it up to send. */
+  tries: number;
+  /** When a run last took it up; null until one has. */
+  triedAt: string | null;
+  /** Each delivery known to have gone, as the messenger names it, such as 'email:<person ID>'. */
+  sent: string[];
+  /** Each delivery refused for good, such as by an address SES will not send to: never retried. */
+  refused: string[];
+}
+
+/** How many times a run takes up an Alert whose deliveries keep failing, before giving them up. */
+export const ALERT_ATTEMPTS = 3;
 
 /** Where texts go, and who Susan is told to call. Changed only through the calendar core. */
 export interface CalendarSettings {
