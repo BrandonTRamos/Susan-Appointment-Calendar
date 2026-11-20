@@ -17,7 +17,8 @@ So far: sign-in, the [public pages](#public-pages), and Appointments with their 
 signed in can add an Appointment, see the next one in full and the later ones beneath it, open one,
 change it, cancel it, and delete one entered by mistake, and is warned when one overlaps another;
 what one person changes shows for the others as it happens. Each Appointment carries its Reminders,
-showing when each goes out and the exact words Susan will read. The Month tab shows a month at a
+showing when each goes out and the exact words Susan will read. An Appointment can be made to repeat,
+as a [Series](#series). The Month tab shows a month at a
 glance, and Past lists the Appointments that have already happened. Anyone signed in can also get
 their own [calendar subscription](#calendar-subscription) link. No text is sent yet: sending texts
 and Replies arrive with the later tickets.
@@ -72,8 +73,10 @@ sign up, sign-in has no second step, anyone signed in can read everything in the
 calendar core's commands (and turning app notifications on and off for a device) are the only way a
 signed-in person can change anything, nobody signed in can read the devices app notifications go to
 or the key that signs them, the app-notifications function reaches nothing else, a device is only
-ever deleted on a condition checked as it is deleted, no rule tells Susan from an Admin, every table can be restored to a
-point in time, and everything carries the cost tag.
+ever deleted on a condition checked as it is deleted, the Series top-up runs once a day, one run at
+a time, and can only read the calendar, add Appointments and note how far a Series is made, no rule
+tells Susan from an Admin, every table can be restored to a point in time, and everything carries
+the cost tag.
 
 ## How the calendar is kept
 
@@ -82,8 +85,9 @@ is the only thing that writes calendar data.
 
 - The app reads Appointments straight from the data API and is sent every change as it happens.
 - The app changes the calendar only by calling the core's commands (add, change, cancel and delete an
-  Appointment). They run in a backend function, `calendar-commands`; nothing a signed-in person can
-  call writes calendar data any other way.
+  Appointment; add, change and end a Series). They run in a backend function, `calendar-commands`;
+  nothing a signed-in person can call writes calendar data any other way. The one other writer is
+  the daily Series top-up, `series-top-up`, which runs the same core.
 - Each command is carried out as the signed-in person. The Appointment shows who added it and who
   last changed it, and the calendar keeps a record of each change.
 - Adding, changing or cancelling an Appointment sends the other Admins an Activity update: an app
@@ -92,6 +96,33 @@ is the only thing that writes calendar data.
 - The tables can be restored to any moment in the last 35 days, and on `main` they cannot be deleted
   by accident.
 - On sample data the same core runs in the browser, over a store kept in memory.
+
+## Series
+
+A repeating commitment, such as dialysis every Monday and Thursday or a monthly check-up, is entered
+once: in the Appointment form, **Repeats** makes it repeat every few weeks on chosen days, or every
+few months on the day it starts, ending on a date or never.
+
+- Each Appointment in a Series is a real Appointment, with its own Reminders, made ahead as far as
+  26 weeks (182 days) from today, or from when the Series starts if that is later. The
+  `series-top-up` backend function runs once a day at 08:00 UTC and makes the Appointments each
+  Series still needs, so one with no end never runs dry. It records no activity and sends no
+  Activity update: nobody acted.
+- Patterns are worked out on Susan's dates, so a weekly 9:00 am stays at 9:00 am across a clock
+  change. The first Appointment has to be on a day the pattern gives. A monthly Series on the 29th,
+  30th or 31st lands on the last day of a shorter month. A day on which the clocks skip its start
+  time is left out.
+- Reminders set on a Series go out a set time before each Appointment; an exact-time Reminder can be
+  added to one Appointment in it.
+- Changing or cancelling one asks: **only this one**, which changes it alone and marks it as changed
+  on its own, or **this and all later ones**, which ends the Series the day before and continues it
+  as a new Series. Later Appointments are replaced, including ones changed on their own: one on a
+  date the new Series also has is changed in place, and any other is removed, or cancelled if Susan
+  was texted about it. Cancelling this and all later ones keeps them, marked cancelled. Deleting
+  one entered by mistake deletes only that one, and the top-up does not bring it back.
+- Adding, changing or cancelling a Series leaves one activity record and sends one Activity update,
+  not one per Appointment. An Appointment in a Series shows **Repeats** in every list, and how it
+  repeats on its detail.
 
 ## Calendar subscription
 

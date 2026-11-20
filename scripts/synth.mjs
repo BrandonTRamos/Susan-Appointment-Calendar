@@ -1,7 +1,7 @@
 // Synthesizes the Amplify backend with CDK locally, without AWS credentials. It catches CDK and
 // bundling errors before a deploy, then checks the sign-in rules, the rules about who may read and
-// write calendar data and subscription links, the feed's public address, and the cost tags in what
-// was synthesized. Usage: npm run synth
+// write calendar data and subscription links, the feed's public address, the daily Series top-up's
+// schedule and access, and the cost tags in what was synthesized. Usage: npm run synth
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
