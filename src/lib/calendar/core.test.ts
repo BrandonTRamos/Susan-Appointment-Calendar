@@ -1747,6 +1747,139 @@ describe('calendar subscription', () => {
   });
 });
 
+describe('agent keys', () => {
+  it('keeps only a hash of a key, so it is seen in full only when made', async () => {
+    const { core, store } = calendar();
+    const made = await core.makeAgentKey(linda, '  Claude   on my laptop ');
+    expect(made.key).toMatch(/^sc_agent_[A-Za-z0-9_-]{43}$/);
+    expect(made).toMatchObject({ name: 'Claude on my laptop', madeAt: '2026-11-19T20:00:00.000Z' });
+    expect(store.agentKeys()).toEqual([
+      {
+        hash: made.hash,
+        personId: 'person-linda',
+        name: 'Claude on my laptop',
+        madeAt: made.madeAt,
+      },
+    ]);
+    expect(made.hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(JSON.stringify(store.agentKeys())).not.toContain(made.key);
+  });
+
+  it("answers whose a key is, for that person's agent to act as them", async () => {
+    const { core } = calendar();
+    const lindas = await core.makeAgentKey(linda, 'Laptop');
+    const marks = await core.makeAgentKey(mark, 'Phone');
+    expect(await core.agentKeyOwner(lindas.key)).toBe('person-linda');
+    expect(await core.agentKeyOwner(marks.key)).toBe('person-mark');
+  });
+
+  it('answers nothing for a key that is wrong, revoked or not a key at all, alike', async () => {
+    const { core } = calendar();
+    const { key, hash } = await core.makeAgentKey(linda, 'Laptop');
+    const other = await core.makeAgentKey(linda, 'Phone');
+    await core.revokeAgentKey(linda, hash);
+    expect(await core.agentKeyOwner(key)).toBeNull();
+    const wrong = key.replace(/.$/, (c) => (c === 'A' ? 'B' : 'A'));
+    for (const notOne of [wrong, '', 'sc_agent_', null, 42, { key: other.key }, `${other.key}x`])
+      expect(await core.agentKeyOwner(notOne)).toBeNull();
+    // Revoking one key leaves the person's others working.
+    expect(await core.agentKeyOwner(other.key)).toBe('person-linda');
+  });
+
+  it("is each person's own: nobody can revoke someone else's key", async () => {
+    const { core, store } = calendar();
+    const lindas = await core.makeAgentKey(linda, 'Laptop');
+    await core.revokeAgentKey(mark, lindas.hash);
+    expect(await core.agentKeyOwner(lindas.key)).toBe('person-linda');
+    expect(store.agentKeys()).toMatchObject([{ personId: 'person-linda' }]);
+    // Revoking a key that is already gone changes nothing.
+    await core.revokeAgentKey(linda, lindas.hash);
+    await core.revokeAgentKey(linda, lindas.hash);
+    expect(store.agentKeys()).toEqual([]);
+  });
+
+  it('can be several for one person, each with a name to tell them apart', async () => {
+    const { core, store } = calendar();
+    await core.makeAgentKey(susan, 'Laptop');
+    await core.makeAgentKey(susan, 'Phone');
+    expect(
+      store
+        .agentKeys()
+        .map((key) => key.name)
+        .sort(),
+    ).toEqual(['Laptop', 'Phone']);
+    await refused(core.makeAgentKey(susan, '   '), 'invalid');
+    await refused(core.makeAgentKey(susan, 'x'.repeat(61)), 'invalid');
+    await refused(core.makeAgentKey(susan, 42), 'invalid');
+  });
+
+  it('cannot be made or revoked by an agent', async () => {
+    const { core } = calendar();
+    const { key, hash } = await core.makeAgentKey(linda, 'Laptop');
+    await refused(core.makeAgentKey(lindasAgent, 'Another'), 'invalid');
+    await refused(core.revokeAgentKey(lindasAgent, hash), 'invalid');
+    expect(await core.agentKeyOwner(key)).toBe('person-linda');
+  });
+
+  it('is no Activity record and no Activity update: the Appointments did not change', async () => {
+    const { core, store, messenger } = calendar();
+    const { hash } = await core.makeAgentKey(linda, 'Laptop');
+    await core.revokeAgentKey(linda, hash);
+    expect(store.activity()).toEqual([]);
+    expect(messenger.appNotifications()).toEqual([]);
+  });
+});
+
+describe('reading the calendar through the core, as an agent does', () => {
+  it('gives every Appointment in date order, cancelled ones too, and one by its ID', async () => {
+    const { core } = calendar();
+    const later = await core.addAppointment(linda, { ...checkUp, date: '2026-11-25' });
+    const sooner = await core.addAppointment(mark, everyDetail);
+    await core.cancelAppointment(mark, later.id);
+    expect((await core.appointments()).map((each) => [each.id, each.state])).toEqual([
+      [sooner.id, 'active'],
+      [later.id, 'cancelled'],
+    ]);
+    expect(await core.appointment(sooner.id)).toEqual(sooner);
+    await refused(core.appointment('no-such-appointment'), 'missing');
+  });
+
+  it('gives every Series, and one by its ID', async () => {
+    const { core } = calendar();
+    const { series } = await core.addSeries(linda, {
+      what: 'Dialysis',
+      date: '2026-11-23',
+      time: '09:00',
+      repeat: { every: 'week', weekdays: [0, 3] },
+    });
+    expect(await core.everySeries()).toEqual([series]);
+    expect(await core.series(series.id)).toEqual(series);
+    await refused(core.series('no-such-series'), 'missing');
+  });
+
+  it('gives the texts about an Appointment, in the order they were due', async () => {
+    const cal = calendar();
+    const { core, clock } = cal;
+    const added = await core.addAppointment(linda, {
+      ...checkUp,
+      reminders: [
+        { shape: 'daysBefore', days: 1, time: '18:00' },
+        { shape: 'before', amount: 2, unit: 'hours' },
+      ],
+    });
+    await core.addAppointment(linda, { ...checkUp, what: 'Hair' });
+    await remind(cal, added);
+    clock.set(added.reminders[1].dueAt);
+    await core.runDue();
+    const texts = await core.textsAbout(added.id);
+    expect(texts.map((text) => [text.kind, text.dueAt, text.status])).toEqual([
+      ['reminder', added.reminders[0].dueAt, 'sent'],
+      ['reminder', added.reminders[1].dueAt, 'sent'],
+    ]);
+    await refused(core.textsAbout('no-such-appointment'), 'missing');
+  });
+});
+
 describe('a Series', () => {
   /** Dialysis every Monday and Thursday at 9:00 am, from Monday 23 November. */
   const dialysis: NewSeries = {

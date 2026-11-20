@@ -31,8 +31,11 @@ const api = vi.hoisted(() => {
       endSeries: vi.fn(),
       makeSubscriptionLink: vi.fn(),
       switchOffSubscriptionLink: vi.fn(),
+      makeAgentKey: vi.fn(),
+      revokeAgentKey: vi.fn(),
     },
     links: vi.fn(),
+    agentKeys: vi.fn(),
     series: vi.fn(),
     hub: undefined as undefined | ((event: { payload: { event: string; data: unknown } }) => void),
     model: {
@@ -48,6 +51,7 @@ vi.mock('aws-amplify/data', async (original) => ({
     models: {
       Appointment: { ...api.model, list: api.list },
       SubscriptionLink: { list: api.links },
+      AgentKey: { list: api.agentKeys },
       Series: { get: api.series },
     },
     mutations: api.mutations,
@@ -463,6 +467,61 @@ describe("the signed-in person's subscription link", () => {
   it('says to try again when the command fails', async () => {
     api.mutations.switchOffSubscriptionLink.mockRejectedValue(new Error('Network Error'));
     await expect(createAmplifyCalendar(FEED).switchOffSubscriptionLink()).rejects.toThrow(
+      'Could not save the change. Check your connection and try again.',
+    );
+  });
+});
+
+describe("the signed-in person's agent keys", () => {
+  const MCP = 'https://xyz789.lambda-url.us-east-1.on.aws/mcp';
+  const key = (hash: string, name: string, madeAt: string) => ({
+    hash,
+    personId: 'person-linda',
+    name,
+    madeAt,
+    createdAt: 'x',
+  });
+
+  it('are read from the data API, which hands a person only their own, newest first', async () => {
+    const calendar = createAmplifyCalendar(FEED, MCP);
+    api.agentKeys
+      .mockResolvedValueOnce({
+        data: [key('aa', 'Laptop', '2026-11-18T20:00:00.000Z')],
+        nextToken: 'more',
+      })
+      .mockResolvedValueOnce({ data: [key('bb', 'Phone', '2026-11-19T20:00:00.000Z')] });
+    expect(await calendar.agentKeys()).toEqual([
+      { hash: 'bb', name: 'Phone', madeAt: '2026-11-19T20:00:00.000Z' },
+      { hash: 'aa', name: 'Laptop', madeAt: '2026-11-18T20:00:00.000Z' },
+    ]);
+    expect(calendar.agentEndpoint()).toBe(MCP);
+    expect(createAmplifyCalendar(FEED).agentEndpoint()).toBeNull();
+  });
+
+  it("are made and revoked by the core's commands", async () => {
+    const calendar = createAmplifyCalendar(FEED, MCP);
+    const made = {
+      key: `sc_agent_${'A'.repeat(43)}`,
+      hash: 'cc',
+      name: 'Laptop',
+      madeAt: '2026-11-19T20:00:00.000Z',
+    };
+    api.mutations.makeAgentKey.mockResolvedValue({ data: JSON.stringify({ agentKey: made }) });
+    expect(await calendar.makeAgentKey('Laptop')).toEqual(made);
+    expect(api.mutations.makeAgentKey).toHaveBeenCalledWith({ name: 'Laptop' });
+    api.mutations.revokeAgentKey.mockResolvedValue({ data: { agentKey: null } });
+    await calendar.revokeAgentKey('cc');
+    expect(api.mutations.revokeAgentKey).toHaveBeenCalledWith({ hash: 'cc' });
+  });
+
+  it("carry the core's refusal in its own words, and say to try again when a command fails", async () => {
+    const calendar = createAmplifyCalendar(FEED, MCP);
+    api.mutations.makeAgentKey.mockResolvedValue({
+      data: { refusal: { reason: 'invalid', message: 'Give the key a name.' } },
+    });
+    await expect(calendar.makeAgentKey('')).rejects.toThrow('Give the key a name.');
+    api.mutations.revokeAgentKey.mockRejectedValue(new Error('Network Error'));
+    await expect(calendar.revokeAgentKey('cc')).rejects.toThrow(
       'Could not save the change. Check your connection and try again.',
     );
   });

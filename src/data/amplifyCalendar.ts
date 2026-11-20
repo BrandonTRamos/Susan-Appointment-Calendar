@@ -22,7 +22,7 @@ import {
   type CommandAnswer,
 } from '../lib/calendarApi';
 import { liveCalendarAlerts, liveReplies, liveTexts } from './amplifyLive';
-import { NO_FEED, type CalendarClient } from './calendarClient';
+import { newestFirst, NO_FEED, type AgentKeyListing, type CalendarClient } from './calendarClient';
 
 interface Watcher {
   listener: (appointments: Appointment[]) => void;
@@ -59,10 +59,13 @@ async function command(call: () => Promise<Answer>) {
 }
 
 /**
- * The calendar over the data API. `feedUrl` is the subscription feed's address, from the backend's
- * outputs (src/config.ts); null when the backend has none.
+ * The calendar over the data API. `feedUrl` is the subscription feed's address, and `mcpEndpoint`
+ * the MCP server's, from the backend's outputs (src/config.ts); null when the backend has none.
  */
-export function createAmplifyCalendar(feedUrl: string | null): CalendarClient {
+export function createAmplifyCalendar(
+  feedUrl: string | null,
+  mcpEndpoint: string | null = null,
+): CalendarClient {
   const client = generateClient<Schema>();
   const texts = liveTexts(client);
   const replies = liveReplies(client);
@@ -222,6 +225,29 @@ export function createAmplifyCalendar(feedUrl: string | null): CalendarClient {
     async switchOffSubscriptionLink() {
       await command(() => client.mutations.switchOffSubscriptionLink());
     },
+
+    // A signed-in person can read only their own keys.
+    async agentKeys() {
+      const keys: AgentKeyListing[] = [];
+      let nextToken: string | null | undefined;
+      do {
+        const page = await client.models.AgentKey.list({ nextToken });
+        if (page.errors?.length) throw new Error(page.errors.map((e) => e.message).join('; '));
+        for (const { hash, name, madeAt } of page.data) keys.push({ hash, name, madeAt });
+        nextToken = page.nextToken;
+      } while (nextToken);
+      return newestFirst(keys);
+    },
+    async makeAgentKey(name) {
+      const said = await command(() => client.mutations.makeAgentKey({ name }));
+      const made = 'agentKey' in said ? said.agentKey : null;
+      if (!made) throw new Error(COMMAND_FAILED);
+      return made;
+    },
+    async revokeAgentKey(hash) {
+      await command(() => client.mutations.revokeAgentKey({ hash }));
+    },
+    agentEndpoint: () => mcpEndpoint,
 
     async textsRecordedOnly() {
       const { data, errors } = await client.queries.textSender();

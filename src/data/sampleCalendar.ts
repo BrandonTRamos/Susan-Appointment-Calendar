@@ -17,7 +17,7 @@ import {
   type NewAppointment,
 } from '../lib/calendar';
 import { addDays, today } from '../lib/localTime';
-import type { CalendarClient } from './calendarClient';
+import { newestFirst, type CalendarClient } from './calendarClient';
 
 /** Nobody is signed in on sample data, so every command is carried out as this person. */
 const YOU: Actor = { person: { id: 'sample-you', name: 'You' }, viaAgent: false };
@@ -26,6 +26,9 @@ const MARK: Actor = { person: { id: 'sample-mark', name: 'Mark' }, viaAgent: fal
 
 /** Where a sample link points. Nothing answers there: a sample link is only for seeing. */
 export const SAMPLE_FEED_URL = 'https://feed.example.com/';
+
+/** Where an agent would connect on sample data. Nothing answers there either. */
+export const SAMPLE_MCP_URL = 'https://mcp.example.com/mcp';
 
 /** Susan's number on sample data: invented, as 555-01xx numbers belong to nobody. */
 export const SAMPLE_NUMBER = '+15555550123';
@@ -173,6 +176,13 @@ export function createSampleCalendar(
       return { address: subscriptionAddress(SAMPLE_FEED_URL, secret), madeAt };
     },
     switchOffSubscriptionLink: () => core.switchOffSubscriptionLink(YOU),
+    async agentKeys() {
+      const mine = store.agentKeys().filter((key) => key.personId === YOU.person.id);
+      return newestFirst(mine.map(({ hash, name, madeAt }) => ({ hash, name, madeAt })));
+    },
+    makeAgentKey: (name) => core.makeAgentKey(YOU, name),
+    revokeAgentKey: (hash) => core.revokeAgentKey(YOU, hash),
+    agentEndpoint: () => SAMPLE_MCP_URL,
     watchTexts(listener, onError) {
       let stop: (() => void) | undefined;
       let stopped = false;

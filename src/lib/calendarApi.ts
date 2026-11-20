@@ -4,8 +4,10 @@
 
 import type { Schema } from '../../amplify/data/resource';
 import type {
+  AgentKey,
   Appointment,
   CalendarAlert,
+  MadeAgentKey,
   CalendarSettings,
   MessageProgress,
   MadeSubscriptionLink,
@@ -24,12 +26,13 @@ import type {
 
 /**
  * What a command answers with: the Appointment as it now is (null once deleted), the subscription
- * link just made (null once switched off), or the core's refusal. A refusal is an answer, not an error, so that it reaches the person in the core's own
+ * link or agent key just made (null once switched off or revoked), or the core's refusal. A refusal is an answer, not an error, so that it reaches the person in the core's own
  * words; an error means the command may not have been carried out at all.
  */
 export type CommandAnswer =
   | { appointment: Appointment | null }
   | { subscriptionLink: MadeSubscriptionLink | null }
+  | { agentKey: MadeAgentKey | null }
   | { settings: CalendarSettings }
   | { text: Text }
   | { repliesSeen: string | null }
@@ -197,6 +200,16 @@ export function textRow({ alert, ...text }: Text) {
     alertRefused: alert?.refused ?? null,
   };
 }
+
+export type AgentKeyRow = Schema['AgentKey']['type'];
+
+/** An agent key as the data API carries it: only the fields the calendar names. */
+export const toAgentKey = ({ hash, personId, name, madeAt }: AgentKey): AgentKey => ({
+  hash,
+  personId,
+  name,
+  madeAt,
+});
 
 export type SettingsRow = Schema['CalendarSettings']['type'];
 

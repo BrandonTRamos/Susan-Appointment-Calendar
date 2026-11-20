@@ -1,6 +1,6 @@
 // The calendar core: every rule about the calendar, and the only thing that writes calendar data.
-// The app, the scheduled run, and later the MCP server, all change the calendar by calling the
-// commands here, so none of them can get round a rule.
+// The app, the scheduled run and the MCP server all change the calendar by calling the commands
+// here, so none of them can get round a rule.
 //
 // It reaches the outside world only through its ports (ports.ts) and holds no provider-specific
 // code: it runs the same in a backend function, in the browser on sample data, and in a test.
@@ -17,6 +17,13 @@ import {
   momentOrSkipped,
 } from '../localTime';
 import { activityUpdate, seriesActivityUpdate } from './activityUpdate';
+import {
+  AGENT_KEY_NAME_LIMIT,
+  agentKeyHash,
+  isAgentKey,
+  newAgentKey,
+  type MadeAgentKey,
+} from './agentKeys';
 import {
   alertFor,
   alertMarked,
@@ -221,6 +228,36 @@ export interface CalendarCore {
    * is never told.
    */
   subscriptionFeed(secret: unknown): Promise<string | null>;
+
+  /**
+   * Makes the person a new agent key, with a name to tell it from their others. The key is handed
+   * back this once: only a hash of it is kept. A person can have several. Refused to an agent: a
+   * key is made and revoked only by the person.
+   */
+  makeAgentKey(by: Actor, name: unknown): Promise<MadeAgentKey>;
+  /**
+   * Revokes the person's agent key with this hash, so that it works no more. Nothing happens when
+   * they have no such key, including when it is someone else's. Refused to an agent.
+   */
+  revokeAgentKey(by: Actor, hash: unknown): Promise<void>;
+  /**
+   * Whose agent key this is, as their person ID, for their agent to act as them (viaAgent). Null
+   * for anything that is not a working key, whether it never was one or it was revoked: which of
+   * the two is never told.
+   */
+  agentKeyOwner(key: unknown): Promise<string | null>;
+
+  // Reading the calendar, for those that do not read the data API directly, such as the MCP server.
+  /** Every Appointment, cancelled ones too, in date order. */
+  appointments(): Promise<Appointment[]>;
+  /** The Appointment with this ID, or a refusal when the calendar has none. */
+  appointment(id: unknown): Promise<Appointment>;
+  /** Every Series, ended ones too, in the order they start. */
+  everySeries(): Promise<Series[]>;
+  /** The Series with this ID, or a refusal when the calendar has none. */
+  series(id: unknown): Promise<Series>;
+  /** The record of every text about the Appointment, in the order they were due. */
+  textsAbout(appointmentId: unknown): Promise<Text[]>;
 
   /**
    * Changes where texts go and who Susan is told to call. A setting left out stays as it is; null
@@ -694,6 +731,12 @@ export function createCalendarCore({
       // Fixed words only: the error is not repeated (src/lib/failure.ts).
       console.error(`Activity update could not be sent (${failureKind(error)})`);
     }
+  }
+
+  /** Agent keys are the person's own business: their agent can neither make nor revoke one. */
+  function onlyThePerson(by: Actor) {
+    if (by.viaAgent)
+      invalid('Agent keys are made and revoked only in Settings, by the person they belong to.');
   }
 
   async function existing(id: unknown): Promise<Appointment> {
@@ -1279,6 +1322,62 @@ export function createCalendarCore({
       const link = await store.subscriptionLinkByHash(await subscriptionHash(secret));
       if (!link) return null;
       return calendarFeed(await store.everyAppointment());
+    },
+
+    // An agent key changes no Appointment, so it leaves no activity record.
+    async makeAgentKey(by, sent) {
+      onlyThePerson(by);
+      const name =
+        typeof sent === 'string' ? sent.replace(UNSEEN, '').trim().replace(/\s+/g, ' ') : '';
+      if (!name) invalid('Give the key a name, such as the agent or device it is for.');
+      if (name.length > AGENT_KEY_NAME_LIMIT)
+        invalid(`Keep the key's name to ${AGENT_KEY_NAME_LIMIT} characters or fewer.`);
+      const key = newAgentKey();
+      const kept = {
+        hash: await agentKeyHash(key),
+        personId: by.person.id,
+        name,
+        madeAt: clock.now().toISOString(),
+      };
+      await store.keepAgentKey(kept);
+      return { key, hash: kept.hash, name: kept.name, madeAt: kept.madeAt };
+    },
+
+    async revokeAgentKey(by, hash) {
+      onlyThePerson(by);
+      // Only the person's own: the store decides it as it removes the key.
+      if (typeof hash === 'string' && hash) await store.removeAgentKey(hash, by.person.id);
+    },
+
+    async agentKeyOwner(key) {
+      if (!isAgentKey(key)) return null;
+      const found = await store.agentKeyByHash(await agentKeyHash(key));
+      return found?.personId ?? null;
+    },
+
+    async appointments() {
+      return inDateOrder(await store.everyAppointment());
+    },
+
+    appointment: existing,
+
+    async everySeries() {
+      return (await store.everySeries()).sort(
+        (a, b) => a.starts.localeCompare(b.starts) || a.id.localeCompare(b.id),
+      );
+    },
+
+    async series(id) {
+      const found = typeof id === 'string' && id ? await store.series(id) : null;
+      if (!found) throw new CalendarRefusal('missing', 'That Series is not in the calendar.');
+      return found;
+    },
+
+    async textsAbout(appointmentId) {
+      const { id } = await existing(appointmentId);
+      return (await store.textsAbout(id)).sort(
+        (a, b) => a.dueAt.localeCompare(b.dueAt) || a.id.localeCompare(b.id),
+      );
     },
 
     // Settings change no Appointment, so they leave no activity record.

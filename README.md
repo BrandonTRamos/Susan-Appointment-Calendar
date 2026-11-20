@@ -20,7 +20,8 @@ what one person changes shows for the others as it happens. Each Appointment car
 showing when each goes out and the exact words Susan will read. An Appointment can be made to repeat,
 as a [Series](#series). The Month tab shows a month at a
 glance, and Past lists the Appointments that have already happened. Anyone signed in can also get
-their own [calendar subscription](#calendar-subscription) link. Reminders go out on schedule
+their own [calendar subscription](#calendar-subscription) link, and [connect their AI
+agent](#connecting-an-ai-agent) to read and change the calendar for them. Reminders go out on schedule
 through Textbelt, and each Appointment shows every text about it with its status, which moves on to
 delivered or failed as Textbelt reports. Until the Textbelt key is stored, a stand-in records each
 text instead of sending it (see [Texts to Susan](#texts-to-susan)). What Susan texts back is
@@ -81,7 +82,13 @@ scheduled run sends texts every minute and never overlaps itself, a text is clai
 record, which fails when it is already there, and taken up again only by a conditional write, the
 Series top-up runs once a day, one run at a time with its retries bounded, may call only the data
 API fields in its access list, and can send no text, Alert or email, the Textbelt key reaches only the
-commands function and the scheduled run, and only as a secret, an Alert is taken up and recorded
+commands function, the scheduled run and the reply address, and only as a secret, the subscription
+feed, the MCP server and the reply address have the only public addresses, each with a cap on
+requests at once, the reply address checks Textbelt's signature and may only read the settings and
+create a Reply, the MCP server may call
+only the data API fields in its access list, and beside them only read one agent key at a time,
+consistently, look up the account it acts for and list the Admins group, a signed-in person can read only their own agent keys,
+an agent key is revoked only by a delete on condition that it is the person's, an Alert is taken up and recorded
 only by conditional writes, only the scheduled run may send email, only from its configured address
 and only through its own account and region, every table can be restored to a point in time, and
 everything carries the cost tag.
@@ -95,10 +102,12 @@ is the only thing that writes calendar data.
 - The app changes the calendar only by calling the core's commands (add, change, cancel and delete an
   Appointment; add, change and end a Series; change the settings; send a test text). They run in a
   backend function, `calendar-commands`; nothing a signed-in person can call writes calendar data
-  any other way. The other writers are the scheduled run that sends texts, `send-texts`, and the
-  daily Series top-up, `series-top-up`, which run the same core.
-- Each command is carried out as the signed-in person. The Appointment shows who added it and who
-  last changed it, and the calendar keeps a record of each change.
+  any other way. The other writers are the scheduled run that sends texts, `send-texts`, the
+  daily Series top-up, `series-top-up`, and the MCP server an agent uses, `mcp-server`, which run
+  the same core.
+- Each command is carried out as the signed-in person, or, through the MCP server, as the person
+  whose agent key it is, marked "via agent". The Appointment shows who added it and who last
+  changed it, and the calendar keeps a record of each change.
 - Adding, changing or cancelling an Appointment sends the other Admins an Activity update: an app
   notification naming who did it and what changed, which opens the Appointment when tapped. The
   person who made the change, and Susan, get none. See [App notifications](#app-notifications).
@@ -333,6 +342,49 @@ It is view-only.
   from the `SubscriptionLink` table in DynamoDB (it is keyed by their account's `sub`).
 - On sample data a link can be made, copied and switched off, but nothing answers at its address.
 
+## Connecting an AI agent
+
+Anyone signed in can let their AI agent, such as Claude, read the calendar and change it for them:
+"what does Susan have next week?", "add her eye appointment on the 12th at 3", "did last night's
+Reminder go through?". The agent talks to the calendar's MCP server (Model Context Protocol) with
+an agent key.
+
+1. In the app, open **Settings → Agent keys**, give the key a name (such as the agent or device it is
+   for) and choose **Create key**. Copy the key and the address shown beside it. The key is shown
+   only this once; if it is lost, make another and revoke the old one.
+2. Add the calendar to the agent as a remote MCP server over HTTP at that address (it ends in
+   `/mcp`), sending the key in the header `Authorization: Bearer <key>`. For Claude Code:
+
+   ```sh
+   claude mcp add --transport http susans-calendar <address> \
+     --header "Authorization: Bearer <key>"
+   ```
+
+   Any other agent that can reach a remote MCP server over Streamable HTTP with its own header
+   connects the same way. Keep the key out of anything shared, such as a repository.
+
+3. Ask the agent about Susan's calendar. It can list and read Appointments and Series, read what
+   became of the texts about an Appointment, add, change, cancel and delete Appointments, add a
+   Series and change or cancel it from one Appointment on, and set Reminders. Every date and time
+   is Susan's local time.
+
+What an agent does is done as the key's person:
+
+- Every change is recorded as theirs, "via agent", and the Appointment's history reads so ("by
+  Linda (via agent)"). It follows every rule a change in the app follows, through the same calendar
+  core: a refusal reaches the agent in the same words, the other Admins get an Activity update
+  naming "Linda's agent", and Susan is texted as she would be.
+- An agent cannot see or change Settings, agent keys, subscription links or accounts.
+- Each key is the person's own, and a person can have several. **Revoke** stops a key at once. A key
+  stops too when its person's account is disabled or deleted.
+- Only a hash of each key is kept, in the `AgentKey` table. The server, the `mcp-server` backend
+  function at its own public address (a Lambda function URL, passed to the app as `mcpEndpoint` in
+  `amplify_outputs.json`), takes at most three requests at once. A call with no key, a wrong one or
+  a revoked one gets the same refusal and learns nothing about the calendar. The server finds a key
+  by reading that table with a strongly consistent read, and changes the calendar only through the
+  data API, with the fields its access list names (`amplify/functions/mcp-server/access.ts`).
+- On sample data a key can be made and revoked, but nothing answers at its address.
+
 ## Hosting
 
 The app deploys the same way as the sibling apps: one Amplify Hosting app, connected to this
@@ -452,7 +504,9 @@ attribute, then add it to the `Admins` group.
   decides who receives Alerts, passed-on Replies and Activity updates. It gives no extra rights:
   everyone signed in can do everything.
 - **Staying signed in.** Sign-in is an email and a password, with no code to enter. A person stays
-  signed in on a device until they sign out or the owner disables their account. One exception:
+  signed in on a device until they sign out or the owner disables their account. Disabling or
+  deleting an account also stops its agent keys at once ([Connecting an AI
+  agent](#connecting-an-ai-agent)). One exception:
   Safari can forget a website's sign-in after seven days without a visit, unless the app has been added
   to the home screen. Add it to the home screen on Susan's iPhone.
 

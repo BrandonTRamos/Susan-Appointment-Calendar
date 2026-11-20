@@ -18,6 +18,7 @@ import {
   calendarAlertRow,
   replyRow,
   SETTINGS_ID,
+  toAgentKey,
   toAppointment,
   toCalendarAlert,
   toReply,
@@ -45,6 +46,7 @@ export interface DataClient {
       Models['SubscriptionLink'],
       'get' | 'create' | 'update' | 'delete' | 'subscriptionLinkByHash'
     >;
+    AgentKey: Pick<Models['AgentKey'], 'get' | 'create'>;
     Text: Pick<Models['Text'], 'list' | 'create' | 'update' | 'textsByAppointment'>;
     CalendarSettings: Pick<Models['CalendarSettings'], 'get' | 'create' | 'update'>;
     Reply: Pick<Models['Reply'], 'list' | 'create'>;
@@ -100,6 +102,19 @@ const CHANGE_CALENDAR_ALERT = /* GraphQL */ `
   ) {
     updateCalendarAlert(input: $input, condition: $condition) {
       id
+    }
+  }
+`;
+
+/**
+ * Revokes an agent key only if, as DynamoDB deletes it, it is the person's: the data API adds
+ * `condition` to its own check that the row exists, in the one conditional write. No earlier read
+ * decides it, so a key revoked the moment it is made is still revoked, and nobody else's is.
+ */
+const REVOKE_AGENT_KEY = /* GraphQL */ `
+  mutation RevokeAgentKey($hash: String!, $condition: ModelAgentKeyConditionInput!) {
+    deleteAgentKey(input: { hash: $hash }, condition: $condition) {
+      hash
     }
   }
 `;
@@ -164,6 +179,7 @@ export function dataStore(client: DataClient): Store {
     Series,
     ActivityRecord,
     SubscriptionLink,
+    AgentKey,
     Text,
     CalendarSettings,
     Reply,
@@ -174,17 +190,11 @@ export function dataStore(client: DataClient): Store {
   const read = new Map<string, Appointment>();
   const readSeries = new Map<string, Series>();
 
-  /** Replaces a row only if the condition holds as it is written. Answers whether it did. */
-  async function changeIf(
-    query: string,
-    input: Record<string, unknown>,
-    condition: { and: Record<string, unknown>[] },
-  ) {
+  /** A write that carries a condition. Answers whether it was made: false when DynamoDB refused it. */
+  async function writeIf(query: string, variables: Record<string, unknown>) {
     let answer: { errors?: readonly DataError[] };
     try {
-      answer = (await client.graphql({ query, variables: { input, condition } })) as {
-        errors?: readonly DataError[];
-      };
+      answer = (await client.graphql({ query, variables })) as { errors?: readonly DataError[] };
     } catch (thrown) {
       if (!(thrown && typeof thrown === 'object' && 'errors' in thrown)) throw thrown;
       answer = thrown as { errors?: readonly DataError[] };
@@ -193,14 +203,22 @@ export function dataStore(client: DataClient): Store {
     if (alreadyThere(answer.errors)) return false;
     throw new Error(answer.errors.map((e) => e.message).join('; '));
   }
-  const changeTextIf = (next: Text, condition: { and: Record<string, unknown>[] }) =>
-    changeIf(CHANGE_TEXT, textRow(next), condition);
+  /** Replaces a row only if the condition holds as it is written. Answers whether it did. */
+  const changeIf = (
+    query: string,
+    input: Record<string, unknown>,
+    condition: { and: Record<string, unknown>[] },
+  ) => writeIf(query, { input, condition });
   /** Creates a row only if none has its ID, in one step. Answers whether it did. */
   const created = (result: { errors?: readonly DataError[]; data: unknown }) => {
     if (alreadyThere(result.errors)) return false;
     check(result);
     return true;
   };
+
+  /** Replaces a text's record only if the condition holds as it is written. Answers whether it did. */
+  const changeTextIf = (next: Text, condition: { and: Record<string, unknown>[] }) =>
+    writeIf(CHANGE_TEXT, { input: textRow(next), condition });
 
   return {
     async appointment(id) {
@@ -362,6 +380,18 @@ export function dataStore(client: DataClient): Store {
       const row = { personId, seenUpTo };
       if (created(await RepliesSeen.create(row))) return;
       await changeIf(ADVANCE_REPLIES_SEEN, row, { and: [{ seenUpTo: { lt: seenUpTo } }] });
+    },
+    // The MCP server does not read through here: the data API's reads are not strongly consistent,
+    // so it reads the table itself (agent-key-table.ts).
+    async agentKeyByHash(hash) {
+      const row = check(await AgentKey.get({ hash }));
+      return row ? toAgentKey(row) : null;
+    },
+    async keepAgentKey(key) {
+      check(await AgentKey.create(key));
+    },
+    async removeAgentKey(hash, personId) {
+      return writeIf(REVOKE_AGENT_KEY, { hash, condition: { personId: { eq: personId } } });
     },
   };
 }

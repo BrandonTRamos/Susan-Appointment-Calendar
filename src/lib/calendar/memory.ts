@@ -1,6 +1,7 @@
 // In-memory stand-ins for the calendar core's ports. Tests drive the core against them, and the app
 // runs on them when it has no backend (src/data/sampleCalendar.ts).
 
+import type { AgentKey } from './agentKeys';
 import type { CalendarAlert } from './alerts';
 import { inDateOrder, type ActivityRecord, type Appointment } from './appointment';
 import type {
@@ -28,6 +29,8 @@ export interface MemoryStore extends Store {
   everySeriesKept(): Series[];
   /** Every subscription link kept, as it is kept. */
   subscriptionLinks(): SubscriptionLink[];
+  /** Every agent key kept, as it is kept. */
+  agentKeys(): AgentKey[];
   /** The record of every text, oldest due first. */
   texts(): Text[];
   /** Every Reply, oldest first. */
@@ -52,6 +55,7 @@ export function createMemoryStore(): MemoryStore {
   let settings: CalendarSettings = NO_SETTINGS;
   const series = new Map<string, Series>();
   const links = new Map<string, SubscriptionLink>();
+  const agentKeys = new Map<string, AgentKey>();
   const listeners = new Set<() => void>();
   const changed = () => {
     for (const listener of [...listeners]) listener();
@@ -200,6 +204,20 @@ export function createMemoryStore(): MemoryStore {
       seen.set(personId, upTo);
       changed();
     },
+    async agentKeyByHash(hash) {
+      const found = agentKeys.get(hash);
+      return found ? structuredClone(found) : null;
+    },
+    async keepAgentKey(key) {
+      agentKeys.set(key.hash, structuredClone(key));
+      changed();
+    },
+    async removeAgentKey(hash, personId) {
+      if (agentKeys.get(hash)?.personId !== personId) return false;
+      agentKeys.delete(hash);
+      changed();
+      return true;
+    },
 
     appointments: () => inDateOrder(structuredClone([...appointments.values()])),
     activity: () => structuredClone(activity),
@@ -217,6 +235,7 @@ export function createMemoryStore(): MemoryStore {
           (a, b) => a.raisedAt.localeCompare(b.raisedAt) || a.id.localeCompare(b.id),
         ),
       ),
+    agentKeys: () => structuredClone([...agentKeys.values()]),
     texts: () =>
       structuredClone(
         [...texts.values()].sort(

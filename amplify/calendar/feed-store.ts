@@ -124,6 +124,9 @@ export function feedStore(reader: TableReader, tables: FeedTables): Store {
     claimCalendarAlert: async () => readOnly(),
     changeCalendarAlert: async () => readOnly(),
     advanceRepliesSeen: async () => readOnly(),
+    agentKeyByHash: async () => notRead(),
+    keepAgentKey: async () => readOnly(),
+    removeAgentKey: async () => readOnly(),
   };
 }
 

@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 
-This spec uses the vocabulary in `CONTEXT.md` (Susan, Admin, Appointment, Series, Reminder, Change notice, Confirmation text, Reply, Alert, Activity update, Public pages, Driver, Note for Susan, Private notes) and respects ADR 0002 (text messages are sent through Textbelt), which supersedes ADR 0001. The repo is empty apart from agent docs, so everything below is new.
+This spec uses the vocabulary in `CONTEXT.md` (Susan, Admin, Appointment, Series, Reminder, Change notice, Confirmation text, Reply, Alert, Activity update, Public pages, Driver, Note for Susan, Private notes) and respects ADR 0002 (text messages are sent through Textbelt), which supersedes ADR 0001.
 
 ## Problem Statement
 
@@ -274,6 +274,8 @@ Admins are kept in the loop. They get an Alert, by email and app notification, w
 - Any signed-in person can create a key in settings. It is shown once, belongs to that person, and can be revoked.
 - Tools cover reading Appointments, Series and text statuses, and every command a person has for Appointments, Series and Reminders. Each call goes through the calendar core as that person, marked "via agent".
 - Tools do not expose settings, keys, subscription links or account management.
+- **As built in ticket 16:** the server is the `mcp-server` function at its own public address (a Lambda function URL ending in `/mcp`, at most three requests at once), serving Streamable HTTP stateless with JSON answers through the official MCP library, as Wellbeing's does; it offers tools only. A person can have several agent keys, each with a name they give it, made and revoked only by them in Settings (the core refuses either to an agent). A key is `sc_agent_` and 32 random bytes; only its SHA-256 hash is kept, in the `AgentKey` table, keyed by that hash, which is also how the person names a key to revoke it. Revoking deletes the key, by a delete on condition that it is the person's that DynamoDB checks as it deletes, so a key revoked the moment it is made is still revoked and nobody can revoke another's. The server finds a key by reading that table by its hash with a strongly consistent read, so a revoked key stops at once; a missing, malformed, wrong or revoked key gets one same refusal, before anything about the calendar is read. A key acts only while its person's account is enabled: the server looks the account up for the person's name at every call, and refuses a key whose account is disabled, gone, or not said to be enabled, the same way.
+- As built: the tools are `list_appointments`, `get_appointment`, `list_texts` (the texts about one Appointment, with their status in the app's words), `list_series`, `get_series`, `add_appointment`, `change_appointment` (only this one), `cancel_appointment`, `delete_appointment`, `add_series`, `change_series` and `end_series` (this and all later ones); Reminders are set as the whole list on an add or change, as in the app, including confirming one held for review. Each calls the core's command or read as the key's person with `viaAgent`, so a refusal reaches the agent in the core's words and Change notices (ticket 14) and Activity updates follow as for a person. Dates and times in and out are Susan's local time, and people are named, never identified by account. Every tool's description says so, and warns that moving or cancelling an Appointment Susan has been reminded of texts her. The server sends no text and no email, and may call only the data API fields in `amplify/functions/mcp-server/access.ts`.
 
 ### Calendar subscription
 

@@ -11,6 +11,7 @@ type Outputs = ResourcesConfig & {
     contactEmail?: string;
     ownerName?: string;
     subscriptionFeedUrl?: string;
+    mcpEndpoint?: string;
   };
 };
 
@@ -36,3 +37,6 @@ export const ownerName = resolveOwnerName(found?.custom?.ownerName);
 
 /** The calendar subscription feed's address (amplify/backend.ts), or null when the backend has none. */
 export const subscriptionFeedUrl = found?.custom?.subscriptionFeedUrl || null;
+
+/** The MCP server's address (amplify/backend.ts), for agent keys, or null when the backend has none. */
+export const mcpEndpoint = found?.custom?.mcpEndpoint || null;
