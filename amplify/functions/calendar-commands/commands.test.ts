@@ -239,6 +239,7 @@ describe('when a command cannot be carried out', () => {
       sentAt: reminder.dueAt,
       reference: '12345',
       creditLeft: 40,
+      alert: null,
     });
     expect(await call('removeAppointment', { id })).toMatchObject({
       refusal: { reason: 'texted', message: expect.stringMatching(/Cancel it instead/) },

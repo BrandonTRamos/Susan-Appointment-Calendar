@@ -1,14 +1,16 @@
 // The calendar core's Admin messenger in the backend. It finds the Admins in the user pool and
-// reaches them by app notification: web push to each device they turned notifications on for,
-// signed with the key pair kept in the data API, as Wellbeing does. Ticket 15 adds email.
+// reaches them by app notification, web push to each device they turned notifications on for,
+// signed with the key pair kept in the data API, as Wellbeing does; and by email, through AWS's
+// email service to the address each signs in with (alert-email.ts).
 
 import {
   CognitoIdentityProviderClient,
   ListUsersInGroupCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
 import webpush from 'web-push';
-import type { AdminMessenger, AppNotification } from '../../src/lib/calendar';
+import type { AdminMessenger, AppNotification, Deliveries } from '../../src/lib/calendar';
 import type { VapidKeys } from '../../src/lib/vapid';
+import type { EmailSender } from './alert-email';
 import type { Device, Devices } from './app-notification-devices';
 
 /** The group the owner puts each Admin's account in (README, "Accounts"). */
@@ -55,13 +57,19 @@ export function webPushSender(subject: string): PushSender {
   };
 }
 
-/** The person ID (the account's `sub`) of everyone in the Admins group. */
+/** An Admin's account: its person ID (the account's `sub`) and the address it signs in with. */
+export interface AdminAccount {
+  id: string;
+  email: string | null;
+}
+
+/** Everyone in the Admins group whose account is enabled. Susan's account is never in it. */
 export function userPoolAdmins(
   userPoolId: string,
   client = new CognitoIdentityProviderClient({}),
-): () => Promise<string[]> {
+): () => Promise<AdminAccount[]> {
   return async () => {
-    const admins: string[] = [];
+    const admins: AdminAccount[] = [];
     let NextToken: string | undefined;
     do {
       const page = await client.send(
@@ -73,8 +81,10 @@ export function userPoolAdmins(
       );
       for (const user of page.Users ?? []) {
         if (user.Enabled === false) continue;
-        const sub = user.Attributes?.find((attribute) => attribute.Name === 'sub')?.Value;
-        if (sub) admins.push(sub);
+        const attribute = (name: string) =>
+          user.Attributes?.find((each) => each.Name === name)?.Value ?? null;
+        const sub = attribute('sub');
+        if (sub) admins.push({ id: sub, email: attribute('email') });
       }
       NextToken = page.NextToken;
     } while (NextToken);
@@ -83,19 +93,33 @@ export function userPoolAdmins(
 }
 
 export interface MessengerDependencies {
-  admins: () => Promise<string[]>;
+  admins: () => Promise<AdminAccount[]>;
   devices: Devices;
   push: PushSender;
+  /** How email is sent; null where it is not set up, and then none is. */
+  email?: EmailSender | null;
+  /** The app's address, which an email's link is made from (amplify/app-url.ts). */
+  appUrl?: string;
 }
 
-export function adminMessenger({ admins, devices, push }: MessengerDependencies): AdminMessenger {
+export function adminMessenger({
+  admins,
+  devices,
+  push,
+  email = null,
+  appUrl = '',
+}: MessengerDependencies): AdminMessenger {
   return {
-    admins,
-    async sendAppNotification(to, notification: AppNotification) {
-      if (to.length === 0) return;
+    async admins() {
+      return (await admins()).map((admin) => admin.id);
+    },
+    // Each delivery is one device, named 'app:<device ID>'.
+    async sendAppNotification(to, notification: AppNotification, skip = []) {
+      const result: Deliveries = { sent: [], failed: [], refused: [] };
+      if (to.length === 0) return result;
       const [keys, reached] = await Promise.all([devices.keys(), devices.of(to)]);
-      // No key pair yet means nobody has turned notifications on.
-      if (!keys) return;
+      // No key pair yet means nobody has turned notifications on: nothing to reach.
+      if (!keys) return result;
       const payload: PushPayload = {
         title: notification.title,
         body: notification.body,
@@ -104,12 +128,39 @@ export function adminMessenger({ admins, devices, push }: MessengerDependencies)
       };
       await Promise.all(
         reached.map(async (device) => {
-          if ((await push.send(device, payload, keys)) !== 'gone') return;
+          const key = `app:${device.id}`;
+          if (skip.includes(key)) return;
+          const went = await push.send(device, payload, keys);
+          if (went === 'sent') result.sent.push(key);
+          if (went === 'failed') result.failed.push(key);
+          // Gone: nothing to reach there any more, so it is forgotten and not tried again.
+          if (went !== 'gone') return;
           await devices.forgetGone(device).catch((error: unknown) => {
             console.error('Forgetting a gone device failed', (error as Error).name);
           });
         }),
       );
+      return result;
+    },
+    // Each delivery is one email to one Admin, named 'email:<person ID>', and only to an Admin's
+    // own sign-in address: a person ID that is not an Admin's, such as Susan's, reaches nobody.
+    async sendEmail(to, { subject, body, opens }, skip = []) {
+      const result: Deliveries = { sent: [], failed: [], refused: [] };
+      if (to.length === 0) return result;
+      // Not set up: nothing to reach by email, which is not a failure.
+      if (!email) {
+        console.log('Alert email is not set up, so none was sent');
+        return result;
+      }
+      // The only words the messenger adds: the address of what it is about, on a line of its own.
+      const link = /^https?:\/\//.test(appUrl) ? `\n\n${new URL(opens, appUrl).href}` : '';
+      for (const admin of await admins()) {
+        const key = `email:${admin.id}`;
+        if (!to.includes(admin.id) || !admin.email || skip.includes(key)) continue;
+        const went = await email.send({ to: admin.email, subject, body: `${body}${link}` });
+        result[went === 'rejected' ? 'refused' : went].push(key);
+      }
+      return result;
     },
   };
 }
