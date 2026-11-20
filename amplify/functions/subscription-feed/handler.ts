@@ -1,4 +1,9 @@
-import { createCalendarCore, systemClock, type CalendarCore } from '../../../src/lib/calendar';
+import {
+  createCalendarCore,
+  NO_TEXT_SENDER,
+  systemClock,
+  type CalendarCore,
+} from '../../../src/lib/calendar';
 import { resolveTimeZone } from '../../../src/lib/timeZone';
 import { createFeedStore } from '../../calendar/feed-store';
 import { subscriptionFeedHandler } from './feed';
@@ -12,6 +17,7 @@ function getCore() {
       createCalendarCore({
         store: createFeedStore(),
         clock: systemClock,
+        textSender: NO_TEXT_SENDER,
         timeZone: resolveTimeZone(process.env.SUSAN_TIME_ZONE),
       }),
     )

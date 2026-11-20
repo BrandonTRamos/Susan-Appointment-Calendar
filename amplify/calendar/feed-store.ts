@@ -40,6 +40,10 @@ function readOnly(): never {
   throw new Error('The subscription feed only reads the calendar.');
 }
 
+function notRead(): never {
+  throw new Error('The subscription feed reads only Appointments and subscription links.');
+}
+
 export function feedStore(reader: TableReader, tables: FeedTables): Store {
   /** The person's link as the table holds it now. */
   async function linkOf(personId: string): Promise<SubscriptionLink | null> {
@@ -92,8 +96,13 @@ export function feedStore(reader: TableReader, tables: FeedTables): Store {
       const now = await linkOf(found.personId);
       return now && now.hash === hash ? now : null;
     },
-    // Nothing sends texts yet; the feed never asks.
-    textSentAbout: async () => false,
+    // The feed never asks about texts or settings, and must not send any.
+    textsAbout: async () => notRead(),
+    everyText: async () => notRead(),
+    settings: async () => notRead(),
+    claimText: async () => readOnly(),
+    replaceText: async () => readOnly(),
+    keepSettings: async () => readOnly(),
     addAppointment: async () => readOnly(),
     replaceAppointment: async () => readOnly(),
     removeAppointment: async () => readOnly(),

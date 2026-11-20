@@ -2,8 +2,9 @@
 // runs on them when it has no backend (src/data/sampleCalendar.ts).
 
 import { inDateOrder, type ActivityRecord, type Appointment } from './appointment';
-import type { Clock, Store } from './ports';
+import type { Clock, SendResult, Store, TextSender } from './ports';
 import type { SubscriptionLink } from './subscription';
+import { NO_SETTINGS, type CalendarSettings, type Text } from './texts';
 
 export interface MemoryStore extends Store {
   /** Every Appointment in the calendar, in date order. */
@@ -12,11 +13,8 @@ export interface MemoryStore extends Store {
   activity(): ActivityRecord[];
   /** Every subscription link kept, as it is kept. */
   subscriptionLinks(): SubscriptionLink[];
-  /**
-   * Stands in for a text about the Appointment having gone to Susan. Nothing sends texts yet; the
-   * rules that depend on one having gone are proven with this.
-   */
-  noteTextSentAbout(appointmentId: string): void;
+  /** The record of every text, oldest due first. */
+  texts(): Text[];
   /** Calls `listener` after every change. Returns how to stop. */
   subscribe(listener: () => void): () => void;
 }
@@ -24,7 +22,8 @@ export interface MemoryStore extends Store {
 export function createMemoryStore(): MemoryStore {
   const appointments = new Map<string, Appointment>();
   const activity: ActivityRecord[] = [];
-  const texted = new Set<string>();
+  const texts = new Map<string, Text>();
+  let settings: CalendarSettings = NO_SETTINGS;
   const links = new Map<string, SubscriptionLink>();
   const listeners = new Set<() => void>();
   const changed = () => {
@@ -50,8 +49,28 @@ export function createMemoryStore(): MemoryStore {
       appointments.delete(id);
       changed();
     },
-    async textSentAbout(appointmentId) {
-      return texted.has(appointmentId);
+    async textsAbout(appointmentId) {
+      return structuredClone([...texts.values()].filter((t) => t.appointmentId === appointmentId));
+    },
+    async everyText() {
+      return structuredClone([...texts.values()]);
+    },
+    async claimText(text) {
+      if (texts.has(text.id)) return false;
+      texts.set(text.id, structuredClone(text));
+      changed();
+      return true;
+    },
+    async replaceText(text) {
+      texts.set(text.id, structuredClone(text));
+      changed();
+    },
+    async settings() {
+      return structuredClone(settings);
+    },
+    async keepSettings(next) {
+      settings = structuredClone(next);
+      changed();
     },
     async recordActivity(record) {
       activity.push(structuredClone(record));
@@ -77,9 +96,12 @@ export function createMemoryStore(): MemoryStore {
     appointments: () => inDateOrder(structuredClone([...appointments.values()])),
     activity: () => structuredClone(activity),
     subscriptionLinks: () => structuredClone([...links.values()]),
-    noteTextSentAbout(appointmentId) {
-      texted.add(appointmentId);
-    },
+    texts: () =>
+      structuredClone(
+        [...texts.values()].sort(
+          (a, b) => a.dueAt.localeCompare(b.dueAt) || a.id.localeCompare(b.id),
+        ),
+      ),
     subscribe(listener) {
       listeners.add(listener);
       return () => {
@@ -101,6 +123,53 @@ export function createFixedClock(at: string): FixedClock {
     now: () => new Date(now),
     set(next) {
       now = new Date(next);
+    },
+  };
+}
+
+/** A text the stand-in sender took: where it would have gone, and its words. */
+export interface StandInText {
+  to: string;
+  words: string;
+}
+
+/**
+ * The text sender used wherever Textbelt's key is absent, sample data included: it records each
+ * text instead of sending it, and logs nothing. A test can make the next sends fail, either for
+ * certain (`refuseNext`) or so that nobody can tell whether they went (`breakNext`).
+ */
+export interface StandInSender extends TextSender {
+  /** Every text it took, oldest first. */
+  taken(): StandInText[];
+  /** The next `times` sends throw, as when the connection drops mid-send. */
+  breakNext(times?: number): void;
+  /** The next `times` sends are refused. */
+  refuseNext(times?: number): void;
+}
+
+export function createStandInSender(): StandInSender {
+  const taken: StandInText[] = [];
+  let broken = 0;
+  let refused = 0;
+  return {
+    async send({ to, words }): Promise<SendResult> {
+      if (broken > 0) {
+        broken -= 1;
+        throw new Error('The stand-in sender was told to fail.');
+      }
+      if (refused > 0) {
+        refused -= 1;
+        return { sent: false };
+      }
+      taken.push({ to, words });
+      return { sent: true, reference: `stand-in-${taken.length}` };
+    },
+    taken: () => structuredClone(taken),
+    breakNext(times = 1) {
+      broken += times;
+    },
+    refuseNext(times = 1) {
+      refused += times;
     },
   };
 }

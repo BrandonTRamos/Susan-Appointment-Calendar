@@ -4,8 +4,12 @@ import {
   APPOINTMENT_STATES,
   REMINDER_SHAPES,
   REMINDER_UNITS,
+  TEXT_KINDS,
+  TEXT_REASONS,
+  TEXT_STATUSES,
 } from '../../src/lib/calendar';
 import { calendarCommands } from '../functions/calendar-commands/resource';
+import { sendTexts } from '../functions/send-texts/resource';
 
 // Calendar data, and the only way to change it.
 //
@@ -46,6 +50,8 @@ const schema = a
       time: a.string(), // 'HH:MM'
       dueAt: a.datetime().required(),
       needsReview: a.boolean().required(),
+      // When its time was last worked out. Missing on a Reminder kept before ticket 11.
+      setAt: a.datetime(),
     }),
 
     // What each field means is in src/lib/calendar/appointment.ts. The date and both times are
@@ -102,6 +108,35 @@ const schema = a
         allow.ownerDefinedIn('personId').identityClaim('sub').to(['read']),
       ]),
 
+    // The record of each text to Susan (Text in src/lib/calendar/texts.ts). Its ID is made from
+    // what it is about and when it was due; creating one fails when one with that ID exists, which
+    // is how a text is claimed before it is sent (`npm run synth` checks it).
+    Text: a
+      .model({
+        kind: a.enum(TEXT_KINDS),
+        appointmentId: a.id(),
+        reminderId: a.string(),
+        words: a.string().required(),
+        dueAt: a.datetime().required(),
+        status: a.enum(TEXT_STATUSES),
+        reason: a.enum(TEXT_REASONS),
+        attempts: a.integer().required(),
+        triedAt: a.datetime().required(),
+        sentAt: a.datetime(),
+        reference: a.string(),
+      })
+      .secondaryIndexes((index) => [index('appointmentId').queryField('textsByAppointment')])
+      .authorization((allow) => [allow.authenticated().to(['read'])]),
+    // Where texts go and who Susan is told to call (CalendarSettings in
+    // src/lib/calendar/texts.ts): one row, with the ID SETTINGS_ID in amplify/calendar/data-store.ts.
+    CalendarSettings: a
+      .model({
+        susansNumber: a.string(),
+        contactName: a.string(),
+        contactPhone: a.string(),
+        lastChanged: a.ref('Stamp'),
+      })
+      .authorization((allow) => [allow.authenticated().to(['read'])]),
     // The core's commands. Each answers with a CommandAnswer (src/lib/calendarApi.ts): the
     // Appointment as it now is, or the core's refusal. `removeAppointment` is the core's "delete":
     // the name deleteAppointment belongs to the model's own mutation, which only the function may
@@ -117,10 +152,17 @@ const schema = a
     // Each answers with a CommandAnswer: the new link's secret, shown this once, or null.
     makeSubscriptionLink: command(),
     switchOffSubscriptionLink: command(),
+    // Each answers with a CommandAnswer: the settings as they now are, or the test text's record.
+    changeSettings: command().arguments({ settings: a.json().required() }),
+    sendTestText: command(),
   })
-  // Lets the function write through the data API, so that every change reaches everyone looking at
-  // the calendar (docs/adr/0003-the-core-writes-through-the-data-api.md).
-  .authorization((allow) => [allow.resource(calendarCommands).to(['query', 'mutate'])]);
+  // Lets the commands function and the scheduled run write through the data API, so that every
+  // change reaches everyone looking at the calendar
+  // (docs/adr/0003-the-core-writes-through-the-data-api.md).
+  .authorization((allow) => [
+    allow.resource(calendarCommands).to(['query', 'mutate']),
+    allow.resource(sendTexts).to(['query', 'mutate']),
+  ]);
 
 export type Schema = ClientSchema<typeof schema>;
 

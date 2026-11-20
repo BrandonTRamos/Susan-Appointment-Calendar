@@ -2,6 +2,7 @@ import { createCalendarCore, systemClock, type CalendarCore } from '../../../src
 import { resolveTimeZone } from '../../../src/lib/timeZone';
 import { createDataStore } from '../../calendar/data-store';
 import { rememberedNames, userPoolNames } from '../../calendar/people';
+import { textSenderFor } from '../../calendar/text-sender';
 import { calendarCommandHandler } from './commands';
 
 let core: Promise<CalendarCore> | undefined;
@@ -12,6 +13,7 @@ function getCore() {
       createCalendarCore({
         store,
         clock: systemClock,
+        textSender: textSenderFor(),
         timeZone: resolveTimeZone(process.env.SUSAN_TIME_ZONE),
       }),
     )

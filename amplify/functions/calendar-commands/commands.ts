@@ -3,6 +3,7 @@
 
 import { CalendarRefusal, type Actor, type CalendarCore } from '../../../src/lib/calendar';
 import { COMMAND_FAILED, type CommandAnswer } from '../../../src/lib/calendarApi';
+import { describeError } from '../../calendar/log';
 import type { FindName } from '../../calendar/people';
 
 /** What the data API hands a function for one mutation. */
@@ -46,7 +47,7 @@ function fromJson(sent: unknown): unknown {
 export function calendarCommandHandler({ core, nameOf }: CommandDependencies) {
   return async (event: CommandEvent): Promise<CommandAnswer> => {
     const command = event.fieldName ?? event.info?.fieldName;
-    const { id, details, changes } = event.arguments;
+    const { id, details, changes, settings } = event.arguments;
     try {
       const by = await actor(event.identity, nameOf);
       const calendar = await core();
@@ -77,6 +78,10 @@ export function calendarCommandHandler({ core, nameOf }: CommandDependencies) {
         case 'switchOffSubscriptionLink':
           await calendar.switchOffSubscriptionLink(by);
           return { subscriptionLink: null };
+        case 'changeSettings':
+          return { settings: await calendar.changeSettings(by, fromJson(settings) as never) };
+        case 'sendTestText':
+          return { text: await calendar.sendTestText(by) };
         default:
           throw new Error(`Unknown calendar command: ${String(command)}`);
       }
@@ -86,15 +91,8 @@ export function calendarCommandHandler({ core, nameOf }: CommandDependencies) {
         const { reason, message, detail } = error;
         return { refusal: { reason, message, detail } };
       }
-      // What broke and where, and nothing about the Appointment or a link.
-      const e = error instanceof Error ? error : null;
-      console.error(
-        'Calendar command failed',
-        String(command),
-        e?.name ?? 'Unknown error',
-        e?.message.slice(0, 300) ?? '',
-        e?.stack?.split('\n').slice(1, 6).join(' | ') ?? '',
-      );
+      // What broke and where, and nothing about the Appointment, a link, a number or a text.
+      console.error('Calendar command failed', String(command), ...describeError(error));
       throw new Error(COMMAND_FAILED, { cause: error });
     }
   };

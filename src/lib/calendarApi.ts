@@ -5,12 +5,14 @@
 import type { Schema } from '../../amplify/data/resource';
 import type {
   Appointment,
+  CalendarSettings,
   MadeSubscriptionLink,
   RefusalField,
   RefusalReason,
   Reminder,
   ReminderTiming,
   Stamp,
+  Text,
 } from './calendar';
 
 /**
@@ -21,6 +23,8 @@ import type {
 export type CommandAnswer =
   | { appointment: Appointment | null }
   | { subscriptionLink: MadeSubscriptionLink | null }
+  | { settings: CalendarSettings }
+  | { text: Text }
   | { refusal: { reason: RefusalReason; message: string; detail?: RefusalField } };
 
 /** Said when a command failed for a reason that is nobody's mistake. */
@@ -44,6 +48,8 @@ type ReminderRow = NonNullable<NonNullable<AppointmentRow['reminders']>[number]>
 function toReminder(row: ReminderRow | null | undefined): Reminder | null {
   if (!row?.shape) return null;
   const { id, dueAt, needsReview } = row;
+  // A Reminder kept before ticket 11 has no record of when its time was set.
+  const setAt = row.setAt ?? null;
   let timing: ReminderTiming;
   if (row.shape === 'before' && row.amount != null && row.unit)
     timing = { shape: 'before', amount: row.amount, unit: row.unit };
@@ -52,7 +58,7 @@ function toReminder(row: ReminderRow | null | undefined): Reminder | null {
   else if (row.shape === 'at' && row.date && row.time)
     timing = { shape: 'at', date: row.date, time: row.time };
   else return null;
-  return { id, ...timing, dueAt, needsReview };
+  return { id, ...timing, dueAt, needsReview, setAt };
 }
 
 export function toAppointment(row: Kept<AppointmentRow, Appointment>): Appointment {
@@ -73,6 +79,38 @@ export function toAppointment(row: Kept<AppointmentRow, Appointment>): Appointme
     // An Appointment kept before Reminders existed has none.
     reminders: (row.reminders ?? []).flatMap((each) => toReminder(each) ?? []),
     added: toStamp(row.added),
+    lastChanged: row.lastChanged ? toStamp(row.lastChanged) : null,
+  };
+}
+
+export type TextRow = Schema['Text']['type'];
+
+/** A text's record as the data API carries it. */
+export function toText(row: Kept<TextRow, Text>): Text {
+  return {
+    id: row.id,
+    kind: row.kind ?? 'reminder',
+    appointmentId: row.appointmentId ?? null,
+    reminderId: row.reminderId ?? null,
+    words: row.words,
+    dueAt: row.dueAt,
+    status: row.status ?? 'waiting',
+    reason: row.reason ?? null,
+    attempts: row.attempts,
+    triedAt: row.triedAt,
+    sentAt: row.sentAt ?? null,
+    reference: row.reference ?? null,
+  };
+}
+
+export type SettingsRow = Schema['CalendarSettings']['type'];
+
+/** The settings as the data API carries them. */
+export function toSettings(row: Kept<SettingsRow, CalendarSettings>): CalendarSettings {
+  return {
+    susansNumber: row.susansNumber ?? null,
+    contactName: row.contactName ?? null,
+    contactPhone: row.contactPhone ?? null,
     lastChanged: row.lastChanged ? toStamp(row.lastChanged) : null,
   };
 }

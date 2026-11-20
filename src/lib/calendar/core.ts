@@ -23,14 +23,27 @@ import {
   type Stamp,
 } from './appointment';
 import { calendarFeed } from './feed';
-import type { Clock, Store } from './ports';
-import { reminderDue, STARTING_REMINDER } from './reminders';
+import type { Clock, Store, TextSender } from './ports';
+import { reminderDue, reminderWords, STARTING_REMINDER } from './reminders';
 import {
   isSubscriptionSecret,
   newSubscriptionSecret,
   subscriptionHash,
   type MadeSubscriptionLink,
 } from './subscription';
+import {
+  mayHaveReachedSusan,
+  reminderPlan,
+  reminderTextId,
+  RETRY_AFTER,
+  SEND_ATTEMPTS,
+  TEST_TEXT_WORDS,
+  testTextId,
+  usPhoneNumber,
+  type CalendarSettings,
+  type Text,
+  type TextReason,
+} from './texts';
 
 /** Why a command was refused. */
 export type RefusalReason =
@@ -41,10 +54,16 @@ export type RefusalReason =
   /** The Appointment is cancelled. */
   | 'cancelled'
   /** Susan has been texted about the Appointment. */
-  | 'texted';
+  | 'texted'
+  /** Susan's mobile number is not set, so no text can be sent. */
+  | 'noNumber';
 
-/** What a refusal can point at: one detail, or the Reminders. */
-export type RefusalField = Detail | 'reminders';
+/** What a refusal can point at: one detail, the Reminders, or one of the settings. */
+export type RefusalField = Detail | 'reminders' | SettingName;
+
+/** The settings a person can change. */
+export type SettingName = 'susansNumber' | 'contactName' | 'contactPhone';
+export type SettingsChanges = Partial<Record<SettingName, string | null>>;
 
 /**
  * A command the core would not carry out. Nothing was changed. The message is written for the
@@ -102,11 +121,34 @@ export interface CalendarCore {
    * is never told.
    */
   subscriptionFeed(secret: unknown): Promise<string | null>;
+
+  /**
+   * Changes where texts go and who Susan is told to call. A setting left out stays as it is; null
+   * or empty words clear one. Numbers are US numbers, kept as '+1' and ten digits.
+   */
+  changeSettings(by: Actor, changes: SettingsChanges): Promise<CalendarSettings>;
+  /**
+   * Sends Susan a test text now, by the same path as every other text, and answers with its record.
+   * Refused while her mobile number is not set.
+   */
+  sendTestText(by: Actor): Promise<Text>;
+  /**
+   * The scheduled run: sends every text that is due, each once, and tries again any that might not
+   * have gone. Answers with the record of each text it sent, tried or recorded as not sent.
+   *
+   * A due Reminder is sent; one found overdue is still sent while its Appointment has not started,
+   * and recorded as not sent once it has. One whose time had already passed when it was set is never
+   * sent and leaves no record. Nothing is sent for a cancelled Appointment, and while Susan's
+   * number is not set each text that comes due is recorded as not sent.
+   */
+  runDue(): Promise<Text[]>;
 }
 
 export interface CalendarCoreOptions {
   store: Store;
   clock: Clock;
+  /** How texts reach Susan's phone. */
+  textSender: TextSender;
   /** Susan's time zone, from resolveTimeZone (src/lib/timeZone.ts). */
   timeZone: string;
 }
@@ -227,7 +269,10 @@ function timingKey(timing: ReminderTiming): string {
   }
 }
 
-/** Everything about a Reminder as one string. */
+/**
+ * Everything a person set about a Reminder, and when it goes out, as one string. When its time was
+ * set is left out: on its own, that is no change anyone made.
+ */
 const reminderKey = (reminder: Reminder) =>
   `${reminder.id} ${timingKey(reminder)} ${reminder.dueAt} ${reminder.needsReview}`;
 
@@ -260,7 +305,15 @@ function timingOf(sent: unknown, wrong: (message: string) => never): ReminderTim
   }
 }
 
-export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptions): CalendarCore {
+/** A contact's name: one line, kept short. */
+const CONTACT_NAME_LIMIT = 80;
+
+export function createCalendarCore({
+  store,
+  clock,
+  textSender,
+  timeZone,
+}: CalendarCoreOptions): CalendarCore {
   /** The moment an Appointment starts, in Susan's time zone. */
   function startOf({ date, time }: AppointmentDetails): string {
     const moment = momentOf(date, time, timeZone);
@@ -274,7 +327,8 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
 
   /**
    * The Reminders an Appointment will have, from those sent, or a refusal naming the one that is
-   * wrong. `before` are the ones it had, and `moved` whether its date or time is changing.
+   * wrong. `before` are the ones it had, and `moved` whether its date or time is changing. `at` is
+   * now, and `current` the Appointment as it was, when it is being changed.
    */
   function settled(
     sent: unknown,
@@ -282,7 +336,14 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
     startsAt: string,
     before: readonly Reminder[],
     moved: boolean,
+    at: string,
+    current?: Appointment,
   ): Reminder[] {
+    // A Reminder kept before the calendar recorded when each was set takes the Appointment's last
+    // save as that moment, once this save would otherwise move it on. Not for an Appointment that
+    // has started: nothing was going to send its Reminders, and they stay as they were.
+    const lastSave =
+      current && current.startsAt > at ? (current.lastChanged ?? current.added).at : null;
     if (!Array.isArray(sent))
       invalid("The Appointment's Reminders could not be read.", 'reminders');
     const taken = new Set<string>();
@@ -306,7 +367,12 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
         wrong('It would go out after the Appointment starts. Pick an earlier time.');
       const reminderId = was?.id ?? crypto.randomUUID();
       taken.add(reminderId);
-      return { id: reminderId, ...timing, dueAt: due.toISOString(), needsReview };
+      const dueAt = due.toISOString();
+      // Its time was worked out again unless it is the same Reminder at the same time, not just
+      // confirmed: an edit that leaves its time alone leaves alone when it was set.
+      const confirmed = was?.needsReview === true && !needsReview;
+      const setAt = same && was.dueAt === dueAt && !confirmed ? (was.setAt ?? lastSave) : at;
+      return { id: reminderId, ...timing, dueAt, needsReview, setAt };
     });
     return reminders.sort((a, b) => a.dueAt.localeCompare(b.dueAt));
   }
@@ -347,7 +413,8 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
       const details = checked({ ...NO_DETAILS, ...given(sent) });
       const startsAt = startOf(details);
       const asked = (sent as { reminders?: unknown }).reminders;
-      const reminders = settled(asked ?? [STARTING_REMINDER], details, startsAt, [], false);
+      const now = clock.now().toISOString();
+      const reminders = settled(asked ?? [STARTING_REMINDER], details, startsAt, [], false, now);
       if (id !== undefined && id !== null) {
         if (typeof id !== 'string' || !ID.test(id))
           invalid("The Appointment's ID could not be read.");
@@ -364,7 +431,7 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
         if (already)
           invalid('That Appointment has already been saved. Open it from the list to change it.');
       }
-      const at = clock.now().toISOString();
+      const at = now;
       const appointment: Appointment = {
         id: id ?? crypto.randomUUID(),
         ...details,
@@ -390,16 +457,18 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
       const startsAt = startOf(details);
       const moved = details.date !== current.date || details.time !== current.time;
       const asked = (sent as { reminders?: unknown }).reminders;
+      const at = clock.now().toISOString();
       const reminders = settled(
         asked ?? current.reminders,
         details,
         startsAt,
         current.reminders,
         moved,
+        at,
+        current,
       );
       if (hasDetails(current, details) && sameReminders(current.reminders, reminders))
         return current;
-      const at = clock.now().toISOString();
       const appointment: Appointment = {
         ...current,
         ...details,
@@ -429,7 +498,7 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
 
     async deleteAppointment(by, id) {
       const current = await existing(id);
-      if (await store.textSentAbout(current.id))
+      if ((await store.textsAbout(current.id)).some(mayHaveReachedSusan))
         throw new CalendarRefusal(
           'texted',
           'Susan has already been texted about this Appointment, so it cannot be deleted. Cancel it instead.',
@@ -461,5 +530,188 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
       if (!link) return null;
       return calendarFeed(await store.everyAppointment());
     },
+
+    // Settings change no Appointment, so they leave no activity record.
+    async changeSettings(by, sent) {
+      if (typeof sent !== 'object' || sent === null || Array.isArray(sent))
+        invalid('The settings could not be read.');
+      const current = await store.settings();
+      const next = { ...current };
+      const given = sent as Record<string, unknown>;
+      for (const name of ['susansNumber', 'contactPhone'] as const) {
+        const value = given[name];
+        if (value === undefined) continue;
+        if (value !== null && typeof value !== 'string')
+          invalid('Write the number in digits.', name);
+        const typed = value?.trim() ?? '';
+        if (!typed) {
+          next[name] = null;
+          continue;
+        }
+        const number = usPhoneNumber(typed);
+        if (!number)
+          invalid(
+            name === 'susansNumber'
+              ? 'That is not a US mobile number. Enter its 10 digits, area code first.'
+              : 'That is not a US phone number. Enter its 10 digits, area code first.',
+            name,
+          );
+        next[name] = number;
+      }
+      if (given.contactName !== undefined) {
+        const value = given.contactName;
+        if (value !== null && typeof value !== 'string')
+          invalid('Write the name in words.', 'contactName');
+        const name = (value ?? '').replace(UNSEEN, '').replace(/\s+/g, ' ').trim();
+        if (name.length > CONTACT_NAME_LIMIT)
+          invalid(`Keep the name to ${CONTACT_NAME_LIMIT} characters or fewer.`, 'contactName');
+        next.contactName = name || null;
+      }
+      const same =
+        next.susansNumber === current.susansNumber &&
+        next.contactName === current.contactName &&
+        next.contactPhone === current.contactPhone;
+      if (same) return current;
+      const changed: CalendarSettings = {
+        ...next,
+        lastChanged: stamp(by, clock.now().toISOString()),
+      };
+      await store.keepSettings(changed);
+      return changed;
+    },
+
+    async sendTestText() {
+      const { susansNumber } = await store.settings();
+      if (!susansNumber)
+        throw new CalendarRefusal(
+          'noNumber',
+          "Enter Susan's mobile number first. Nothing is sent until it is set.",
+          'susansNumber',
+        );
+      const at = clock.now().toISOString();
+      const text = newText({
+        id: testTextId(at),
+        kind: 'test',
+        appointmentId: null,
+        reminderId: null,
+        words: TEST_TEXT_WORDS,
+        dueAt: at,
+      });
+      if (!(await store.claimText(text)))
+        throw new CalendarRefusal('invalid', 'A test text was sent just now. Wait a moment.');
+      return attempt(text, susansNumber);
+    },
+
+    async runDue() {
+      const now = clock.now();
+      const at = now.toISOString();
+      const [appointments, texts, { susansNumber }] = await Promise.all([
+        store.everyAppointment(),
+        store.everyText(),
+        store.settings(),
+      ]);
+      const kept = new Map(texts.map((text) => [text.id, text]));
+      const done: Text[] = [];
+
+      // Texts that were tried and might not have gone, and claims a run left behind.
+      const waiting = texts
+        .filter((text) => text.status === 'waiting')
+        .filter((text) => Date.parse(text.triedAt) <= now.getTime() - RETRY_AFTER)
+        .sort((a, b) => a.dueAt.localeCompare(b.dueAt));
+      for (const text of waiting) {
+        const appointment = appointments.find((each) => each.id === text.appointmentId);
+        let end: { status: 'failed' | 'notSent'; reason: TextReason } | null = null;
+        if (text.attempts >= SEND_ATTEMPTS) end = { status: 'failed', reason: 'gaveUp' };
+        else if (text.kind === 'reminder' && appointment?.state !== 'active')
+          end = { status: 'notSent', reason: 'cancelled' };
+        else if (text.kind === 'reminder' && appointment && at >= appointment.startsAt)
+          end = { status: 'failed', reason: 'tooLate' };
+        else if (!susansNumber) end = { status: 'failed', reason: 'noNumber' };
+        if (end) {
+          const ended: Text = { ...text, ...end, triedAt: at };
+          await store.replaceText(ended);
+          done.push(ended);
+          continue;
+        }
+        const again: Text = { ...text, attempts: text.attempts + 1, triedAt: at };
+        await store.replaceText(again);
+        done.push(await attempt(again, susansNumber!));
+      }
+
+      // Reminders that have come due.
+      const due = appointments
+        .flatMap((appointment) =>
+          appointment.reminders.map((reminder) => ({ appointment, reminder })),
+        )
+        .sort((a, b) => a.reminder.dueAt.localeCompare(b.reminder.dueAt));
+      for (const { appointment, reminder } of due) {
+        const plan = reminderPlan(appointment, reminder, now);
+        if (plan !== 'send' && plan !== 'tooLate') continue;
+        const id = reminderTextId(appointment, reminder);
+        if (kept.has(id)) continue;
+        const text = newText({
+          id,
+          kind: 'reminder',
+          appointmentId: appointment.id,
+          reminderId: reminder.id,
+          // The day in words is right for the moment it goes out, which is now if it is late.
+          words: reminderWords(
+            appointment,
+            { dueAt: plan === 'send' ? at : reminder.dueAt },
+            timeZone,
+          ),
+          dueAt: reminder.dueAt,
+        });
+        if (plan === 'tooLate' || !susansNumber) {
+          const reason: TextReason = plan === 'tooLate' ? 'tooLate' : 'noNumber';
+          const notSent: Text = { ...text, status: 'notSent', reason, attempts: 0 };
+          if (await store.claimText(notSent)) done.push(notSent);
+          continue;
+        }
+        if (!(await store.claimText(text))) continue;
+        done.push(await attempt(text, susansNumber));
+      }
+      return done;
+    },
   };
+
+  /** The record of a text about to be tried for the first time. */
+  function newText(
+    about: Pick<Text, 'id' | 'kind' | 'appointmentId' | 'reminderId' | 'words' | 'dueAt'>,
+  ): Text {
+    return {
+      ...about,
+      status: 'waiting',
+      reason: null,
+      attempts: 1,
+      triedAt: clock.now().toISOString(),
+      sentAt: null,
+      reference: null,
+    };
+  }
+
+  /**
+   * Tries to send a text whose record says it is being tried, and records what became of it. When
+   * nobody can tell whether it went, it is left waiting to be tried again, until it has been tried
+   * SEND_ATTEMPTS times.
+   */
+  async function attempt(text: Text, to: string): Promise<Text> {
+    let next: Text;
+    try {
+      const result = await textSender.send({ to, words: text.words });
+      next = result.sent
+        ? {
+            ...text,
+            status: 'sent',
+            sentAt: clock.now().toISOString(),
+            reference: result.reference,
+          }
+        : { ...text, status: 'failed', reason: 'refused' };
+    } catch {
+      if (text.attempts < SEND_ATTEMPTS) return text;
+      next = { ...text, status: 'failed', reason: 'gaveUp' };
+    }
+    await store.replaceText(next);
+    return next;
+  }
 }

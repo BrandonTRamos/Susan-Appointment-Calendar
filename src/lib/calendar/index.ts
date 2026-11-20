@@ -10,9 +10,17 @@ export {
   type SubscriptionLink,
 } from './subscription';
 export { CalendarRefusal, createCalendarCore } from './core';
-export type { CalendarCore, CalendarCoreOptions, RefusalField, RefusalReason } from './core';
+export type {
+  CalendarCore,
+  CalendarCoreOptions,
+  RefusalField,
+  RefusalReason,
+  SettingName,
+  SettingsChanges,
+} from './core';
 export * from './reminders';
-export { createFixedClock, createMemoryStore } from './memory';
-export type { FixedClock, MemoryStore } from './memory';
-export { systemClock } from './ports';
-export type { Clock, Store } from './ports';
+export * from './texts';
+export { createFixedClock, createMemoryStore, createStandInSender } from './memory';
+export type { FixedClock, MemoryStore, StandInSender, StandInText } from './memory';
+export { NO_TEXT_SENDER, systemClock } from './ports';
+export type { Clock, SendResult, Store, TextSender } from './ports';
