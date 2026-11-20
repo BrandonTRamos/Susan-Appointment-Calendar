@@ -3,15 +3,16 @@
 // backend.
 
 import type { Schema } from '../../amplify/data/resource';
-import type { Appointment, Detail, RefusalReason, Stamp } from './calendar';
+import type { Appointment, Detail, MadeSubscriptionLink, RefusalReason, Stamp } from './calendar';
 
 /**
- * What a command answers with: the Appointment as it now is (null once deleted), or the core's
- * refusal. A refusal is an answer, not an error, so that it reaches the person in the core's own
+ * What a command answers with: the Appointment as it now is (null once deleted), the subscription
+ * link just made (null once switched off), or the core's refusal. A refusal is an answer, not an error, so that it reaches the person in the core's own
  * words; an error means the command may not have been carried out at all.
  */
 export type CommandAnswer =
   | { appointment: Appointment | null }
+  | { subscriptionLink: MadeSubscriptionLink | null }
   | { refusal: { reason: RefusalReason; message: string; detail?: Detail } };
 
 /** Said when a command failed for a reason that is nobody's mistake. */

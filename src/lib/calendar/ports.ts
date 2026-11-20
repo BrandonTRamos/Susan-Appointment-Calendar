@@ -4,6 +4,7 @@
 // Later tickets add the text sender and the Admin messenger here.
 
 import type { ActivityRecord, Appointment } from './appointment';
+import type { SubscriptionLink } from './subscription';
 
 /** Where calendar data is kept. Only the core writes through it. */
 export interface Store {
@@ -18,6 +19,16 @@ export interface Store {
   /** Whether any text about the Appointment has gone to Susan. */
   textSentAbout(appointmentId: string): Promise<boolean>;
   recordActivity(record: ActivityRecord): Promise<void>;
+  /** Every Appointment in the calendar, active and cancelled, in any order. */
+  everyAppointment(): Promise<Appointment[]>;
+  /** The person's subscription link, or null when they have none. */
+  subscriptionLinkOf(personId: string): Promise<SubscriptionLink | null>;
+  /** The subscription link with this hash, or null when there is none. */
+  subscriptionLinkByHash(hash: string): Promise<SubscriptionLink | null>;
+  /** Keeps a person's subscription link in place of any they had. */
+  keepSubscriptionLink(link: SubscriptionLink): Promise<void>;
+  /** Removes the person's subscription link, if they have one. */
+  removeSubscriptionLink(personId: string): Promise<void>;
 }
 
 /** What time it is. */

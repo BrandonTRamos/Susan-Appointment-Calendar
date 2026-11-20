@@ -2,6 +2,13 @@
 // this one.
 
 export * from './appointment';
+export { calendarFeed, FEED_NAME } from './feed';
+export {
+  isSubscriptionSecret,
+  subscriptionAddress,
+  type MadeSubscriptionLink,
+  type SubscriptionLink,
+} from './subscription';
 export { CalendarRefusal, createCalendarCore } from './core';
 export type { CalendarCore, CalendarCoreOptions, RefusalReason } from './core';
 export { createFixedClock, createMemoryStore } from './memory';
