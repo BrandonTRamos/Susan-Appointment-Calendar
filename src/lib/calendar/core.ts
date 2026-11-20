@@ -5,6 +5,7 @@
 // It reaches the outside world only through its ports (ports.ts) and holds no provider-specific
 // code: it runs the same in a backend function, in the browser on sample data, and in a test.
 
+import { failureKind } from '../failure';
 import { formatDate, formatTime, isDate, isTime, momentOf } from '../localTime';
 import { activityUpdate } from './activityUpdate';
 import {
@@ -398,12 +399,8 @@ export function createCalendarCore({
       const to = [...new Set(await messenger.admins())].filter((id) => id !== by.person.id);
       if (to.length) await messenger.sendAppNotification(to, update);
     } catch (error) {
-      const e = error instanceof Error ? error : null;
-      console.error(
-        'Activity update could not be sent',
-        e?.name ?? 'Unknown error',
-        e?.message.slice(0, 300) ?? '',
-      );
+      // Fixed words only: the error is not repeated (src/lib/failure.ts).
+      console.error(`Activity update could not be sent (${failureKind(error)})`);
     }
   }
 
@@ -636,23 +633,15 @@ export function createCalendarCore({
         .filter((text) => Date.parse(text.triedAt) <= now.getTime() - RETRY_AFTER)
         .sort((a, b) => a.dueAt.localeCompare(b.dueAt));
       for (const text of waiting) {
-        const appointment = appointments.find((each) => each.id === text.appointmentId);
-        let end: { status: 'failed' | 'notSent'; reason: TextReason } | null = null;
-        if (text.attempts >= SEND_ATTEMPTS) end = { status: 'failed', reason: 'gaveUp' };
-        else if (text.kind === 'reminder' && appointment?.state !== 'active')
-          end = { status: 'notSent', reason: 'cancelled' };
-        else if (text.kind === 'reminder' && appointment && at >= appointment.startsAt)
-          end = { status: 'failed', reason: 'tooLate' };
-        else if (!susansNumber) end = { status: 'failed', reason: 'noNumber' };
-        if (end) {
-          const ended: Text = { ...text, ...end, triedAt: at };
-          await store.replaceText(ended);
-          done.push(ended);
-          continue;
-        }
-        const again: Text = { ...text, attempts: text.attempts + 1, triedAt: at };
-        await store.replaceText(again);
-        done.push(await attempt(again, susansNumber!));
+        const retry = retrying(text, appointments, now, Boolean(susansNumber));
+        if (retry === 'hold') continue;
+        // Taken up only if no other run has taken it up since it was read.
+        const next: Text =
+          'reason' in retry
+            ? { ...text, status: 'failed', reason: retry.reason, triedAt: at }
+            : { ...text, words: retry.words, attempts: text.attempts + 1, triedAt: at };
+        if (!(await store.retakeText(next, text))) continue;
+        done.push('reason' in retry ? next : await attempt(next, susansNumber!));
       }
 
       // Reminders that have come due.
@@ -691,6 +680,35 @@ export function createCalendarCore({
       return done;
     },
   };
+
+  /**
+   * What to do with a text that was tried and might not have gone, now that it is due to be tried
+   * again: try it, with the words it would now have; hold it; or give it up as failed, since its
+   * earlier try may still have reached Susan. A Reminder is tried again only while it is still the
+   * same Reminder at the same time, on an Appointment that is active and has not started, and not
+   * while it is flagged for review.
+   */
+  function retrying(
+    text: Text,
+    appointments: readonly Appointment[],
+    now: Date,
+    numberSet: boolean,
+  ): 'hold' | { reason: TextReason } | { words: string } {
+    if (text.attempts >= SEND_ATTEMPTS) return { reason: 'gaveUp' };
+    if (text.kind !== 'reminder') return numberSet ? { words: text.words } : { reason: 'noNumber' };
+    const appointment = appointments.find((each) => each.id === text.appointmentId);
+    if (!appointment || appointment.state !== 'active') return { reason: 'cancelled' };
+    if (now.toISOString() >= appointment.startsAt) return { reason: 'tooLate' };
+    const reminder = appointment.reminders.find((each) => each.id === text.reminderId);
+    if (!reminder || reminderTextId(appointment, reminder) !== text.id)
+      return { reason: 'outdated' };
+    const plan = reminderPlan(appointment, reminder, now);
+    if (plan === 'heldForReview') return 'hold';
+    if (plan !== 'send') return { reason: 'outdated' };
+    if (!numberSet) return { reason: 'noNumber' };
+    // Its details may have changed since it was first tried: a Reminder carries them as they are.
+    return { words: reminderWords(appointment, { dueAt: now }, timeZone) };
+  }
 
   /** The record of a text about to be tried for the first time. */
   function newText(

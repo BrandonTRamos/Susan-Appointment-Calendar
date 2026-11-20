@@ -60,6 +60,10 @@ function failedBecause(text: Text): string {
       return 'Sending did not go through before the Appointment started.';
     case 'noNumber':
       return "Susan's mobile number was taken out of Settings before it went.";
+    case 'cancelled':
+      return 'The Appointment was cancelled before sending went through.';
+    case 'outdated':
+      return 'Its Reminder was changed or removed before sending went through.';
     default:
       return `Sending did not go through after ${SEND_ATTEMPTS} tries.`;
   }
@@ -79,6 +83,19 @@ function notSentBecause(text: Text): string {
 /** What will become of a Reminder that has no text recorded yet. */
 export function planStatus(plan: ReminderPlan): StatusWords {
   switch (plan) {
+    case 'awaitingReview':
+      return {
+        label: 'Waiting for review',
+        detail:
+          'The Appointment moved, so this goes out only once someone keeps its time or changes it.',
+        trouble: true,
+      };
+    case 'heldForReview':
+      return {
+        label: 'Not sent',
+        detail: 'Its time came while it was waiting for review.',
+        trouble: true,
+      };
     case 'later':
       return { label: 'Waiting', detail: null, trouble: false };
     case 'send':

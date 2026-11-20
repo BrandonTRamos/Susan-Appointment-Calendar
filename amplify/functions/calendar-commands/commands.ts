@@ -3,7 +3,7 @@
 
 import { CalendarRefusal, type Actor, type CalendarCore } from '../../../src/lib/calendar';
 import { COMMAND_FAILED, type CommandAnswer } from '../../../src/lib/calendarApi';
-import { describeError } from '../../calendar/log';
+import { logFailure } from '../../calendar/log';
 import type { FindName } from '../../calendar/people';
 
 /** What the data API hands a function for one mutation. */
@@ -20,6 +20,18 @@ export interface CommandDependencies {
   core: () => Promise<CalendarCore>;
   nameOf: FindName;
 }
+
+/** The commands, as the data API names them: the only names a log may repeat. */
+const COMMANDS = new Set([
+  'addAppointment',
+  'changeAppointment',
+  'cancelAppointment',
+  'removeAppointment',
+  'makeSubscriptionLink',
+  'switchOffSubscriptionLink',
+  'changeSettings',
+  'sendTestText',
+]);
 
 /** Shown when the account has no usable name. The owner gives every account one. */
 const NO_NAME = 'Someone';
@@ -91,9 +103,15 @@ export function calendarCommandHandler({ core, nameOf }: CommandDependencies) {
         const { reason, message, detail } = error;
         return { refusal: { reason, message, detail } };
       }
-      // What broke and where, and nothing about the Appointment, a link, a number or a text.
-      console.error('Calendar command failed', String(command), ...describeError(error));
-      throw new Error(COMMAND_FAILED, { cause: error });
+      // Fixed words only: which command, from the list, and the kind of failure. The error can
+      // quote the Appointment, a link, Susan's number or a text, so neither it nor its cause goes
+      // on: the data API is handed a fresh error that says only to try again.
+      logFailure(
+        `Calendar command ${COMMANDS.has(String(command)) ? command : '(unknown)'}`,
+        error,
+      );
+      // eslint-disable-next-line preserve-caught-error -- the cause could quote a number or a text
+      throw new Error(COMMAND_FAILED);
     }
   };
 }

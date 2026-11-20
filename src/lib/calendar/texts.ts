@@ -16,10 +16,18 @@ export const TEXT_STATUSES = ['waiting', 'sent', 'delivered', 'failed', 'notSent
  */
 export type TextStatus = (typeof TEXT_STATUSES)[number];
 
-export const TEXT_REASONS = ['noNumber', 'tooLate', 'cancelled', 'refused', 'gaveUp'] as const;
+export const TEXT_REASONS = [
+  'noNumber',
+  'tooLate',
+  'cancelled',
+  'outdated',
+  'refused',
+  'gaveUp',
+] as const;
 /**
  * Why a text failed or was not sent. noNumber: Susan's mobile number is not set. tooLate: the
  * Appointment had started. cancelled: the Appointment was cancelled while the text waited.
+ * outdated: its Reminder was removed, or its time changed, while it waited to be tried again.
  * refused: the text sender would not take it. gaveUp: sending failed every time it was tried.
  */
 export type TextReason = (typeof TEXT_REASONS)[number];
@@ -91,6 +99,9 @@ export const testTextId = (at: string) => `test:${at}`;
 /**
  * What becomes of a Reminder, as things stand at `now`, before any text for it is recorded:
  *
+ * - awaitingReview: it is an exact-time Reminder flagged for review since its Appointment moved,
+ *   and its time has not come. It goes out only once someone keeps or changes its time.
+ * - heldForReview: its time came while it was still flagged for review, so it was not sent.
  * - later: its time has not come.
  * - send: it is due, or overdue while the Appointment has not started.
  * - tooLate: its time came and went and the Appointment has now started: recorded as not sent.
@@ -100,7 +111,14 @@ export const testTextId = (at: string) => `test:${at}`;
  * - cancelled: the Appointment is cancelled, so no Reminder for it is sent.
  */
 export type ReminderPlan =
-  'later' | 'send' | 'tooLate' | 'pastWhenSet' | 'beforeTexts' | 'cancelled';
+  | 'awaitingReview'
+  | 'heldForReview'
+  | 'later'
+  | 'send'
+  | 'tooLate'
+  | 'pastWhenSet'
+  | 'beforeTexts'
+  | 'cancelled';
 
 /**
  * When a Reminder's time was last worked out. One kept before the calendar recorded that is taken
@@ -117,8 +135,11 @@ export function reminderPlan(
 ): ReminderPlan {
   if (appointment.state === 'cancelled') return 'cancelled';
   const due = Date.parse(reminder.dueAt);
+  // Flagged so that it does not go out at a time that may no longer make sense (story 38).
+  if (reminder.needsReview) return due > now.getTime() ? 'awaitingReview' : 'heldForReview';
   if (due > now.getTime()) return 'later';
-  if (due <= Date.parse(reminderSetAt(appointment, reminder))) return 'pastWhenSet';
+  // Only a time already past when it was set; one set for that very moment is due, not past.
+  if (due < Date.parse(reminderSetAt(appointment, reminder))) return 'pastWhenSet';
   if (now.getTime() < Date.parse(appointment.startsAt)) return 'send';
   return reminder.setAt === null ? 'beforeTexts' : 'tooLate';
 }
@@ -126,7 +147,8 @@ export function reminderPlan(
 /**
  * Whether a text may have reached Susan: anything sent or being sent, and anything that failed
  * after it was tried, unless the text sender refused it outright. Only a text the calendar chose
- * not to send, or one refused, certainly did not.
+ * not to send, or one refused, certainly did not. A text that waited to be tried again and was then
+ * given up, for whatever reason, counts as failed: its earlier try may have gone.
  */
 export function mayHaveReachedSusan(text: Text): boolean {
   if (text.status === 'notSent') return false;

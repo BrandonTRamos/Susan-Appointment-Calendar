@@ -26,7 +26,13 @@ export interface Store {
    * of two runs claiming the same text only one can. Answers whether this one was kept.
    */
   claimText(text: Text): Promise<boolean>;
-  /** Replaces the record of a text with this one. */
+  /**
+   * Replaces the record of a text with `next`, only if it is still waiting with the tries and last
+   * try `current` has: in one step, so that of two runs taking up the same waiting text only one
+   * can. Answers whether it was replaced.
+   */
+  retakeText(next: Text, current: Text): Promise<boolean>;
+  /** Replaces the record of a text that this run holds, by its claim or retake, with this one. */
   replaceText(text: Text): Promise<void>;
   /** Where texts go, and who Susan is told to call; NO_SETTINGS until someone sets them. */
   settings(): Promise<CalendarSettings>;

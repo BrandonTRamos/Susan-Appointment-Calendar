@@ -76,7 +76,7 @@ signed-in person can change anything, nobody signed in can read the devices app 
 or the key that signs them, the app-notifications function reaches nothing else, a device is only
 ever deleted on a condition checked as it is deleted, no rule tells Susan from an Admin, one
 scheduled run sends texts every minute and never overlaps itself, a text is claimed by creating its
-record, which fails when it is already there, every table can be restored to a point in time, and
+record, which fails when it is already there, and taken up again only by a conditional write, every table can be restored to a point in time, and
 everything carries the cost tag.
 
 ## How the calendar is kept
@@ -114,9 +114,12 @@ failed or not sent. The Appointment's screen shows each Reminder's status and ev
   sent once it has. One whose time had already passed when it was set is never sent. None is sent
   for a cancelled Appointment.
 - Only one run goes at a time, and each text is claimed before it is sent, so none goes twice. A
-  send that might not have gone through is tried again, up to three times.
+  send that might not have gone through is tried again, up to three times, by whichever run takes
+  it up first, and only while its Reminder is still the same and its Appointment has not started.
+- An exact-time Reminder flagged for review because its Appointment moved is not sent until
+  someone keeps it or changes it.
 - Logs never hold Susan's number or the words of a text: they say only how many texts ended up in
-  each status, and what broke.
+  each status, and, when something fails, which operation and what kind of failure.
 
 ## Calendar subscription
 

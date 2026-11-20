@@ -118,6 +118,23 @@ describe.each(['phone', 'desktop'] as const)(
       expect(await inReminders('Sent')).toBeTruthy();
     });
 
+    it('shows an exact-time Reminder flagged by a move as waiting for review, not plain waiting', async () => {
+      const calendar = createSampleCalendar(EASTERN, { empty: true });
+      const added = await calendar.core.addAppointment(linda, {
+        what: 'Eye exam',
+        date: daysFromToday(4),
+        time: '15:30',
+        reminders: [{ shape: 'at', date: daysFromToday(4), time: '09:00' }],
+      });
+      await calendar.core.changeAppointment(linda, added.id, { time: '16:30' });
+      renderApp(`/appointments/${added.id}`, { calendar });
+      expect(await inReminders('Waiting for review')).toBeTruthy();
+      expect(
+        await inReminders(/goes out only once someone keeps its time or changes it/),
+      ).toBeTruthy();
+      expect(screen.queryByText('Waiting')).not.toBeInTheDocument();
+    });
+
     it('says a cancelled Appointment sends none', async () => {
       const calendar = createSampleCalendar(EASTERN, { empty: true });
       const added = await calendar.core.addAppointment(linda, {

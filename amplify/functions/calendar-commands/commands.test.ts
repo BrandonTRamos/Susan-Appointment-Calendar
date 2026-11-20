@@ -6,7 +6,9 @@ import {
   createMemoryStore,
   type Appointment,
   createStandInSender,
+  type CalendarCore,
 } from '../../../src/lib/calendar';
+import { COMMAND_FAILED } from '../../../src/lib/calendarApi';
 import { calendarCommandHandler, type CommandEvent } from './commands';
 
 const checkUp = { what: 'Cardiology check-up', date: '2026-11-20', time: '14:00' };
@@ -247,9 +249,44 @@ describe('when a command cannot be carried out', () => {
       }),
     ).rejects.toThrow('Could not save the change. Check your connection and try again.');
     const words = logged.mock.calls.flat().join(' ');
-    expect(words).toContain('The data API is not answering');
+    expect(words).toBe('Calendar command addAppointment failed (data)');
     expect(words).not.toContain('Cardiology');
     expect(words).not.toContain('12345');
+  });
+
+  it("never lets a number or a text's words out, in the log or in the error the data API gets", async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const leak =
+      "Could not send Susan's Calendar: Eye exam with Dr. Chen, tomorrow at 3:30 pm to 555 555 0123";
+    const handler = calendarCommandHandler({
+      core: async () =>
+        ({
+          sendTestText: async () => {
+            throw new Error(leak);
+          },
+        }) as unknown as CalendarCore,
+      nameOf: async () => 'Linda',
+    });
+    const thrown = await handler({
+      fieldName: 'sendTestText',
+      arguments: {},
+      identity: linda,
+    }).then(
+      () => null,
+      (error: unknown) => error as Error,
+    );
+    expect(thrown?.message).toBe(COMMAND_FAILED);
+    expect(thrown?.cause).toBeUndefined();
+    expect(thrown?.stack).not.toMatch(/555|Eye exam/);
+    const words = logged.mock.calls.flat().join(' ');
+    expect(words).toBe('Calendar command sendTestText failed (unknown)');
+  });
+
+  it('names no command in the log that the calendar does not have', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { call } = commands();
+    await expect(call('call 555 555 0123', {})).rejects.toThrow(/Could not save/);
+    expect(logged.mock.calls.flat().join(' ')).toBe('Calendar command (unknown) failed (unknown)');
   });
 
   it('a command the calendar does not have is a failure', async () => {

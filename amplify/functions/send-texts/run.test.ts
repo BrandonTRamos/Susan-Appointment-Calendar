@@ -6,6 +6,7 @@ import {
   createMemoryStore,
   createStandInSender,
   type Actor,
+  type CalendarCore,
 } from '../../../src/lib/calendar';
 import { sendTextsHandler } from './run';
 
@@ -55,18 +56,29 @@ describe('the scheduled run', () => {
     expect(logged).not.toHaveBeenCalled();
   });
 
-  it("fails without putting Susan's number or a text's words in the logs", async () => {
+  it("fails without putting Susan's number or a text's words in the log or the error", async () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // An error that repeats, unquoted, what it was sent.
+    const leak = new Error(
+      "Could not send Susan's Calendar: Cardiology check-up, tomorrow at 2:00 pm to +1 555 555 0123",
+    );
     const handler = sendTextsHandler({
-      core: async () => {
-        throw new Error(
-          'Could not write {"to":"+15555550123","words":"Susan\'s Calendar: Cardiology check-up"}',
-        );
-      },
+      core: async () =>
+        ({
+          runDue: async () => {
+            throw leak;
+          },
+        }) as unknown as CalendarCore,
     });
-    await expect(handler()).rejects.toThrow();
-    const words = logged.mock.calls.flat().join(' ');
-    expect(words).toMatch(/Texts run failed/);
-    expect(words).not.toMatch(/555|Cardiology/);
+    const thrown = await handler().then(
+      () => null,
+      (error: unknown) => error as Error,
+    );
+    // What Lambda reports is a fresh error, with nothing of the first.
+    expect(thrown).not.toBe(leak);
+    expect(thrown?.message).toBe('Texts run failed (unknown)');
+    expect(thrown?.cause).toBeUndefined();
+    expect(`${thrown?.stack}`).not.toMatch(/555|Cardiology/);
+    expect(logged.mock.calls.flat().join(' ')).toBe('Texts run failed (unknown)');
   });
 });

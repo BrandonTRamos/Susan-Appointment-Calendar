@@ -101,6 +101,7 @@ export function feedStore(reader: TableReader, tables: FeedTables): Store {
     everyText: async () => notRead(),
     settings: async () => notRead(),
     claimText: async () => readOnly(),
+    retakeText: async () => readOnly(),
     replaceText: async () => readOnly(),
     keepSettings: async () => readOnly(),
     addAppointment: async () => readOnly(),

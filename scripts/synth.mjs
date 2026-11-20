@@ -266,7 +266,9 @@ function scheduledFunction() {
     .filter(([, resource]) => resource.Type === 'AWS::Lambda::EventInvokeConfig')
     .map(([, resource]) => resource.Properties)
     .filter((config) => config.FunctionName?.Ref === name);
-  return { schedules, properties: lambda?.Properties ?? {}, invoke };
+  const asset = /^([0-9a-f]{64})\.zip$/.exec(lambda?.Properties.Code?.S3Key ?? '')?.[1];
+  const code = asset ? readFileSync(join(out, `asset.${asset}`, 'index.mjs'), 'utf8') : '';
+  return { schedules, properties: lambda?.Properties ?? {}, invoke, code };
 }
 
 /** The words of the step that writes a data API operation's row: the one that holds its condition. */
@@ -311,6 +313,7 @@ function checks() {
   const feed = feedFunction();
   const run = scheduledFunction();
   const claim = writeStep('Mutation', 'createText');
+  const retake = writeStep('Mutation', 'updateText');
   const mutations = openToSignedIn('Mutation');
   const subscriptions = openToSignedIn('Subscription');
   const tables = resources('Custom::AmplifyDynamoDBTable');
@@ -513,6 +516,16 @@ function checks() {
       'a text is claimed by creating its record, which fails when the record is already there',
       /"id":\s*\{\s*"attributeExists":\s*false\s*\}/.test(claim) &&
         /"condition":\s*\$condition/.test(claim),
+    ],
+    [
+      // The retake (retakeText in amplify/calendar/data-store.ts): a waiting text is tried again
+      // only by the run whose write finds it still as it was read, so two runs cannot both try it.
+      'a waiting text is taken up again only by a write whose condition holds as it is written',
+      retake.includes('"operation": "UpdateItem"') &&
+        retake.includes('$util.qr($ctx.stash.conditions.add($args.condition))') &&
+        retake.includes('$util.qr($UpdateItem.put("condition", $Conditions))') &&
+        run.code.includes('updateText(input: $input, condition: $condition)') &&
+        /status:\s*\{\s*eq:\s*"waiting"\s*\}/.test(run.code),
     ],
     [
       // The feed has the only public address. Its link is checked inside the function.

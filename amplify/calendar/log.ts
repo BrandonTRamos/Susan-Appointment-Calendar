@@ -1,19 +1,12 @@
-// What a backend function may say about a failure in its logs: what broke and where, and never
-// Susan's number or the words of a text. Errors from the data API or a text sender can quote what
-// they were sent, so quoted words and anything that looks like a phone number are blanked out.
+// What a backend function may say when something fails where Susan's number or the words of a text
+// could be involved: the operation, from a fixed list, and the kind of failure (src/lib/failure.ts).
+// Never the error's message, its stack or its cause, which can quote what it was sent.
 
-/** Runs of seven or more digits, with the spaces and marks people write numbers with. */
-const NUMBER = /\+?\d[\d\s().-]{5,}\d/g;
-/** Anything in quotes. */
-const QUOTED = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|“[^”]*”/g;
+import { failureKind } from '../../src/lib/failure';
 
-/** A failure as the logs may show it. */
-export function describeError(error: unknown): string[] {
-  const e = error instanceof Error ? error : null;
-  const blank = (words: string) => words.replace(QUOTED, '"…"').replace(NUMBER, '#');
-  return [
-    e?.name ?? 'Unknown error',
-    blank(e?.message ?? '').slice(0, 300),
-    blank(e?.stack?.split('\n').slice(1, 6).join(' | ') ?? ''),
-  ];
+/** Logs that the operation failed, and how, in fixed words. Answers the words it logged. */
+export function logFailure(what: string, error: unknown): string {
+  const said = `${what} failed (${failureKind(error)})`;
+  console.error(said);
+  return said;
 }

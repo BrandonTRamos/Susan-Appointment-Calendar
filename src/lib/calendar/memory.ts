@@ -68,6 +68,17 @@ export function createMemoryStore(): MemoryStore {
       changed();
       return true;
     },
+    async retakeText(next, current) {
+      const kept = texts.get(next.id);
+      const still =
+        kept?.status === 'waiting' &&
+        kept.attempts === current.attempts &&
+        kept.triedAt === current.triedAt;
+      if (!still) return false;
+      texts.set(next.id, structuredClone(next));
+      changed();
+      return true;
+    },
     async replaceText(text) {
       texts.set(text.id, structuredClone(text));
       changed();

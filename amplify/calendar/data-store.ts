@@ -37,7 +37,25 @@ export interface DataClient {
     Text: Pick<Models['Text'], 'list' | 'create' | 'update' | 'textsByAppointment'>;
     CalendarSettings: Pick<Models['CalendarSettings'], 'get' | 'create' | 'update'>;
   };
+  /**
+   * A raw data API operation, for a write that carries a condition: the models' own `update`
+   * cannot, and the data API's can. The client throws the whole answer when it carries errors.
+   */
+  graphql(options: { query: string; variables: Record<string, unknown> }): Promise<unknown>;
 }
+
+/**
+ * Replaces a text's record only if, as DynamoDB writes it, it is still as the condition says: the
+ * data API adds `condition` to its own check that the row exists, in the one conditional write
+ * (`npm run synth` checks that its resolver does).
+ */
+const RETAKE_TEXT = /* GraphQL */ `
+  mutation RetakeText($input: UpdateTextInput!, $condition: ModelTextConditionInput!) {
+    updateText(input: $input, condition: $condition) {
+      id
+    }
+  }
+`;
 
 interface DataError {
   message: string;
@@ -49,7 +67,10 @@ function check<T>(result: { data: T; errors?: readonly DataError[] }): T {
   return result.data;
 }
 
-/** Whether a create failed only because a row with its ID is already there. */
+/**
+ * Whether a write failed only because DynamoDB refused its condition: for a create, that a row
+ * with its ID is already there; for a retake, that the row is no longer as it was read.
+ */
 const alreadyThere = (errors: readonly DataError[] | undefined) =>
   Boolean(errors?.length) &&
   errors!.every((error) => /ConditionalCheckFailed/.test(error.errorType ?? error.message));
@@ -125,6 +146,29 @@ export function dataStore(client: DataClient): Store {
       check(result);
       return true;
     },
+    // Only if no other run has taken it up since it was read: still waiting, after the same tries.
+    async retakeText(next, current) {
+      const condition = {
+        and: [
+          { status: { eq: 'waiting' } },
+          { attempts: { eq: current.attempts } },
+          { triedAt: { eq: current.triedAt } },
+        ],
+      };
+      let answer: { errors?: readonly DataError[] };
+      try {
+        answer = (await client.graphql({
+          query: RETAKE_TEXT,
+          variables: { input: next, condition },
+        })) as { errors?: readonly DataError[] };
+      } catch (thrown) {
+        if (!(thrown && typeof thrown === 'object' && 'errors' in thrown)) throw thrown;
+        answer = thrown as { errors?: readonly DataError[] };
+      }
+      if (!answer.errors?.length) return true;
+      if (alreadyThere(answer.errors)) return false;
+      throw new Error(answer.errors.map((e) => e.message).join('; '));
+    },
     async replaceText(text: Text) {
       check(await Text.update(text));
     },
@@ -182,5 +226,6 @@ export async function connectDataApi(env: NodeJS.ProcessEnv = process.env) {
 
 /** The store for a backend function that the data schema lets call the data API. */
 export async function createDataStore(env: NodeJS.ProcessEnv = process.env): Promise<Store> {
-  return dataStore(await connectDataApi(env));
+  // The data API's own client type is too deep to compare against the narrow one.
+  return dataStore((await connectDataApi(env)) as unknown as DataClient);
 }

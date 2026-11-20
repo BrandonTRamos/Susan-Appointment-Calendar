@@ -113,6 +113,29 @@ function dataApi() {
       },
       CalendarSettings: model(tables.CalendarSettings),
     },
+    // Only the conditional update of a text, as DynamoDB checks it: every `eq` in the condition
+    // must hold of the row as it is when written. The client throws an answer that has errors.
+    async graphql({ query, variables }: { query: string; variables: Record<string, unknown> }) {
+      if (!query.includes('updateText(input: $input, condition: $condition)'))
+        throw new Error('This stand-in only answers a conditional updateText.');
+      const input = variables.input as Row;
+      const { and } = variables.condition as { and: Record<string, { eq: unknown }>[] };
+      const row = tables.Text.get(input.id);
+      const holds =
+        row && and.every((each) => Object.entries(each).every(([f, { eq }]) => row[f] === eq));
+      if (!holds)
+        throw {
+          data: null,
+          errors: [
+            {
+              errorType: 'DynamoDB:ConditionalCheckFailedException',
+              message: 'The conditional request failed (Service: DynamoDb, Status Code: 400)',
+            },
+          ],
+        };
+      tables.Text.set(input.id, { ...row, ...input });
+      return { data: { updateText: { id: input.id } } };
+    },
   } as unknown as DataClient;
   return {
     client,
@@ -264,6 +287,33 @@ describe('the calendar kept in the data API', () => {
     expect(api.texts()).toMatchObject([{ id: text.id, status: 'sent' }]);
     expect(await store.claimText({ ...text, status: 'waiting' })).toBe(false);
     expect(await store.everyText()).toEqual([text]);
+  });
+
+  it('takes up a waiting text only while it is as it was read, through a conditional write', async () => {
+    const { store, core } = calendar();
+    await core.changeSettings(linda, { susansNumber: '555 555 0123' });
+    const waiting = {
+      id: 'test:2026-11-19T20:00:00.000Z',
+      kind: 'test' as const,
+      appointmentId: null,
+      reminderId: null,
+      words: "Susan's Calendar: This is a test text.",
+      dueAt: '2026-11-19T20:00:00.000Z',
+      status: 'waiting' as const,
+      reason: null,
+      attempts: 1,
+      triedAt: '2026-11-19T20:00:00.000Z',
+      sentAt: null,
+      reference: null,
+    };
+    await store.claimText(waiting);
+    const again = { ...waiting, attempts: 2, triedAt: '2026-11-19T20:02:00.000Z' };
+    expect(await store.retakeText(again, waiting)).toBe(true);
+    // A second run read it before the first took it up: its retake is refused.
+    expect(await store.retakeText({ ...again, triedAt: '2026-11-19T20:02:01.000Z' }, waiting)).toBe(
+      false,
+    );
+    expect(await store.everyText()).toEqual([again]);
   });
 
   it('finds the texts about an Appointment, which decide whether it can be deleted', async () => {
