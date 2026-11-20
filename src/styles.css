@@ -32,8 +32,9 @@
   --shadow: 0 1px 2px rgba(16, 20, 30, 0.04), 0 4px 16px rgba(16, 20, 30, 0.05);
   --radius: 16px;
   --radius-control: 12px;
-  /* The phone tab bar's height, without the home-bar inset. */
-  --tabbar: 68px;
+  /* The floating phone tab bar and its clearance from the bottom edge. */
+  --tabbar: 76px;
+  --tabbar-gap: max(12px, calc(env(safe-area-inset-bottom) - 6px));
   /* Room taken at the top by "A new version is available"; none unless it is showing. */
   --update-banner: 0px;
   color-scheme: light;
@@ -246,7 +247,7 @@ p {
 /* ---------- phone layout: one column, tabs along the bottom ---------- */
 .app.phone {
   min-height: 100dvh;
-  padding-bottom: calc(var(--tabbar) + env(safe-area-inset-bottom));
+  padding-bottom: calc(var(--tabbar) + var(--tabbar-gap) + 12px);
 }
 /* An Appointment and its form fill the screen: no tab bar. */
 .app.phone.full-screen {
@@ -258,17 +259,22 @@ p {
 }
 .tabbar {
   position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  left: 16px;
+  right: 16px;
+  bottom: var(--tabbar-gap);
   z-index: 10;
-  padding-bottom: env(safe-area-inset-bottom);
-  background: var(--surface);
-  border-top: 1px solid var(--border);
+  height: var(--tabbar);
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  box-shadow: var(--shadow);
 }
 .tabbar nav {
   display: flex;
-  height: var(--tabbar);
+  height: 100%;
 }
 .tabbar a {
   flex: 1;
@@ -278,13 +284,15 @@ p {
   align-items: center;
   justify-content: center;
   gap: 3px;
+  border-radius: 999px;
   font-size: 14px;
   font-weight: 600;
   color: var(--muted);
   text-decoration: none;
 }
 .tabbar a[aria-current='page'] {
-  color: var(--accent-ink);
+  background: var(--surface-2);
+  color: var(--text);
   font-weight: 700;
 }
 
