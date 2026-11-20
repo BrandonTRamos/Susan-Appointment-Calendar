@@ -387,6 +387,29 @@ describe('the calendar kept in the data API', () => {
     ]);
   });
 
+  it('hands back an Appointment the clocks moved on, and its held Reminder, as they were', async () => {
+    const { store, core } = calendar();
+    const { appointments } = await core.addSeries(linda, {
+      what: 'Night check',
+      date: '2027-03-07',
+      time: '03:30',
+      repeat: { every: 'week', weekdays: [6] },
+      reminders: [{ shape: 'daysBefore', days: 0, time: '02:30' }],
+    });
+    const held = appointments.find(({ date }) => date === '2027-03-14')!;
+    expect(held.reminders[0].needsReview).toBe(true);
+    expect(await store.appointment(held.id)).toEqual(held);
+    const { appointments: moved } = await core.addSeries(linda, {
+      what: 'Night check',
+      date: '2027-03-07',
+      time: '02:30',
+      repeat: { every: 'week', weekdays: [6] },
+    });
+    const shifted = moved.find(({ date }) => date === '2027-03-14')!;
+    expect(shifted.series?.shiftedFrom).toBe('02:30');
+    expect(await store.appointment(shifted.id)).toEqual(shifted);
+  });
+
   it('reads an Appointment kept before Series existed as in none', async () => {
     const { api, store, core } = calendar();
     const added = await core.addAppointment(linda, checkUp);

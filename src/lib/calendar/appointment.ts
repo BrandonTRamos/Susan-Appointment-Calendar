@@ -106,7 +106,9 @@ export type Reminder = ReminderTiming & {
   dueAt: string;
   /**
    * An exact-time Reminder whose Appointment has moved since it was set. It keeps its time until
-   * someone confirms or changes it.
+   * someone confirms or changes it. Or a Reminder that follows its Appointment, on one a Series
+   * made, that the clocks going forward put at or after its start: it is held until someone changes
+   * or removes it, and cannot be confirmed as it is. Either way it is never sent while flagged.
    */
   needsReview: boolean;
   /**

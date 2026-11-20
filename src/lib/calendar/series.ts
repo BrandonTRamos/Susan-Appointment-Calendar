@@ -109,6 +109,13 @@ export interface SeriesPlace {
   repeat: Repeat;
   /** Changed or cancelled on its own, apart from the rest of the Series. */
   individuallyChanged: boolean;
+  /**
+   * The Series' clock time, 'HH:MM', when the clocks skip it on this Appointment's date, the night
+   * they go forward: the Appointment then starts that much later, moved on by the jump (2:30 am
+   * becomes 3:30 am where they jump an hour), and this says so. Null on every other date, and once
+   * someone changes this Appointment's date or time.
+   */
+  shiftedFrom: string | null;
 }
 
 /** The parts of a date, read as if it were UTC: for arithmetic on the calendar alone. */

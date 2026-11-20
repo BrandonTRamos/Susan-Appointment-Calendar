@@ -281,6 +281,7 @@ describe('a Series', () => {
     date: '2026-11-23',
     repeat: { every: 'week' as const, interval: 1, weekdays: [0, 3] },
     individuallyChanged: false,
+    shiftedFrom: null,
   };
   const dialysis = appointment('Dialysis', '2026-11-23', { series: place });
 

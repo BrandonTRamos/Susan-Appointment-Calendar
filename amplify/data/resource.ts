@@ -74,6 +74,8 @@ const schema = a
       date: a.date().required(),
       repeat: a.ref('Repeat').required(),
       individuallyChanged: a.boolean().required(),
+      // The Series' time, 'HH:MM', when the clocks skipped it that night and moved it on.
+      shiftedFrom: a.string(),
     }),
 
     // A Reminder on a Series: a Reminder's timing, never an exact time (SeriesReminder in

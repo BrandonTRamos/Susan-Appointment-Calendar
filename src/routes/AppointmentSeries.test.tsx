@@ -2,7 +2,7 @@
 import { cleanup, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { weekdayOf, type Appointment } from '../lib/calendar';
+import { weekdayOf, type Appointment, type ReminderSetting } from '../lib/calendar';
 import { addDays } from '../lib/localTime';
 import { atWidth, daysFromToday, emptyCalendar, linda, renderApp } from '../test/renderApp';
 
@@ -203,5 +203,91 @@ describe('an Appointment in a Series', () => {
     const all = inSeries(series.id);
     expect(states(all)).toEqual(['active', 'cancelled', 'cancelled', 'cancelled']);
     expect(all.slice(2).every(({ state }) => state === 'cancelled')).toBe(true);
+  });
+});
+
+/** The next Sunday the clocks go forward in US Eastern, more than a week away: March's second. */
+function nextSpringForward(): string {
+  for (let year = Number(daysFromToday(0).slice(0, 4)); ; year++) {
+    const first = `${year}-03-01`;
+    const sunday = addDays(addDays(first, (6 - weekdayOf(first) + 7) % 7), 7);
+    if (sunday > daysFromToday(8)) return sunday;
+  }
+}
+
+describe('an Appointment in a Series the night the clocks go forward', () => {
+  /** Every Sunday at 2:30 am, from the week before the clocks skip 2:00 to 3:00 am. */
+  async function withNightCheck(
+    time = '02:30',
+    reminders: ReminderSetting[] = [{ shape: 'before', amount: 1, unit: 'hours' }],
+  ) {
+    const calendar = emptyCalendar();
+    const night = nextSpringForward();
+    const { series, appointments } = await calendar.core.addSeries(linda, {
+      what: 'Night check',
+      date: addDays(night, -7),
+      time,
+      repeat: { every: 'week', weekdays: [6] },
+      reminders,
+    });
+    const moved = appointments.find(({ date }) => date === night)!;
+    return { calendar, series, moved, night };
+  }
+  const SHIFTED =
+    'Moved from 2:30 am to 3:30 am: the clocks go forward that night, so there is no 2:30 am.';
+
+  it('is shown at the time it was moved to, saying why, in its detail and in lists', async () => {
+    const { calendar, moved } = await withNightCheck();
+    expect(moved.time).toBe('03:30');
+    renderApp(`/appointments/${moved.id}`, { calendar });
+    expect(await screen.findByText(SHIFTED)).toBeInTheDocument();
+    expect(screen.getByText(/at 3:30 am$/)).toBeInTheDocument();
+
+    cleanup();
+    renderApp('/', { calendar });
+    const later = await screen.findByRole('list', { name: 'Later Appointments' });
+    expect(within(later).getByText('Repeats · moved for the clock change')).toBeInTheDocument();
+  });
+
+  it('says a Reminder the clocks put at its start is held and will not be sent', async () => {
+    const { calendar, moved } = await withNightCheck('03:30', [
+      { shape: 'daysBefore', days: 0, time: '02:30' },
+    ]);
+    expect(moved.reminders[0].needsReview).toBe(true);
+    renderApp(`/appointments/${moved.id}`, { calendar });
+    expect(
+      await screen.findByText(
+        /puts this Reminder at or after the start, so it is held and will not be sent/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps saying it was moved after only that one is changed in another way', async () => {
+    const { calendar, moved } = await withNightCheck();
+    renderApp(`/appointments/${moved.id}/edit`, { calendar });
+    await userEvent.type(await screen.findByLabelText('Driver'), 'Mark');
+    await save();
+    await userEvent.click(screen.getByRole('button', { name: 'Only this one' }));
+    expect(await screen.findByText(SHIFTED)).toBeInTheDocument();
+    expect(
+      screen.getByText('Changed on its own, apart from the rest of the Series.'),
+    ).toBeInTheDocument();
+  });
+
+  it('changing another detail for this and all later ones keeps it moved and the rest regular', async () => {
+    const { calendar, moved } = await withNightCheck();
+    renderApp(`/appointments/${moved.id}/edit`, { calendar });
+    await userEvent.type(await screen.findByLabelText('Driver'), 'Mark');
+    await save();
+    await userEvent.click(screen.getByRole('button', { name: 'This and all later ones' }));
+    expect(await screen.findByText(SHIFTED)).toBeInTheDocument();
+    const now = calendar.store.appointments().find(({ id }) => id === moved.id)!;
+    const later = calendar.store
+      .appointments()
+      .filter(({ series }) => series?.id === now.series!.id && series.date > now.date);
+    expect(later.length).toBeGreaterThan(3);
+    expect(later.every(({ time, driverName }) => time === '02:30' && driverName === 'Mark')).toBe(
+      true,
+    );
   });
 });

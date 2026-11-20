@@ -164,6 +164,13 @@ function wordsFor(details: TypedDetails | Appointment, due: Date, timeZone: stri
   return reminderWords(blankless(details), { dueAt: due }, timeZone);
 }
 
+/**
+ * A Reminder that follows its Appointment, held for review because the clocks, going forward that
+ * night, put it at or after the start of an Appointment a Series made. It is never sent as it is.
+ */
+const HELD =
+  'The clocks go forward that night, which puts this Reminder at or after the start, so it is held and will not be sent. Change its time or remove it.';
+
 /** The Reminders section of the Appointment form. */
 export function ReminderFields({
   details,
@@ -309,7 +316,12 @@ export function ReminderFields({
             )}
 
             {due && <p className="reminder-due">{`Goes out ${formatMoment(due, timeZone)}`}</p>}
-            {flagged && (
+            {flagged && typed.shape !== 'at' && (
+              <div className="warning" role="group" aria-label="Check this Reminder">
+                <p>{HELD}</p>
+              </div>
+            )}
+            {flagged && typed.shape === 'at' && (
               <div className="warning" role="group" aria-label="Check this Reminder">
                 <p>
                   The Appointment has moved since this Reminder was set, and it kept its time. Check
@@ -439,7 +451,10 @@ export function ReminderList({
                 </p>
                 <p>{`Goes out ${formatMoment(due, timeZone)}`}</p>
                 {texts && <ReminderStatus {...{ appointment, reminder, texts, now, timeZone }} />}
-                {reminder.needsReview && (
+                {reminder.needsReview && reminder.shape !== 'at' && (
+                  <p className="warning">{`${HELD} Edit the Appointment to change it.`}</p>
+                )}
+                {reminder.needsReview && reminder.shape === 'at' && (
                   <p className="warning">
                     The Appointment has moved since this Reminder was set, and it kept its time.
                     Edit the Appointment to keep it or change it.

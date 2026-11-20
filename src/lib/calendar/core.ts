@@ -14,6 +14,7 @@ import {
   isTime,
   localDateTime,
   momentOf,
+  momentOrSkipped,
 } from '../localTime';
 import { activityUpdate, seriesActivityUpdate } from './activityUpdate';
 import { alertFor, alertMarked, deliveredText, type DeliveryOutcome } from './alerts';
@@ -59,6 +60,7 @@ import {
   type Repeat,
   type Series,
   type SeriesChanges,
+  type SeriesPlace,
   type SeriesReminder,
 } from './series';
 import {
@@ -508,6 +510,18 @@ export function createCalendarCore({
   }
 
   /**
+   * Whether a Reminder that follows its Appointment goes out at a clock time the clocks skip that
+   * night, so that it goes out later than set (reminderDue moves it on by their jump).
+   */
+  function skipsTime(timing: ReminderTiming, { date, time }: AppointmentDetails): boolean {
+    if (timing.shape === 'daysBefore')
+      return momentOf(addDays(date, -timing.days), timing.time, timeZone) === null;
+    if (timing.shape === 'before' && timing.unit === 'days')
+      return momentOf(addDays(date, -timing.amount), time, timeZone) === null;
+    return false;
+  }
+
+  /**
    * The Reminders an Appointment will have, from those sent, or a refusal naming the one that is
    * wrong. `before` are the ones it had, and `moved` whether its date or time is changing. `at` is
    * now, and `current` the Appointment as it was, when it is being changed.
@@ -520,6 +534,8 @@ export function createCalendarCore({
     moved: boolean,
     at: string,
     current?: Appointment,
+    holdJumps = false,
+    startJumped = false,
   ): Reminder[] {
     // A Reminder kept before the calendar recorded when each was set takes the Appointment's last
     // save as that moment, once this save would otherwise move it on. Not for an Appointment that
@@ -536,16 +552,25 @@ export function createCalendarCore({
       const { id, reviewed } = each as { id?: unknown; reviewed?: unknown };
       const was = before.find((reminder) => reminder.id === id && !taken.has(reminder.id));
       const same = was !== undefined && timingKey(was) === timingKey(timing);
-      // An exact time stays put when the Appointment moves, so a person has to look at it again.
-      const needsReview =
-        timing.shape === 'at' && same && (moved || (was.needsReview && reviewed !== true));
       const due = reminderDue(timing, details, timeZone);
       if (!due && timing.shape === 'at')
         wrong(
           `There is no ${formatTime(timing.time)} on ${formatDate(timing.date)}: the clocks go forward that night. Pick another time.`,
         );
       if (!due) return wrong('It could not be worked out.');
-      if (!needsReview && due.toISOString() >= startsAt)
+      const late = due.toISOString() >= startsAt;
+      // The clocks, going forward, put it at or after the start: they moved the start on, or the
+      // time it goes out was one they skip. Only that can be held; any other lateness is refused.
+      const jumped = late && timing.shape !== 'at' && (startJumped || skipsTime(timing, details));
+      // An exact time stays put when the Appointment moves, so a person has to look at it again.
+      // So does one that follows the Appointment, on one a Series made (holdJumps), that the clocks
+      // put at or after its start: it is held, never sent, until it is changed or removed, and
+      // stays held while it would still go out that late.
+      const needsReview =
+        (timing.shape === 'at' && same && (moved || (was.needsReview && reviewed !== true))) ||
+        (holdJumps && jumped) ||
+        (late && timing.shape !== 'at' && same && was.needsReview && !reviewed);
+      if (!needsReview && late)
         wrong('It would go out after the Appointment starts. Pick an earlier time.');
       const reminderId = was?.id ?? crypto.randomUUID();
       taken.add(reminderId);
@@ -648,9 +673,14 @@ export function createCalendarCore({
   }
 
   /**
-   * The Appointment a Series has on a date: a new one, or `was` given the Series' details. Null for
-   * a date whose start time the clocks skip, which the Series leaves out. A new one is added by
-   * whoever added the Series; one changed in place is stamped as changed by `by`.
+   * The Appointment a Series has on a date: a new one, or `was` given the Series' details. A new
+   * one is added by whoever added the Series; one changed in place is stamped as changed by `by`.
+   *
+   * `entered` is for the date a person gave the Series' time for: its first, as they typed it.
+   * That start and its Reminders follow the rules for any Appointment, checked before this. On
+   * any other date the Series' time is worked out, so the night the clocks skip it the Appointment
+   * still happens, moved on by their jump and saying so (shiftedFrom), and a Reminder the jump puts
+   * at or after its start is held for review instead of refused.
    */
   function occurrence(
     series: Series,
@@ -658,10 +688,18 @@ export function createCalendarCore({
     was?: Appointment,
     by?: Actor,
     at?: string,
-  ): Appointment | null {
-    const details: AppointmentDetails = { ...seriesDetailsOf(series), date };
-    const moment = momentOf(date, details.time, timeZone);
-    if (!moment) return null;
+    entered = false,
+  ): Appointment {
+    // Where the clocks jump across midnight, the moment lands on the next day: the Appointment is
+    // on the date and at the time it really starts, and keeps its place in the pattern (`date`).
+    const moment = momentOrSkipped(date, series.time, timeZone);
+    const local = localDateTime(moment, timeZone);
+    const shiftedFrom = local.date === date && local.time === series.time ? null : series.time;
+    const details: AppointmentDetails = {
+      ...seriesDetailsOf(series),
+      date: local.date,
+      time: local.time,
+    };
     const startsAt = moment.toISOString();
     const before = was?.reminders ?? [];
     // A Reminder with the same timing as one the Appointment has keeps its ID.
@@ -671,12 +709,28 @@ export function createCalendarCore({
       if (same) taken.add(same.id);
       return same ? { ...timing, id: same.id } : timing;
     });
-    const moved = was !== undefined && (was.date !== date || was.time !== details.time);
+    const moved = was !== undefined && (was.date !== details.date || was.time !== details.time);
     // Each Reminder is set when its Appointment is made or changed, by the same rule as any other
     // (settled): one whose time has already passed by then is never sent.
     const now = at ?? clock.now().toISOString();
-    const reminders = settled(settings, details, startsAt, before, moved, now, was);
-    const place = { id: series.id, date, repeat: series.repeat, individuallyChanged: false };
+    const reminders = settled(
+      settings,
+      details,
+      startsAt,
+      before,
+      moved,
+      now,
+      was,
+      !entered,
+      shiftedFrom !== null,
+    );
+    const place: SeriesPlace = {
+      id: series.id,
+      date,
+      repeat: series.repeat,
+      individuallyChanged: false,
+      shiftedFrom,
+    };
     if (!was)
       return {
         id: `${series.id}-${date}`,
@@ -688,7 +742,10 @@ export function createCalendarCore({
         added: series.added,
         lastChanged: null,
       };
-    const changed = !hasDetails(was, details) || !sameReminders(was.reminders, reminders);
+    const changed =
+      !hasDetails(was, details) ||
+      !sameReminders(was.reminders, reminders) ||
+      (was.series?.shiftedFrom ?? null) !== shiftedFrom;
     return {
       ...was,
       ...details,
@@ -699,9 +756,11 @@ export function createCalendarCore({
     };
   }
 
-  /** The Appointments a Series has on these dates, leaving out any the clocks skip. */
+  /** The Appointments a Series has on these dates. Its first is the one a person entered. */
   const occurrences = (series: Series, dates: string[]) =>
-    dates.flatMap((date) => occurrence(series, date) ?? []);
+    dates.map((date) =>
+      occurrence(series, date, undefined, undefined, undefined, date === series.starts),
+    );
 
   /**
    * Adds the Appointments the calendar does not have yet. Each has an ID made from its Series and
@@ -847,7 +906,12 @@ export function createCalendarCore({
         startsAt,
         reminders,
         // Changed only this one: the rest of its Series is as it was.
-        series: current.series && { ...current.series, individuallyChanged: true },
+        series: current.series && {
+          ...current.series,
+          individuallyChanged: true,
+          // Once someone sets its date or time, the clocks no longer moved it.
+          shiftedFrom: moved ? null : (current.series.shiftedFrom ?? null),
+        },
         lastChanged: stamp(by, at),
       };
       await store.replaceAppointment(appointment);
@@ -949,8 +1013,13 @@ export function createCalendarCore({
       const nextId = continuationId(old.id, place.date);
       const continued = line.find((series) => series.id === nextId);
       // What is not changed stays as the Series has it, which puts back what was changed on its own.
-      const details = checked({ ...seriesDetailsOf(old), date: place.date, ...given(sent) });
-      startOf(details);
+      const typed = given(sent);
+      const details = checked({ ...seriesDetailsOf(old), date: place.date, ...typed });
+      // A date or time sent with the change is one a person entered, so it must be a real start,
+      // as for any Appointment. One taken from the Series is its regular time, which on the night
+      // the clocks skip it is moved on like any Series date (occurrence).
+      const entered = typed.date !== undefined || typed.time !== undefined;
+      if (entered) startOf(details);
       const starts = details.date;
       const asked = sent as Partial<Record<string, unknown>>;
       let repeat: Repeat;
@@ -1000,7 +1069,8 @@ export function createCalendarCore({
       // that a change the core refuses, such as one that would put a Reminder at or after the start,
       // changes nothing. Its Reminders follow each Appointment and none is at an exact time, so one
       // changed in place below is refused exactly when a new one on its date is.
-      for (const date of dates) occurrence(next, date, undefined, by, at);
+      for (const date of dates)
+        occurrence(next, date, undefined, by, at, entered && date === starts);
       // The new Series is written first, with the end it keeps, so that a change cut off after
       // this point still knows it when sent again. Then the old line is ended here, before its
       // Appointments are read, so that a top-up running now either makes its Appointments before
@@ -1028,8 +1098,8 @@ export function createCalendarCore({
       const made: Appointment[] = [];
       for (const date of dates) {
         const was = onDate.get(date);
-        const appointment = occurrence(next, date, was, by, at);
-        if (appointment) (was ? reused : made).push(appointment);
+        const appointment = occurrence(next, date, was, by, at, entered && date === starts);
+        (was ? reused : made).push(appointment);
       }
       const kept = new Set(reused.map((appointment) => appointment.id));
       const replaced = later.filter((appointment) => !kept.has(appointment.id));
@@ -1093,16 +1163,10 @@ export function createCalendarCore({
           through,
           series.madeThrough,
         );
-        // A Reminder the clocks push past the start on one day leaves that day out, as a start
-        // time they skip does: nobody is there to be told.
-        const appointments = dates.flatMap((date) => {
-          try {
-            return occurrence(series, date) ?? [];
-          } catch (error) {
-            if (error instanceof CalendarRefusal) return [];
-            throw error;
-          }
-        });
+        // None of these is left out: one the clocks skip is moved on by their jump, and a Reminder
+        // they put at or after its start is held (occurrence). Anything else that fails fails
+        // the run, which is logged, and the next day's catches up.
+        const appointments = occurrences(series, dates);
         const made: Appointment[] = [];
         await inBatches(appointments, async (appointment) => {
           if (await store.appointment(appointment.id)) return;
@@ -1117,7 +1181,9 @@ export function createCalendarCore({
         const { ends } = now;
         if (ends)
           await inBatches(
-            made.filter(({ date }) => date > ends),
+            // By its date in the pattern, as an end is: one the clocks moved past midnight on
+            // the Series' last date is still in it.
+            made.filter(({ series: place }) => place!.date > ends),
             (appointment) => withdraw(appointment, null),
           );
         // Only how far it is made is written, onto the Series as it now is.

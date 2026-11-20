@@ -85,7 +85,8 @@ function toPlace(row: AppointmentRow['series'] | undefined): SeriesPlace | null 
   const repeat = toRepeat(row?.repeat);
   if (!row || !repeat) return null;
   const { id, date, individuallyChanged } = row;
-  return { id, date, repeat, individuallyChanged };
+  // Null too for one kept before the calendar moved an Appointment the clocks skip.
+  return { id, date, repeat, individuallyChanged, shiftedFrom: row.shiftedFrom ?? null };
 }
 
 type SeriesReminderRow = NonNullable<NonNullable<SeriesRow['reminders']>[number]>;

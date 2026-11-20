@@ -1915,16 +1915,320 @@ describe('a Series', () => {
       expect(appointments[0].startsAt).toBe('2027-03-22T09:00:00.000Z');
       expect(appointments[1].startsAt).toBe('2027-03-29T08:00:00.000Z');
     });
+  });
 
-    it('leaves out a day the clocks skip its start time, and keeps the rest', async () => {
+  describe('on the night the clocks go forward', () => {
+    /** Every Sunday at 2:30 am from 7 March 2027; the clocks skip 2:00 to 3:00 am on 14 March. */
+    const nightCheck: NewSeries = {
+      what: 'Night check',
+      date: '2027-03-07',
+      time: '02:30',
+      repeat: { every: 'week', weekdays: [6] },
+      reminders: [{ shape: 'before', amount: 1, unit: 'hours' }],
+    };
+    const on = (appointments: Appointment[], date: string) =>
+      appointments.find((appointment) => appointment.date === date)!;
+
+    it('keeps an Appointment the clocks skip, moved on by their jump, and says so', async () => {
+      const { core } = calendar();
+      const { appointments } = await core.addSeries(linda, nightCheck);
+      const moved = on(appointments, '2027-03-14');
+      expect(moved).toMatchObject({
+        time: '03:30',
+        startsAt: '2027-03-14T07:30:00.000Z',
+        series: { date: '2027-03-14', shiftedFrom: '02:30', individuallyChanged: false },
+      });
+      // Its Reminders follow the start it has.
+      expect(moved.reminders[0]).toMatchObject({
+        dueAt: '2027-03-14T06:30:00.000Z',
+        needsReview: false,
+      });
+      // The other dates keep the Series' own time.
+      for (const date of ['2027-03-07', '2027-03-21', '2027-03-28'])
+        expect(on(appointments, date)).toMatchObject({
+          time: '02:30',
+          series: { shiftedFrom: null },
+        });
+    });
+
+    it('moves it on by the jump the zone has, such as half an hour', async () => {
+      // Lord Howe Island's clocks go forward half an hour, from 2:00 to 2:30 am, on 3 October 2027.
+      const { core } = calendar('Australia/Lord_Howe');
+      const { appointments } = await core.addSeries(linda, {
+        ...nightCheck,
+        date: '2027-09-26',
+        time: '02:15',
+      });
+      expect(on(appointments, '2027-10-03')).toMatchObject({
+        time: '02:45',
+        series: { shiftedFrom: '02:15' },
+      });
+      expect(on(appointments, '2027-10-10')).toMatchObject({ time: '02:15' });
+    });
+
+    it('moves it to the next day when the clocks jump across midnight', async () => {
+      // Dhaka's clocks went forward an hour at 11:00 pm on Friday 19 June 2009, to midnight.
+      const { core } = calendar('Asia/Dhaka');
+      const { series, appointments } = await core.addSeries(linda, {
+        what: 'Late check',
+        date: '2009-06-12',
+        time: '23:30',
+        ends: '2009-07-03',
+        repeat: { every: 'week', weekdays: [4] },
+        reminders: [{ shape: 'daysBefore', days: 0, time: '22:30' }],
+      });
+      const moved = appointments.find(({ series: place }) => place?.date === '2009-06-19')!;
+      // It is on the date and at the time it really starts, and keeps its place in the pattern.
+      expect(moved).toMatchObject({
+        id: `${series.id}-2009-06-19`,
+        date: '2009-06-20',
+        time: '00:30',
+        startsAt: '2009-06-19T17:30:00.000Z',
+        series: { date: '2009-06-19', shiftedFrom: '23:30' },
+      });
+      // Its same-day Reminder is worked out on the day it is on, which puts it after the start:
+      // held, not refused, for the clocks did it.
+      expect(moved.reminders).toMatchObject([
+        { dueAt: '2009-06-20T15:30:00.000Z', needsReview: true },
+      ]);
+      for (const date of ['2009-06-12', '2009-06-26'])
+        expect(appointments.find((a) => a.date === date)).toMatchObject({
+          time: '23:30',
+          reminders: [{ needsReview: false }],
+          series: { shiftedFrom: null },
+        });
+    });
+
+    it('a top-up cut short by an end on its date in the pattern keeps one moved past it', async () => {
+      const { store, clock, messenger, sender } = calendar();
+      let pause: (() => Promise<void>) | null = null;
+      const pausing: MemoryStore = {
+        ...store,
+        async addAppointment(appointment) {
+          const waiting = pause;
+          pause = null;
+          await waiting?.();
+          return store.addAppointment(appointment);
+        },
+      };
+      const timeZone = 'Asia/Dhaka';
+      const core = createCalendarCore({
+        store: pausing,
+        clock,
+        messenger,
+        textSender: sender,
+        timeZone,
+      });
+      // Every Friday and Saturday at 11:30 pm. Friday 19 June's moves to Saturday 20 June at 12:30 am.
+      clock.set('2008-12-15T00:00:00.000Z');
+      const { series } = await core.addSeries(linda, {
+        what: 'Late check',
+        date: '2008-12-12',
+        time: '23:30',
+        repeat: { every: 'week', weekdays: [4, 5] },
+      });
+      // 182 days after today, 15 December 2008.
+      expect(series.madeThrough).toBe('2009-06-15');
+      clock.set('2009-01-01T00:00:00.000Z');
+      // While it runs, the Series is ended after Friday 19 June, its last date in the pattern.
+      pause = async () => {
+        const now = (await store.series(series.id))!;
+        await store.replaceSeries({ ...now, ends: '2009-06-19' });
+      };
+      await core.topUpSeries();
+      const kept = inSeries(store, series.id).filter(
+        ({ series: place }) => place!.date > '2009-06-15',
+      );
+      // Friday 19 June's, though on the 20th, stays; Saturday 20 June's and the rest are taken out.
+      expect(kept.map(({ date, time, series: place }) => [place!.date, date, time])).toEqual([
+        ['2009-06-19', '2009-06-20', '00:30'],
+      ]);
+      expect(kept[0].state).toBe('active');
+    });
+
+    it('keeps it so when the Series is topped up', async () => {
+      const { core, store, clock } = calendar();
+      clock.set('2026-08-01T20:00:00.000Z');
+      const { series } = await core.addSeries(linda, { ...nightCheck, date: '2026-08-02' });
+      expect(inSeries(store, series.id).some(({ date }) => date === '2027-03-14')).toBe(false);
+      clock.set('2027-01-10T20:00:00.000Z');
+      await core.topUpSeries();
+      const all = inSeries(store, series.id);
+      expect(on(all, '2027-03-14')).toMatchObject({
+        time: '03:30',
+        series: { shiftedFrom: '02:30' },
+      });
+      expect(on(all, '2027-03-07')).toMatchObject({ time: '02:30' });
+      expect(on(all, '2027-03-21')).toMatchObject({ time: '02:30' });
+    });
+
+    it('holds for review a Reminder the jump puts at its start, and not one just before', async () => {
+      const { core } = calendar();
+      // 3:30 am every Sunday: not a time the clocks skip, but Reminders at 2:30 and 2:29 am that
+      // day are, so on 14 March they go out at 3:30 and 3:29 am.
+      const { appointments } = await core.addSeries(linda, {
+        ...nightCheck,
+        time: '03:30',
+        reminders: [
+          { shape: 'daysBefore', days: 0, time: '02:30' },
+          { shape: 'daysBefore', days: 0, time: '02:29' },
+        ],
+      });
+      const that = on(appointments, '2027-03-14');
+      expect(that).toMatchObject({ time: '03:30', series: { shiftedFrom: null } });
+      expect(that.reminders).toMatchObject([
+        { time: '02:29', dueAt: '2027-03-14T07:29:00.000Z', needsReview: false },
+        { time: '02:30', dueAt: '2027-03-14T07:30:00.000Z', needsReview: true },
+      ]);
+      // On the other Sundays both go out before the start, as set.
+      expect(on(appointments, '2027-03-21').reminders.every((r) => !r.needsReview)).toBe(true);
+    });
+
+    it('never sends a held Reminder, while the others go out', async () => {
+      const cal = calendar();
+      const { core, clock, sender, store } = cal;
+      const { appointments } = await core.addSeries(linda, {
+        ...nightCheck,
+        time: '03:30',
+        reminders: [dayBeforeAtSix, { shape: 'daysBefore', days: 0, time: '02:45' }],
+      });
+      const that = on(appointments, '2027-03-14');
+      const held = that.reminders.find((reminder) => reminder.needsReview)!;
+      expect(held).toMatchObject({ time: '02:45', dueAt: '2027-03-14T07:45:00.000Z' });
+      await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+      for (const at of [
+        '2027-03-13T23:00:00.000Z', // 6:00 pm the day before
+        '2027-03-14T07:30:00.000Z', // the start
+        '2027-03-14T07:45:00.000Z', // when the held one would go out
+        '2027-03-14T09:00:00.000Z',
+      ]) {
+        clock.set(at);
+        await core.runDue();
+      }
+      const about = store.texts().filter(({ appointmentId }) => appointmentId === that.id);
+      expect(about.filter(({ status }) => status === 'sent')).toMatchObject([
+        { reminderId: that.reminders.find((r) => !r.needsReview)!.id },
+      ]);
+      expect(
+        about.some(({ reminderId, status }) => reminderId === held.id && status === 'sent'),
+      ).toBe(false);
+      expect(sender.taken()).toHaveLength(1);
+    });
+
+    it('still refuses such a start or Reminder entered for the first Appointment itself', async () => {
+      const { core, store } = calendar();
+      await refused(core.addSeries(linda, { ...nightCheck, date: '2027-03-14' }), 'invalid');
+      const refusal = await refused(
+        core.addSeries(linda, {
+          ...nightCheck,
+          date: '2027-03-14',
+          time: '03:30',
+          reminders: [{ shape: 'daysBefore', days: 0, time: '02:30' }],
+        }),
+        'invalid',
+      );
+      expect(refusal.detail).toBe('reminders');
+      expect(store.appointments()).toEqual([]);
+    });
+
+    it('changing only that one keeps saying it was moved, unless its time is changed', async () => {
+      const { core } = calendar();
+      const { appointments } = await core.addSeries(linda, nightCheck);
+      const moved = on(appointments, '2027-03-14');
+      const driven = await core.changeAppointment(mark, moved.id, { driverName: 'Mark' });
+      expect(driven).toMatchObject({
+        time: '03:30',
+        series: { shiftedFrom: '02:30', individuallyChanged: true },
+      });
+      const retimed = await core.changeAppointment(mark, moved.id, { time: '04:00' });
+      expect(retimed.series).toMatchObject({ shiftedFrom: null });
+    });
+
+    it('changing only that one leaves a held Reminder held, and refuses keeping it as it is', async () => {
       const { core } = calendar();
       const { appointments } = await core.addSeries(linda, {
-        what: 'Night shift check',
-        date: '2027-03-07',
-        time: '02:30',
-        repeat: { every: 'week', weekdays: [6] },
+        ...nightCheck,
+        time: '03:30',
+        reminders: [{ shape: 'daysBefore', days: 0, time: '02:30' }],
       });
-      expect(datesOf(appointments).slice(0, 2)).toEqual(['2027-03-07', '2027-03-21']);
+      const that = on(appointments, '2027-03-14');
+      const driven = await core.changeAppointment(mark, that.id, { driverName: 'Mark' });
+      expect(driven.reminders).toMatchObject([{ needsReview: true }]);
+      const [held] = that.reminders;
+      const refusal = await refused(
+        core.changeAppointment(mark, that.id, {
+          reminders: [{ shape: 'daysBefore', days: 0, time: '02:30', id: held.id, reviewed: true }],
+        }),
+        'invalid',
+      );
+      expect(refusal.message).toMatch(/after the Appointment starts/);
+      // Moved to an earlier time, it is no longer held.
+      const fixed = await core.changeAppointment(mark, that.id, {
+        reminders: [{ shape: 'daysBefore', days: 0, time: '01:30', id: held.id }],
+      });
+      expect(fixed.reminders).toMatchObject([{ needsReview: false }]);
+    });
+
+    it('this and all later ones from it, changing another detail, keeps it moved and the rest regular', async () => {
+      const { core, store } = calendar();
+      const { appointments } = await core.addSeries(linda, nightCheck);
+      const moved = on(appointments, '2027-03-14');
+      const changed = await core.changeSeries(mark, moved.id, { driverName: 'Mark' });
+      expect(changed).toMatchObject({
+        id: moved.id,
+        time: '03:30',
+        driverName: 'Mark',
+        series: { date: '2027-03-14', shiftedFrom: '02:30' },
+      });
+      expect(await store.series(changed.series!.id)).toMatchObject({
+        starts: '2027-03-14',
+        time: '02:30',
+      });
+      const later = inSeries(store, changed.series!.id);
+      expect(
+        later.slice(1).every(({ time, driverName }) => time === '02:30' && driverName === 'Mark'),
+      ).toBe(true);
+    });
+
+    it('this and all later ones still refuses a Reminder entered too late on any day', async () => {
+      const { core, store } = calendar();
+      const { appointments } = await core.addSeries(linda, { ...nightCheck, time: '03:30' });
+      const before = store.appointments();
+      const first = on(appointments, '2027-03-07');
+      // 4:00 am the same day is after a 3:30 am start every Sunday: refused, not held.
+      const refusal = await refused(
+        core.changeSeries(mark, first.id, {
+          reminders: [{ shape: 'daysBefore', days: 0, time: '04:00' }],
+        }),
+        'invalid',
+      );
+      expect(refusal.detail).toBe('reminders');
+      expect(store.appointments()).toEqual(before);
+      // 2:30 am is before the start every Sunday but the one the clocks skip it: there it is held.
+      const changed = await core.changeSeries(mark, first.id, {
+        reminders: [{ shape: 'daysBefore', days: 0, time: '02:30' }],
+      });
+      const later = inSeries(store, changed.series!.id);
+      expect(
+        later.filter(({ reminders }) => reminders[0].needsReview).map(({ date }) => date),
+      ).toEqual(['2027-03-14']);
+    });
+
+    it('this and all later ones with a start entered for that night is still refused', async () => {
+      const { core, store } = calendar();
+      const { appointments } = await core.addSeries(linda, nightCheck);
+      const before = store.appointments();
+      // The time typed for it: 2:15 am does not exist that night.
+      await refused(
+        core.changeSeries(mark, on(appointments, '2027-03-14').id, { time: '02:15' }),
+        'invalid',
+      );
+      // The date typed for it, at the Series' 2:30 am.
+      await refused(
+        core.changeSeries(mark, on(appointments, '2027-03-07').id, { date: '2027-03-14' }),
+        'invalid',
+      );
+      expect(store.appointments()).toEqual(before);
     });
   });
 

@@ -40,6 +40,13 @@ export function AppointmentDetail({ id: given }: { id?: string }) {
   return <Detail key={appointment.id} appointment={appointment} onDeleting={setDeleting} />;
 }
 
+/**
+ * Why an Appointment a Series made starts later than the Series' time: the clocks skipped that
+ * time the night they went forward.
+ */
+export const shiftWords = (from: string, to: string, nextDay: boolean) =>
+  `Moved from ${formatTime(from)} to ${formatTime(to)}${nextDay ? ' the next day' : ''}: the clocks go forward that night, so there is no ${formatTime(from)}.`;
+
 /** For an address whose Appointment the calendar does not have: deleted, or never there. */
 export function NotInCalendar() {
   return (
@@ -109,7 +116,14 @@ function Detail({
 
       <dl className="details">
         <dt>When</dt>
-        <dd>{`${formatDate(date)} at ${formatTime(time)}`}</dd>
+        <dd>
+          <span>{`${formatDate(date)} at ${formatTime(time)}`}</span>
+          {appointment.series?.shiftedFrom && (
+            <span className="muted">
+              {shiftWords(appointment.series.shiftedFrom, time, appointment.series.date !== date)}
+            </span>
+          )}
+        </dd>
         {appointment.series && (
           <>
             <dt>Repeats</dt>

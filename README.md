@@ -123,8 +123,11 @@ few months on the day it starts, ending on a date or never.
   the same rule as any other: one whose time has already passed then is never sent.
 - Patterns are worked out on Susan's dates, so a weekly 9:00 am stays at 9:00 am across a clock
   change. The first Appointment has to be on a day the pattern gives. A monthly Series on the 29th,
-  30th or 31st lands on the last day of a shorter month. A day on which the clocks skip its start
-  time is left out for now; how that should work is waiting on the owner (see the spec).
+  30th or 31st lands on the last day of a shorter month. On the night the clocks go forward and
+  skip its time, that day's Appointment starts as much later as they jump (2:30 am becomes 3:30
+  am), says so in its detail and in lists, and holds for review any Reminder the jump puts at or
+  after its start: it is shown but never sent until someone changes it. A start someone types that
+  the clocks skip is still refused.
 - Reminders set on a Series go out a set time before each Appointment; an exact-time Reminder can be
   added to one Appointment in it.
 - Changing or cancelling one asks: **only this one**, which changes it alone and marks it as changed
