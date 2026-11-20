@@ -115,6 +115,9 @@ export function feedStore(reader: TableReader, tables: FeedTables): Store {
     replaceSeries: async () => readOnly(),
     keepSubscriptionLink: async () => readOnly(),
     removeSubscriptionLink: async () => readOnly(),
+    agentKeyByHash: async () => notRead(),
+    keepAgentKey: async () => readOnly(),
+    removeAgentKey: async () => readOnly(),
   };
 }
 

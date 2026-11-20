@@ -12,13 +12,14 @@ import {
 } from '../../src/lib/calendar';
 import { appNotifications } from '../functions/app-notifications/resource';
 import { calendarCommands } from '../functions/calendar-commands/resource';
+import { mcpServer } from '../functions/mcp-server/resource';
 import { sendTexts } from '../functions/send-texts/resource';
 import { seriesTopUp } from '../functions/series-top-up/resource';
 
 // Calendar data, and the only way to change it.
 //
 // Anyone signed in can read the calendar, with live updates, its Series, and their own subscription
-// link; nobody signed in can write a model directly. Writing goes through the calendar core (src/lib/calendar),
+// link and agent keys; nobody signed in can write a model directly. Writing goes through the calendar core (src/lib/calendar),
 // whose commands are the mutations at the end. `npm run synth` checks that those, and turning app
 // notifications on and off for a device, are the only mutations a signed-in person can call
 // (scripts/synth.mjs).
@@ -168,6 +169,24 @@ const schema = a
         allow.ownerDefinedIn('personId').identityClaim('sub').to(['read']),
       ]),
 
+    // Each person's agent keys (AgentKey in src/lib/calendar/agentKeys.ts), for their AI agent to use
+    // the MCP server as them: a hash of each, never the key itself, which is also how the person
+    // names one to revoke it. A signed-in person can read only their own, and nobody signed in can
+    // write one directly. A key is revoked by a delete on condition that it is the person's, which
+    // DynamoDB checks as it deletes (amplify/calendar/data-store.ts). The MCP server reads this table itself, by the hash, with a strongly
+    // consistent read (amplify/calendar/agent-key-table.ts), so that a revoked key stops at once.
+    AgentKey: a
+      .model({
+        hash: a.string().required(),
+        personId: a.string().required(),
+        name: a.string().required(),
+        madeAt: a.datetime().required(),
+      })
+      .identifier(['hash'])
+      .authorization((allow) => [
+        allow.ownerDefinedIn('personId').identityClaim('sub').to(['read']),
+      ]),
+
     // The record of each text to Susan (Text in src/lib/calendar/texts.ts). Its ID is made from
     // what it is about and when it was due; creating one fails when one with that ID exists, which
     // is how a text is claimed before it is sent (`npm run synth` checks it).
@@ -226,6 +245,10 @@ const schema = a
     // Each answers with a CommandAnswer: the new link's secret, shown this once, or null.
     makeSubscriptionLink: command(),
     switchOffSubscriptionLink: command(),
+    // Answers with a CommandAnswer: the new key, shown this once, or null once one is revoked. A key
+    // is named by its hash to revoke it.
+    makeAgentKey: command().arguments({ name: a.string().required() }),
+    revokeAgentKey: command().arguments({ hash: a.string().required() }),
     // Each answers with a CommandAnswer: the settings as they now are, or the test text's record.
     changeSettings: command().arguments({ settings: a.json().required() }),
     sendTestText: command(),
@@ -303,10 +326,11 @@ const schema = a
   })
   // Lets the functions that run the core write through the data API, so that every change reaches
   // everyone looking at the calendar (docs/adr/0003-the-core-writes-through-the-data-api.md). The
-  // scheduled run sends texts through it; the Series top-up and the app-notifications function are
-  // narrowed to their own operations (amplify/backend.ts).
+  // scheduled run sends texts through it; the Series top-up, the app-notifications function and the
+  // MCP server are narrowed to their own operations (amplify/backend.ts).
   .authorization((allow) => [
     allow.resource(calendarCommands).to(['query', 'mutate']),
+    allow.resource(mcpServer).to(['query', 'mutate']),
     allow.resource(seriesTopUp).to(['query', 'mutate']),
     allow.resource(appNotifications).to(['query', 'mutate']),
     allow.resource(sendTexts).to(['query', 'mutate']),

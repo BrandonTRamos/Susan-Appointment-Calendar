@@ -5,7 +5,9 @@
 import type {
   Appointment,
   AppointmentChanges,
+  AgentKey,
   CalendarSettings,
+  MadeAgentKey,
   NewAppointment,
   NewSeries,
   Series,
@@ -54,6 +56,15 @@ export interface CalendarClient {
   makeSubscriptionLink(): Promise<{ address: string; madeAt: string }>;
   switchOffSubscriptionLink(): Promise<void>;
 
+  // The signed-in person's own agent keys (src/lib/calendar/agentKeys.ts).
+  /** Their keys, newest first. Each is named by its hash to revoke it; the key itself is not kept. */
+  agentKeys(): Promise<AgentKeyListing[]>;
+  /** Makes them a new key and answers with it. This is the only time the key is seen in full. */
+  makeAgentKey(name: string): Promise<MadeAgentKey>;
+  revokeAgentKey(hash: string): Promise<void>;
+  /** The MCP server's address an agent connects to, or null when the backend has none. */
+  agentEndpoint(): string | null;
+
   // Texts to Susan (src/lib/calendar/texts.ts).
   /**
    * Keeps `listener` told of the record of every text, as `watchAppointments` does Appointments:
@@ -75,3 +86,10 @@ export interface CalendarClient {
 
 /** Said when a backend has no address for the feed, so a link cannot be made. */
 export const NO_FEED = 'Calendar subscription is not set up yet.';
+
+/** An agent key as a person sees it listed. */
+export type AgentKeyListing = Pick<AgentKey, 'hash' | 'name' | 'madeAt'>;
+
+/** Newest first. */
+export const newestFirst = (keys: AgentKeyListing[]) =>
+  [...keys].sort((a, b) => b.madeAt.localeCompare(a.madeAt) || a.name.localeCompare(b.name));

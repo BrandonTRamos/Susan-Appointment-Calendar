@@ -9,6 +9,7 @@ import {
   NO_ADMIN_MESSENGER,
   NO_TEXT_SENDER,
 } from '../../src/lib/calendar';
+import { MCP_SERVER_FIELDS } from '../functions/mcp-server/access';
 import { SERIES_TOP_UP_FIELDS } from '../functions/series-top-up/access';
 import { dataStore, type DataClient } from './data-store';
 
@@ -101,8 +102,31 @@ function dataApi() {
       return answer((index ?? [...links.values()]).filter((row) => row.hash === hash));
     },
   };
+  // Kept by hash. Its reads, like the data API's, can lag behind what was written.
+  const agentKeys = new Map<string, Row>();
+  let keyReads: Map<string, Row> | null = null;
+  const AgentKey = {
+    async get({ hash }: { hash: string }) {
+      return answer((keyReads ?? agentKeys).get(hash) ?? null);
+    },
+    async create(input: Row) {
+      if (failure || agentKeys.has(input.hash as string)) return answer(null);
+      agentKeys.set(input.hash as string, { ...input, createdAt: 'x', updatedAt: 'x' });
+      return answer(agentKeys.get(input.hash as string));
+    },
+  };
+  const refusedCondition = {
+    data: null,
+    errors: [
+      {
+        errorType: 'DynamoDB:ConditionalCheckFailedException',
+        message: 'The conditional request failed (Service: DynamoDb, Status Code: 400)',
+      },
+    ],
+  };
   const client = {
     models: {
+      AgentKey,
       Appointment: model(tables.Appointment),
       Series: model(tables.Series),
       ActivityRecord: model(tables.ActivityRecord),
@@ -121,8 +145,18 @@ function dataApi() {
     // Only the conditional update of a text, as DynamoDB checks it: every `eq` in the condition
     // must hold of the row as it is when written. The client throws an answer that has errors.
     async graphql({ query, variables }: { query: string; variables: Record<string, unknown> }) {
+      // A key is deleted only if, as DynamoDB deletes it, it is there and the condition holds of it.
+      if (query.includes('deleteAgentKey(input: { hash: $hash }, condition: $condition)')) {
+        if (failure) throw { data: null, errors: [{ message: failure }] };
+        const hash = variables.hash as string;
+        const { personId } = variables.condition as { personId: { eq: unknown } };
+        const row = agentKeys.get(hash);
+        if (!row || row.personId !== personId.eq) throw refusedCondition;
+        agentKeys.delete(hash);
+        return { data: { deleteAgentKey: { hash } } };
+      }
       if (!query.includes('updateText(input: $input, condition: $condition)'))
-        throw new Error('This stand-in only answers a conditional updateText.');
+        throw new Error('This stand-in only answers conditional writes.');
       const input = variables.input as Row;
       const { and } = variables.condition as { and: Record<string, { eq: unknown }>[] };
       const row = tables.Text.get(input.id);
@@ -148,10 +182,15 @@ function dataApi() {
     series: () => [...tables.Series.values()],
     activity: () => [...tables.ActivityRecord.values()],
     links: () => [...links.values()],
+    agentKeys: () => [...agentKeys.values()],
     texts: () => [...tables.Text.values()],
     /** The index stops hearing of changes until it is told to catch up. */
     freezeIndex() {
       index = structuredClone([...links.values()]);
+    },
+    /** Reads of agent keys stop hearing of changes, as a lagging read would. */
+    freezeKeyReads() {
+      keyReads = structuredClone(agentKeys);
     },
     failWith(message: string | null) {
       failure = message;
@@ -387,6 +426,66 @@ describe('the calendar kept in the data API', () => {
     ]);
   });
 
+  it('lets the MCP server, with only its own fields, do all that its tools do', async () => {
+    const api = dataApi();
+    const clock = createFixedClock('2026-11-19T20:00:00.000Z');
+    const timeZone = 'America/New_York';
+    // A text has reached Susan about one Appointment, written as the scheduled run would.
+    const commands = createCalendarCore({
+      store: dataStore(api.client),
+      clock,
+      messenger: createMemoryMessenger(),
+      textSender: createStandInSender(),
+      timeZone,
+    });
+    const texted = await commands.addAppointment(linda, checkUp);
+    await commands.changeSettings(linda, { susansNumber: '+15555550123' });
+    clock.set(texted.reminders[0].dueAt);
+    await commands.runDue();
+
+    const agent = createCalendarCore({
+      store: dataStore(limitedTo(api.client, MCP_SERVER_FIELDS)),
+      clock,
+      messenger: createMemoryMessenger(['person-linda', 'person-mark']),
+      textSender: NO_TEXT_SENDER,
+      timeZone,
+    });
+    const lindasAgent: Actor = { ...linda, viaAgent: true };
+    // Reading: list_appointments, get_appointment, list_texts, list_series and get_series.
+    expect(await agent.appointments()).toHaveLength(1);
+    expect(await agent.appointment(texted.id)).toMatchObject({ id: texted.id });
+    expect(await agent.textsAbout(texted.id)).toHaveLength(1);
+    // Changing: each Appointment and Series tool, with the ID an add is given.
+    const added = await agent.addAppointment(
+      lindasAgent,
+      { ...checkUp, date: '2026-11-25' },
+      '0b9f6a52-8d1e-4b7a-9c3f-2e5d7a1c4b60',
+    );
+    await agent.changeAppointment(lindasAgent, added.id, { time: '15:30' });
+    await agent.cancelAppointment(lindasAgent, added.id);
+    await agent.deleteAppointment(lindasAgent, added.id);
+    await agent.cancelAppointment(lindasAgent, texted.id);
+    await expect(agent.deleteAppointment(lindasAgent, texted.id)).rejects.toThrow(/texted/);
+    const { series, appointments } = await agent.addSeries(
+      lindasAgent,
+      {
+        what: 'Dialysis',
+        date: '2026-11-23',
+        time: '09:00',
+        repeat: { every: 'week', weekdays: [0] },
+      },
+      '7c1d2e3f-4a5b-4c6d-8e7f-901a2b3c4d5e',
+    );
+    expect(await agent.everySeries()).toHaveLength(1);
+    expect(await agent.series(series.id)).toMatchObject({ id: series.id });
+    await agent.changeAppointment(lindasAgent, appointments[1].id, { placeName: 'Unit B' });
+    await agent.changeSeries(lindasAgent, appointments[2].id, { time: '10:00' });
+    await agent.endSeries(lindasAgent, appointments[4].id);
+
+    expect(api.activity()).toHaveLength(10);
+    expect(api.texts()).toHaveLength(1);
+  });
+
   it('hands back an Appointment the clocks moved on, and its held Reminder, as they were', async () => {
     const { store, core } = calendar();
     const { appointments } = await core.addSeries(linda, {
@@ -617,6 +716,54 @@ describe('the calendar kept in the data API', () => {
     await expect(core.deleteAppointment(linda, id)).rejects.toThrow('Unauthorized');
     api.failWith(null);
     expect(api.appointments()).toMatchObject([{ id, time: '14:00' }]);
+  });
+});
+
+describe('agent keys kept in the data API', () => {
+  const mark: Actor = { person: { id: 'person-mark', name: 'Mark' }, viaAgent: false };
+
+  it('keep a hash of each, and remove one when it is revoked', async () => {
+    const { api, core, store } = calendar();
+    const laptop = await core.makeAgentKey(linda, 'Laptop');
+    const phone = await core.makeAgentKey(linda, 'Phone');
+    await core.makeAgentKey(mark, 'Mark');
+    expect(JSON.stringify(api.agentKeys())).not.toContain(laptop.key);
+    expect(await store.agentKeyByHash(phone.hash)).toEqual({
+      hash: phone.hash,
+      personId: 'person-linda',
+      name: 'Phone',
+      madeAt: phone.madeAt,
+    });
+    await core.revokeAgentKey(linda, laptop.hash);
+    expect(await core.agentKeyOwner(laptop.key)).toBeNull();
+    expect(await core.agentKeyOwner(phone.key)).toBe('person-linda');
+    expect(api.agentKeys()).toHaveLength(2);
+  });
+
+  it('are revoked at once, even while reads have not caught up with the key being made', async () => {
+    const { api, core } = calendar();
+    api.freezeKeyReads();
+    const { hash } = await core.makeAgentKey(linda, 'Laptop');
+    await core.revokeAgentKey(linda, hash);
+    expect(api.agentKeys()).toEqual([]);
+  });
+
+  it('are never revoked by anyone else, even while reads lag, and say nothing of whose', async () => {
+    const { api, core } = calendar();
+    api.freezeKeyReads();
+    const { hash } = await core.makeAgentKey(linda, 'Laptop');
+    await core.revokeAgentKey(mark, hash);
+    await core.revokeAgentKey(mark, 'f'.repeat(64));
+    expect(api.agentKeys()).toMatchObject([{ hash, personId: 'person-linda' }]);
+  });
+
+  it('fail the revocation when the data API reports an error', async () => {
+    const { api, core } = calendar();
+    const { hash } = await core.makeAgentKey(linda, 'Laptop');
+    api.failWith('The data API is not answering');
+    await expect(core.revokeAgentKey(linda, hash)).rejects.toThrow();
+    api.failWith(null);
+    expect(api.agentKeys()).toHaveLength(1);
   });
 });
 

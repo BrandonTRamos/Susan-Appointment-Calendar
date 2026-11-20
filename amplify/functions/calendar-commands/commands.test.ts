@@ -164,6 +164,35 @@ describe('the commands, as the data API calls them', () => {
     expect(store.subscriptionLinks()).toMatchObject([{ personId: 'person-mark' }]);
   });
 
+  it("make and revoke the caller's own agent key, shown in full only when made", async () => {
+    const { store, call } = commands();
+    const made = await call('makeAgentKey', { name: 'Claude on my laptop' });
+    expect(made).toEqual({
+      agentKey: {
+        key: expect.stringMatching(/^sc_agent_[\w-]{43}$/),
+        hash: expect.stringMatching(/^[0-9a-f]{64}$/),
+        name: 'Claude on my laptop',
+        madeAt: '2026-11-19T20:00:00.000Z',
+      },
+    });
+    const { hash } = (made as { agentKey: { hash: string } }).agentKey;
+    expect(store.agentKeys()).toEqual([
+      { hash, personId: 'person-linda', name: 'Claude on my laptop', madeAt: expect.any(String) },
+    ]);
+    expect(await call('revokeAgentKey', { hash })).toEqual({ agentKey: null });
+    expect(store.agentKeys()).toEqual([]);
+    expect(store.activity()).toEqual([]);
+  });
+
+  it("never revoke another person's agent key, whatever was sent", async () => {
+    const { store, call } = commands({ 'account-linda': 'Linda', 'account-mark': 'Mark' });
+    const mark = { identity: { sub: 'person-mark', username: 'account-mark' } };
+    const made = await call('makeAgentKey', { name: 'Phone' }, mark);
+    const { hash } = (made as { agentKey: { hash: string } }).agentKey;
+    await call('revokeAgentKey', { hash, personId: 'person-mark' });
+    expect(store.agentKeys()).toMatchObject([{ hash, personId: 'person-mark' }]);
+  });
+
   it('also take a mutation named the way AppSync names it, with arguments not as text', async () => {
     const { store, handler } = commands();
     await handler({
