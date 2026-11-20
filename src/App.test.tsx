@@ -18,9 +18,9 @@ afterEach(() => {
 });
 
 describe('on a phone', () => {
-  it('opens on Upcoming with a bottom tab bar of Upcoming, Month, Replies and Settings', () => {
+  it('opens on Upcoming, headed with the app name, with a bottom tab bar of Upcoming, Month, Replies and Settings', () => {
     renderApp();
-    expect(screen.getByRole('heading', { level: 1, name: 'Upcoming' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: "Susan's Calendar" })).toBeInTheDocument();
     expect(tabNames()).toEqual(['Upcoming', 'Month', 'Replies', 'Settings']);
     expect(screen.getByRole('link', { name: 'Upcoming' })).toHaveAttribute('aria-current', 'page');
   });
@@ -64,11 +64,14 @@ describe('on a desktop', () => {
     expect(within(screen.getByRole('banner')).getByText('Linda')).toBeInTheDocument();
   });
 
-  it('opens a page for a new Appointment from the sidebar button', async () => {
+  it('opens the form for a new Appointment in the detail panel from the sidebar button', async () => {
     renderApp();
     await userEvent.click(screen.getByRole('link', { name: 'New Appointment' }));
     expect(window.location.pathname).toBe('/appointments/new');
-    expect(screen.getByRole('heading', { level: 1, name: 'New Appointment' })).toBeInTheDocument();
+    const panel = screen.getByRole('complementary', { name: 'Appointment details' });
+    expect(
+      within(panel).getByRole('heading', { level: 2, name: 'New Appointment' }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -109,7 +112,7 @@ describe('tabs and their URLs', () => {
 
   it('opens Upcoming for an address that does not exist', () => {
     renderApp('/no-such-page');
-    expect(screen.getByRole('heading', { level: 1, name: 'Upcoming' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: "Susan's Calendar" })).toBeInTheDocument();
     expect(window.location.pathname).toBe('/');
   });
 });
