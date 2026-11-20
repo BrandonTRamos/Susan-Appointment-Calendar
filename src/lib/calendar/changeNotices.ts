@@ -4,7 +4,7 @@
 import { addDays, localDateTime, momentOrSkipped } from '../localTime';
 import type { Appointment } from './appointment';
 import { isOvernight } from './reminders';
-import { mayHaveReachedSusan, type Text, type Told } from './texts';
+import { takenBySender, type Text, type Told } from './texts';
 
 /**
  * How long an Appointment must go without another edit before a Change notice about it is due, so
@@ -49,18 +49,18 @@ export function changeNoticeCutoff(was: Told | null, told: Told, timeZone: strin
 }
 
 /** When a text could have reached her: when the sender took it, or else when it was last tried. */
-const reachedAt = (text: Text) => text.sentAt ?? text.triedAt;
+/** When a text went, or for one not known to have gone, when it was last tried. */
+const wentAt = (text: Text) => text.sentAt ?? text.triedAt;
 
 const later = (a: Text, b: Text) =>
-  reachedAt(a).localeCompare(reachedAt(b)) ||
-  a.dueAt.localeCompare(b.dueAt) ||
-  a.id.localeCompare(b.id);
+  wentAt(a).localeCompare(wentAt(b)) || a.dueAt.localeCompare(b.dueAt) || a.id.localeCompare(b.id);
 
 /**
- * What Susan was last told of an Appointment: what the most recent text about it that may have
- * reached her told her (mayHaveReachedSusan in texts.ts). Null when no such text has gone out, so a
- * change to it is no news to her. A text recorded before the calendar kept what each one told her
- * is passed over. Given `before`, a text about it, only the texts that went before that one count.
+ * What Susan was last told of an Appointment: what the text about it that the text sender took most
+ * recently told her (takenBySender in texts.ts). Null when the sender has taken none, so a change
+ * to it is no news to her: a text only claimed or tried with no answer does not count. A text
+ * recorded before the calendar kept what each one told her is passed over. Given `before`, a text
+ * about it, only the texts that went before that one count.
  */
 export function lastTold(
   appointmentId: string,
@@ -69,7 +69,7 @@ export function lastTold(
 ): Told | null {
   let latest: Text | null = null;
   for (const text of texts) {
-    if (text.appointmentId !== appointmentId || !text.told || !mayHaveReachedSusan(text)) continue;
+    if (text.appointmentId !== appointmentId || !text.told || !takenBySender(text)) continue;
     if (before && (text.id === before.id || later(text, before) > 0)) continue;
     if (!latest || later(text, latest) > 0) latest = text;
   }

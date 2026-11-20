@@ -177,6 +177,18 @@ export function mayHaveReachedSusan(text: Text): boolean {
   return !(text.status === 'failed' && text.reason === 'refused');
 }
 
+/**
+ * Whether the text sender is known to have taken the text: it recorded when (`sentAt`). This, and
+ * not mayHaveReachedSusan, is what says Susan has heard about an Appointment, for Change notices: a
+ * text claimed by a run that stopped before sending, or tried with no answer, does not count, so
+ * she is never told of a change to something she may never have heard of. The deletion rule stays
+ * the cautious one. Should the calendar later learn that a text it handed over did not reach her
+ * phone, that text is to be left out here; one merely not confirmed still counts.
+ */
+export function takenBySender(text: Text): boolean {
+  return text.sentAt !== null;
+}
+
 /** The texts about an Appointment, newest due first. */
 export function textsAbout(appointmentId: string, texts: readonly Text[]): Text[] {
   return texts

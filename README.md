@@ -121,8 +121,8 @@ still to go out at the top.
   it up first, and only while its Reminder is still the same and its Appointment has not started.
 - An exact-time Reminder flagged for review because its Appointment moved is not sent until
   someone keeps it or changes it.
-- **Change notices.** Once a text about an Appointment may have reached Susan, a move or a
-  cancellation sends her a Change notice, giving the time she was last told and the new time or
+- **Change notices.** Once the text sender has taken a text about an Appointment, a move or a
+  cancellation sends Susan a Change notice, giving the time she was last told and the new time or
   that it is cancelled. It goes five minutes after the last edit, so a run of corrections makes one
   notice about the net change and an edit put back makes none. One that comes up between 9:00 pm
   and 7:00 am, Susan's time, waits until 7:00 am unless the old or new time comes before then.
