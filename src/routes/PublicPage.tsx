@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
-import { CONSENT_CONFIRMATION, consentScript } from '../lib/consent';
+import { CONSENT_CONFIRMATION } from '../lib/consent';
 import { PUBLIC_PATHS, type PublicPageName } from '../lib/publicPage';
 
 export interface PublicPageProps {
@@ -27,7 +27,7 @@ const TITLES: Record<PublicPageName, string> = {
   terms: 'Terms and Conditions',
 };
 
-/** "run by …": the sender's identity, which the text-message registration is checked against. */
+/** "run by …": who is behind the calendar and its texts. */
 function runBy(ownerName: string | null) {
   return ownerName ? `run by ${ownerName}, a private individual,` : 'run by a private individual';
 }
@@ -56,12 +56,11 @@ function PrivacyPolicy({ contactEmail, ownerName }: OwnerDetails) {
         one family.
       </p>
       <Clause lead="What is kept.">
-        The mobile number of the one person who receives text messages, and the record of her
-        consent: the date she agreed and how. The appointments entered in the calendar: what each
-        one is, when and where it is, who it is with, who is driving, and notes. The name and email
-        address of each person with an account. The text messages sent, whether each one was
-        delivered, and any replies. The name and phone number of the person she is told to call for
-        help.
+        The mobile number of the one person who receives text messages. The appointments entered in
+        the calendar: what each one is, when and where it is, who it is with, who is driving, and
+        notes. The name and email address of each person with an account. The text messages sent,
+        whether each one was delivered, and any replies. The name and phone number of the person she
+        is told to call for help.
       </Clause>
       <Clause lead="How it is used.">
         Only to keep the calendar, to send Susan the reminders she agreed to, and to tell the people
@@ -71,9 +70,9 @@ function PrivacyPolicy({ contactEmail, ownerName }: OwnerDetails) {
       <Clause lead="Sharing.">
         Mobile numbers and consent to receive text messages are never sold, rented or shared with
         third parties or affiliates, for marketing or for any other purpose. The only companies that
-        handle them are the ones that deliver the messages and host the calendar, Twilio and Amazon
-        Web Services, and they may use them only to do that. We do not sell or share SMS opt-in data
-        or any other personal information with third parties for marketing purposes.
+        handle them are the ones that deliver the messages and host the calendar, Textbelt and
+        Amazon Web Services, and they may use them only to do that. We do not sell or share SMS
+        opt-in data or any other personal information with third parties for marketing purposes.
       </Clause>
       <Clause lead="Text messages.">
         {FREQUENCY} Message and data rates may apply. Reply STOP to stop the messages, or HELP for
@@ -111,8 +110,8 @@ function Terms({ contactEmail, ownerName }: OwnerDetails) {
         No advertising is ever sent, and nobody else receives messages.
       </Clause>
       <Clause lead="Agreeing.">
-        Messages are sent only after she has said yes, in person, to the words shown on the{' '}
-        <a href={PUBLIC_PATHS.about}>About page</a>. Agreeing is not a condition of anything.
+        Messages are sent only because she has agreed to receive them. Agreeing is not a condition
+        of anything.
       </Clause>
       <Clause lead="How often.">{FREQUENCY}</Clause>
       <Clause lead="Message and data rates may apply.">
@@ -120,8 +119,7 @@ function Terms({ contactEmail, ownerName }: OwnerDetails) {
         on her plan.
       </Clause>
       <Clause lead="Reply STOP to any message to stop all messages.">
-        One message confirms it and no more are sent after that. <strong>Reply START</strong> to
-        turn them back on.
+        No more are sent after that. <strong>Reply START</strong> to turn them back on.
       </Clause>
       <Clause lead="Reply HELP to any message for help,">
         or ask <Contact contactEmail={contactEmail} />.
@@ -146,7 +144,6 @@ function Terms({ contactEmail, ownerName }: OwnerDetails) {
 }
 
 function About({ contactEmail, ownerName }: OwnerDetails) {
-  const script = consentScript(window.location.host);
   return (
     <>
       <h1>{TITLES.about}</h1>
@@ -184,20 +181,10 @@ function About({ contactEmail, ownerName }: OwnerDetails) {
       <section>
         <h2>How consent is given</h2>
         <p>
-          No mobile number is collected on this website or by text message. Susan is asked in
-          person, and answers for herself. {ownerName ?? 'The person who runs the calendar'} reads
-          her these words:
+          No mobile number is collected on this website or by text message. Susan has agreed,
+          herself, to receive these messages. The first one she gets says so and tells her how to
+          stop:
         </p>
-        <blockquote className="quoted">
-          {script.ask.map((words) => (
-            <p key={words}>{words}</p>
-          ))}
-        </blockquote>
-        <p>If she agrees, she is told:</p>
-        <blockquote className="quoted">
-          <p>{script.afterYes}</p>
-        </blockquote>
-        <p>The date is written down, and one text message confirms it:</p>
         <blockquote className="quoted">
           <p>{CONSENT_CONFIRMATION}</p>
         </blockquote>
@@ -231,7 +218,7 @@ function About({ contactEmail, ownerName }: OwnerDetails) {
 /**
  * The pages anyone can open without signing in: what Susan's Calendar is, its privacy policy and
  * its terms. About carries all three; the policy and the terms also have a page each, because the
- * text-message registration asks for a direct address for each. Links here are plain ones: these
+ * policy and the terms each need an address that can be handed to someone. Links here are plain ones: these
  * pages sit outside the app's router (src/Root.tsx).
  */
 export function PublicPage({ page, contactEmail, ownerName, sampleData }: PublicPageProps) {

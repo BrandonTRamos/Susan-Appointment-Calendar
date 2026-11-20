@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR 0002
 ---
 
 # Text messages are sent through Twilio, not AWS

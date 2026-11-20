@@ -6,7 +6,7 @@
 
 **Blocked by:** 08 (App notifications and Activity updates), 11 (Sending texts on schedule).
 
-**Parallel:** Yes, with 13, 14 and 16. It does not wait for Twilio: an Alert is raised for any text that reaches a failed or not-sent status, whatever caused it, so the failures ticket 13 introduces raise Alerts without further work.
+**Parallel:** Yes, with 13, 14 and 16. It does not wait for Textbelt: an Alert is raised for any text that reaches a failed or not-sent status, whatever caused it, so the failures ticket 13 introduces raise Alerts without further work.
 
 **Status:** ready-for-agent
 

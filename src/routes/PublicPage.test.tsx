@@ -66,15 +66,13 @@ describe('the About page', () => {
     ).toBeInTheDocument();
   });
 
-  it('shows the words read aloud to ask for consent, and the text that confirms it', () => {
+  it('says that she agreed herself, and shows the text that confirms it', () => {
     renderPage('about');
     const consent = section('How consent is given');
-    expect(consent.getByText(/Do you agree to get these text reminders/)).toBeInTheDocument();
-    expect(consent.getByText(/yes or no/)).toBeInTheDocument();
+    expect(
+      consent.getByText(/Susan has agreed, herself, to receive these messages/),
+    ).toBeInTheDocument();
     expect(consent.getByText(CONSENT_CONFIRMATION)).toBeInTheDocument();
-    // The script gives the addresses of the terms and the privacy policy on this site.
-    expect(consent.getByText(new RegExp(`${window.location.host}/terms`))).toBeInTheDocument();
-    expect(consent.getByText(new RegExp(`${window.location.host}/privacy`))).toBeInTheDocument();
   });
 });
 
@@ -93,7 +91,7 @@ describe('the privacy policy', () => {
       /Mobile numbers and consent to receive text messages are never sold, rented or shared with third parties or affiliates, for marketing or for any other purpose\./,
     );
     // The companies that carry the texts are named, not hidden behind "never".
-    expect(policy).toHaveTextContent(/Twilio/);
+    expect(policy).toHaveTextContent(/Textbelt/);
     expect(policy).toHaveTextContent(/only to do that/);
   });
 
@@ -101,7 +99,6 @@ describe('the privacy policy', () => {
     renderPage('privacy', { ownerName: 'Linda Example' });
     const policy = screen.getByRole('main');
     expect(policy).toHaveTextContent(/mobile number/);
-    expect(policy).toHaveTextContent(/date/);
     expect(policy).toHaveTextContent(/deleted/);
     expect(policy).toHaveTextContent(/Linda Example/);
     expect(screen.getAllByRole('link', { name: 'owner@example.com' }).length).toBeGreaterThan(0);

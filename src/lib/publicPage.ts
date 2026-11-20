@@ -3,7 +3,7 @@
 
 export type PublicPageName = 'about' | 'privacy' | 'terms';
 
-/** Each public page's address. Twilio's registration is given these, so they must not change. */
+/** Each public page's address. People may keep or pass on these addresses, so they must not change. */
 export const PUBLIC_PATHS: Record<PublicPageName, string> = {
   about: '/about',
   privacy: '/privacy',

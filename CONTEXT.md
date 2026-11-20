@@ -29,7 +29,7 @@ A text message to Susan saying that an Appointment she has already been reminded
 _Avoid_: Update, cancellation text, correction
 
 **Confirmation text**:
-The one text message sent to Susan straight after she agrees to be texted, saying that she agreed and how to stop the texts. It is the first text she gets and the only one that carries opt-out wording. It is not a Reminder.
+The first text message Susan gets, sent once, saying that she agreed to be texted and how to stop the texts. It is the only one that carries opt-out wording. It is not a Reminder.
 _Avoid_: Welcome message, opt-in message, first Reminder
 
 **Reply**:
@@ -45,7 +45,7 @@ Word to the other Admins that someone has added, changed or cancelled an Appoint
 _Avoid_: Notification, change notice, audit alert
 
 **Public pages**:
-The pages anyone can open without signing in: what the calendar is, its privacy policy and its terms. They exist so that the registration to send text messages can be reviewed.
+The pages anyone can open without signing in: what the calendar is, its privacy policy and its terms. They exist so that Susan, and anyone who asks, can read what the calendar texts and what it does with her number.
 _Avoid_: Landing page, marketing site, legal pages
 
 **Driver**:
