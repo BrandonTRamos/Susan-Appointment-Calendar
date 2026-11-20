@@ -125,28 +125,36 @@ failed or not sent. The Appointment's screen shows each Reminder's status and ev
 
 ## Alerts
 
-When a Reminder or Change notice does not get through, every Admin is told by email and by app
-notification. Susan's account is not an Admin's, so she never gets one.
+When a text to Susan does not get through, every Admin is told by email and by app notification.
+Susan's account is not an Admin's, so she never gets one.
 
-- **When.** A text fails (refused, or sending did not go through after its tries), is marked not
-  confirmed delivered (once ticket 13 asks Textbelt), or could not be sent before its Appointment
-  started. A Reminder that was not sent only because Susan's mobile number is not set in Settings
-  raises one too, worded as a gap in the setup rather than a failure. A test text that fails raises
-  none: whoever sent it sees its status. Texts recorded before Alerts existed raise none.
-- **Once.** One text raises one Alert, however many runs see it. If a run stops before telling
-  anyone, the next run does. If email cannot be sent, the app notification still goes, and the
-  other way round.
-- **What it says.** Which Appointment (what it is, its date and time), which text (a Reminder or a
-  Change notice, and when it was due), and why: "failed", "was not confirmed delivered", "could not
-  be sent in time" or "was not sent" because her number is not set. Nothing more personal: never
-  Susan's number, the text's words, the place, the Driver or the notes. The email ends with a link
-  to the Appointment, and tapping the app notification opens it.
+- **When.** A text of any kind (a Reminder, a Change notice, a test text) fails: refused, sending
+  did not go through after its tries, or reported not delivered. Or it is marked not confirmed
+  delivered (once ticket 13 asks Textbelt), or could not be sent before its Appointment started.
+  A Reminder that was not sent only because Susan's mobile number was not set raises one too,
+  worded as a gap in the setup rather than a failure. Until her number is entered (ticket 18),
+  that means an Alert for every Reminder that comes due. A Reminder held for review sends nothing
+  and raises none. Texts recorded before Alerts existed raise none.
+- **Who sends it.** The scheduled run, every minute. A failed test text is marked by the command
+  that sent it, and the next run sends its Alert, within a minute.
+- **Once, and to everyone.** One text raises one Alert. Each Admin gets it once by email and once
+  on each device with app notifications on; each of those is recorded as soon as it goes and never
+  sent again. One that failed is tried again by a later run, two minutes on, up to three tries in
+  all, while the others are not repeated. One refused for good (an address SES will not send to),
+  and one with nothing to reach (email not set up, no address, no device turned on), is not tried
+  again: that is not a failure. If a run stops part way, a later run sends only what had not gone.
+- **What it says.** Which Appointment (what it is, its date and time), which text (its kind, and
+  when it was due), and why: "failed", "was not confirmed delivered", "could not be sent in time"
+  or "was not sent" because her number was not set. A test text's Alert says it was sent from
+  Settings. Nothing more personal: never Susan's number, the text's words, the place, the Driver or
+  the notes. The email ends with a link to the Appointment (or Settings), and tapping the app
+  notification opens it.
 - **The banner.** While the most recent text to Susan, of any kind, failed or did not get through,
-  a banner shows at the top of every screen, with a link to the text. It clears once a later text
-  goes, so a test text from Settings clears it once texts work again. While no texts go to her
-  because her number is not set, it says so and links to Settings.
+  a banner shows at the top of every screen, with a link to the text. It says what happened to
+  that text, so after a missing number is entered it still reads "was not sent: her mobile number
+  was not set". It clears once a later text goes: send a test text from Settings to clear it.
 - **Setting up the emails.** See [Alert emails](#alert-emails). Without `ALERT_EMAIL_FROM`, Alerts go
-  by app notification only.
+  by app notification only, and the scheduled run may not send email at all.
 
 ## Calendar subscription
 
@@ -244,15 +252,22 @@ request is needed. The owner does these steps once; nothing in the repository do
 3. Set `ALERT_EMAIL_FROM` to the first address under **Hosting → Environment variables**, and
    redeploy.
 
-The scheduled run may send email through SES identities in its own account and region and nothing
-else there. SES charges about $0.10 per thousand emails.
+The scheduled run may call `ses:SendEmail` and nothing else in SES: only with `ALERT_EMAIL_FROM` as
+the From address (the `ses:FromAddress` condition), and only through identities in its own account
+and region. AWS's [SES v2 authorization reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_sesv2.html),
+read on 20 November 2026, lists `SendEmail` on the `identity` resource with that condition key. The
+grant covers every identity in the account and region, not only the sender's, because the sender
+may be verified as an address or as its domain, and in the sandbox the recipients are verified
+identities too. `npm run synth` checks it. SES charges for each email; what it costs depends on the plan the account is on (pay-as-you-go or a Mail Manager / Essentials plan), so see [AWS's SES pricing](https://aws.amazon.com/ses/pricing/) rather than a figure here. A handful of Alerts a month costs very little either way.
 
 **Try it once, by hand.** In the SES console, **Send test email** from the sender to one Admin's
-address proves the two are verified. Then, before Susan's number is entered (ticket 18), add an
+address proves the two are verified. Then make a text fail on purpose. Once ticket 13 sends real
+texts, a test text to a mistyped number does it (ticket 18 asks for this). Before then, add an
 Appointment for later today with one Reminder a few minutes ahead and leave Susan's mobile number
-empty in Settings. When the Reminder comes due, every Admin should get an email and an app
-notification saying it was not sent because her number is not set, each opening the Appointment,
-and the banner should show. Delete the Appointment afterwards: nothing was sent, so it can be.
+empty in Settings. Within a minute of the failure every Admin should get an email and an app
+notification, each opening the Appointment or Settings, and the banner should show. Delete the
+Appointment afterwards (nothing was sent, so it can be), then send a test text to clear the
+banner.
 
 ## Accounts
 

@@ -90,6 +90,14 @@ function notSentBecause(text: Text): string {
   }
 }
 
+/** A kind of text in the middle of a sentence. */
+const A_TEXT: Record<TextKind, string> = {
+  reminder: 'a Reminder',
+  changeNotice: 'a Change notice',
+  automaticAnswer: 'an automatic answer',
+  test: 'a test text',
+};
+
 /**
  * The banner's words while the most recent text to Susan did not get through, and where to look
  * into it: the Appointment it was about, or Settings.
@@ -101,23 +109,25 @@ export function troubleWords(
   const look = text.appointmentId
     ? { opens: `/appointments/${text.appointmentId}`, label: 'See the text' }
     : { opens: '/settings', label: 'Open Settings' };
-  const kind = KIND_NAMES[text.kind];
+  const kind = A_TEXT[text.kind];
   switch (trouble) {
     case 'failed':
-      return { words: `The last text to Susan, a ${kind}, failed.`, ...look };
+      return { words: `The last text to Susan, ${kind}, failed.`, ...look };
     case 'unconfirmed':
       return {
-        words: `The last text to Susan, a ${kind}, was not confirmed delivered. Her phone may be off.`,
+        words: `The last text to Susan, ${kind}, was not confirmed delivered. Her phone may be off.`,
         ...look,
       };
     case 'tooLate':
       return {
-        words: `The last text to Susan, a ${kind}, could not be sent in time.`,
+        words: `The last text to Susan, ${kind}, could not be sent in time.`,
         ...look,
       };
+    // What happened to that text, not how Settings stand now: the number may have been entered
+    // since. A later text that goes clears it.
     case 'noNumber':
       return {
-        words: 'No texts are going to Susan: her mobile number is not set in Settings.',
+        words: `The last text to Susan, ${kind}, was not sent: her mobile number was not set in Settings.`,
         opens: '/settings',
         label: 'Open Settings',
       };

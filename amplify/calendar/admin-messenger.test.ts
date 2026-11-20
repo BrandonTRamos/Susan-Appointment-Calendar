@@ -447,6 +447,22 @@ describe('app notifications to Admins', () => {
     expect(api.devices()).toMatchObject([{ personId: 'person-mark', auth: 'renewed' }]);
   });
 
+  it('say what became of each device, and leave out those that went already', async () => {
+    const { messenger: m, push } = await messenger({
+      'https://web.push.apple.com/lindas-laptop': 'failed',
+      'https://web.push.apple.com/marks-phone': 'gone',
+    });
+    const went = await m.sendAppNotification(['person-linda', 'person-mark'], update);
+    expect(went.sent).toHaveLength(1);
+    expect(went.failed).toHaveLength(1);
+    // A gone device has nothing to reach any more: it is neither sent nor failed.
+    expect(went.refused).toEqual([]);
+    const again = await m.sendAppNotification(['person-linda', 'person-mark'], update, went.sent);
+    expect(again.sent).toEqual([]);
+    expect(again.failed).toEqual(went.failed);
+    expect(push.reached.filter((r) => r.endpoint.endsWith('lindas-phone'))).toHaveLength(1);
+  });
+
   it('go nowhere while nobody has turned notifications on', async () => {
     const api = dataApi();
     const push = pushService();
@@ -557,23 +573,39 @@ describe('emails to Admins', () => {
     expect(sent[0].body).toBe('A Reminder to Susan failed.');
   });
 
-  it('still reach the others when one cannot be sent, and fail only when none could', async () => {
-    const some = messenger({ 'linda@example.com': 'rejected' });
-    await some.messenger.sendEmail(['person-linda', 'person-mark'], alert);
-    expect(some.sent.map((email) => email.to)).toEqual(['linda@example.com', 'mark@example.com']);
-    const none = messenger({ 'linda@example.com': 'rejected', 'mark@example.com': 'failed' });
-    await expect(none.messenger.sendEmail(['person-linda', 'person-mark'], alert)).rejects.toThrow(
-      'No Alert email could be sent',
-    );
+  it('say what became of each one, so that only those that failed are sent again', async () => {
+    const { messenger: m, sent } = messenger({
+      'linda@example.com': 'rejected',
+      'mark@example.com': 'failed',
+    });
+    expect(await m.sendEmail(['person-linda', 'person-mark', 'person-ann'], alert)).toEqual({
+      sent: ['email:person-ann'],
+      failed: ['email:person-mark'],
+      refused: ['email:person-linda'],
+    });
+    expect(sent.map((email) => email.to)).toEqual([
+      'linda@example.com',
+      'mark@example.com',
+      'ann@example.com',
+    ]);
+    // Asked again, leaving out what went: only the others are sent.
+    expect(
+      await m.sendEmail(['person-mark', 'person-ann'], alert, ['email:person-ann']),
+    ).toMatchObject({ failed: ['email:person-mark'], sent: [] });
+    expect(sent.map((email) => email.to).at(-1)).toBe('mark@example.com');
   });
 
-  it('are not sent, and nothing fails, where email is not set up', async () => {
+  it('are not sent, and nothing failed, where email is not set up', async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     const m = adminMessenger({
       admins: async () => accounts('person-linda'),
       devices: dataApiDevices(dataApi().client),
       push: pushService().sender,
     });
-    await expect(m.sendEmail(['person-linda'], alert)).resolves.toBeUndefined();
+    expect(await m.sendEmail(['person-linda'], alert)).toEqual({
+      sent: [],
+      failed: [],
+      refused: [],
+    });
   });
 });

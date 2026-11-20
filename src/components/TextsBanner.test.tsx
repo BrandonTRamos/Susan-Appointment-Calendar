@@ -60,12 +60,32 @@ describe.each(['phone', 'desktop'] as const)('the banner about texts, at %s widt
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
   });
 
-  it('says plainly when no texts are going to Susan because her number is not set', async () => {
-    const { calendar } = await calendarWithDueReminder({ susansNumber: null });
+  it('says when the last text was not sent because her number was not set, and stays true once it is', async () => {
+    const { calendar, clock } = await calendarWithDueReminder({ susansNumber: null });
     renderApp('/', { calendar });
-    expect(await banner()).toHaveTextContent(
-      'No texts are going to Susan: her mobile number is not set in Settings.',
+    const words =
+      'The last text to Susan, a Reminder, was not sent: her mobile number was not set in Settings.';
+    expect(await banner()).toHaveTextContent(words);
+    expect(screen.getByRole('link', { name: 'Open Settings' })).toHaveAttribute(
+      'href',
+      '/settings',
     );
+    // Entering the number does not make it untrue: it is about that text. A test text clears it.
+    await act(() => calendar.changeSettings({ susansNumber: '+15555550123' }));
+    expect(await banner()).toHaveTextContent(words);
+    expect(screen.queryByText(/is not set/)).toBeNull();
+    clock.set(new Date(clock.now().getTime() + 60_000).toISOString());
+    await act(() => calendar.core.sendTestText(linda));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  });
+
+  it('shows when a test text from Settings fails, and points to Settings', async () => {
+    const { calendar, clock } = await calendarWithDueReminder();
+    clock.set(new Date(clock.now().getTime() + 60_000).toISOString());
+    calendar.sender.refuseNext();
+    await calendar.core.sendTestText(linda);
+    renderApp('/month', { calendar });
+    expect(await banner()).toHaveTextContent('The last text to Susan, a test text, failed.');
     expect(screen.getByRole('link', { name: 'Open Settings' })).toHaveAttribute(
       'href',
       '/settings',

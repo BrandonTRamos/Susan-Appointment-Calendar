@@ -61,16 +61,36 @@ export interface Text {
   /** The text sender's own name for it, for asking later what became of it. */
   reference: string | null;
   /**
-   * The Alert about it (alerts.ts): due when it failed or could not be sent and the Admins are
-   * still to be told, raised once they have been. Null for a text that needs none, and for one
-   * recorded before the calendar raised Alerts.
+   * The Alert about it (alerts.ts), once it failed or could not be sent; null for a text that needs
+   * none, and for one recorded before the calendar raised Alerts.
    */
-  alert: AlertState | null;
+  alert: TextAlert | null;
 }
 
-export const ALERT_STATES = ['due', 'raised'] as const;
-/** Whether the Admins are still to be told about a text that did not reach Susan, or have been. */
+export const ALERT_STATES = ['due', 'sending', 'raised'] as const;
+/**
+ * Where the Alert about a text has got to. Due: to be sent, or sent in part and to be tried again.
+ * Sending: a run holds it and is sending it now. Raised: every delivery went, or was given up.
+ */
 export type AlertState = (typeof ALERT_STATES)[number];
+
+/**
+ * The one Alert about a text, and how far it has got. It goes to each Admin by each channel; each
+ * of those deliveries is named by the Admin messenger, and one known to have gone is never sent
+ * again.
+ */
+export interface TextAlert {
+  state: AlertState;
+  /** How many times a run has taken it up to send. */
+  tries: number;
+  /** When a run last took it up; null until one has. */
+  triedAt: string | null;
+  /** Each delivery known to have gone, as the messenger names it, such as 'email:<person ID>'. */
+  sent: string[];
+}
+
+/** How many times a run takes up an Alert whose deliveries keep failing, before giving them up. */
+export const ALERT_ATTEMPTS = 3;
 
 /** Where texts go, and who Susan is told to call. Changed only through the calendar core. */
 export interface CalendarSettings {

@@ -17,6 +17,7 @@ import {
   type NewAppointment,
   type ReminderSetting,
   NO_TEXT_SENDER,
+  ALERT_ATTEMPTS,
   reminderTextId,
   textTrouble,
   type Text,
@@ -2522,13 +2523,20 @@ describe('the settings for texts', () => {
 });
 
 describe('Alerts', () => {
-  /** Every Alert sent so far: by email and by app notification, with who each went to. */
+  /** Every Alert delivery so far, by channel: who each went to, in order, and in what words. */
   const alerts = (messenger: ReturnType<typeof calendar>['messenger']) => ({
-    emails: messenger.emails(),
+    emails: messenger.emails().flatMap(({ to, email }) => to.map((id) => ({ to: id, email }))),
     notifications: messenger
       .appNotifications()
-      .filter(({ notification }) => notification.tag.startsWith('alert-')),
+      .filter(({ notification }) => notification.tag.startsWith('alert-'))
+      .flatMap(({ to, notification }) => to.map((id) => ({ to: id, notification }))),
   });
+  /** Who each channel reached, in order. */
+  const reached = (messenger: ReturnType<typeof calendar>['messenger']) => {
+    const { emails, notifications } = alerts(messenger);
+    return { email: emails.map((each) => each.to), app: notifications.map((each) => each.to) };
+  };
+  const EVERY_ADMIN = { email: ADMINS, app: ADMINS };
 
   /** A calendar with Susan's number set and the check-up tomorrow at 2:00 pm, its Reminder due. */
   async function ready(details: Partial<NewAppointment> = {}) {
@@ -2538,6 +2546,11 @@ describe('Alerts', () => {
     cal.clock.set(added.reminders[0].dueAt); // 6:00 pm, the day before
     return { ...cal, added };
   }
+  /** Moves the clock on by minutes and runs what is due. */
+  const later = async ({ core, clock }: ReturnType<typeof calendar>, minutes: number) => {
+    clock.set(new Date(clock.now().getTime() + minutes * 60_000).toISOString());
+    await core.runDue();
+  };
 
   it('tell every Admin by email and app notification when a text to Susan fails', async () => {
     const { core, sender, store, messenger, added } = await ready();
@@ -2546,32 +2559,29 @@ describe('Alerts', () => {
     const [text] = store.texts();
     expect(text).toMatchObject({ status: 'failed', reason: 'refused' });
     const { emails, notifications } = alerts(messenger);
-    expect(emails).toEqual([
-      {
-        to: ADMINS,
-        email: {
-          subject: "Susan's Calendar alert: a Reminder failed",
-          body:
-            'A Reminder to Susan failed: the text was refused, so it did not go. ' +
-            'She may not have been reminded.\n\n' +
-            'Appointment: Cardiology check-up, Fri, Nov 20, 2026 at 2:00 pm\n' +
-            'Text: the Reminder due Thu, Nov 19, 2026 at 6:00 pm\n\n' +
-            'You may want to call Susan. The Appointment and its texts are in the app.',
-          opens: `/appointments/${added.id}`,
-        },
-      },
-    ]);
-    expect(notifications).toEqual([
-      {
-        to: ADMINS,
-        notification: {
-          title: "Susan's Calendar alert",
-          body: 'A Reminder failed: Cardiology check-up, Fri, Nov 20, 2026 at 2:00 pm. She may not have been reminded.',
-          opens: `/appointments/${added.id}`,
-          tag: `alert-${text.id}`,
-        },
-      },
-    ]);
+    expect(reached(messenger)).toEqual(EVERY_ADMIN);
+    expect(emails[0].email).toEqual({
+      subject: "Susan's Calendar alert: a Reminder failed",
+      body:
+        'A Reminder to Susan failed: the text was refused, so it did not go. ' +
+        'She may not have been reminded.\n\n' +
+        'Appointment: Cardiology check-up, Fri, Nov 20, 2026 at 2:00 pm\n' +
+        'Text: the Reminder due Thu, Nov 19, 2026 at 6:00 pm\n\n' +
+        'You may want to call Susan. The Appointment and its texts are in the app.',
+      opens: `/appointments/${added.id}`,
+    });
+    expect(notifications[0].notification).toEqual({
+      title: "Susan's Calendar alert",
+      body: 'A Reminder failed: Cardiology check-up, Fri, Nov 20, 2026 at 2:00 pm. She may not have been reminded.',
+      opens: `/appointments/${added.id}`,
+      tag: `alert-${text.id}`,
+    });
+    expect(store.texts()[0].alert).toEqual({
+      state: 'raised',
+      tries: 1,
+      triedAt: added.reminders[0].dueAt,
+      sent: ADMINS.flatMap((id) => [`email:${id}`, `app:${id}`]),
+    });
   });
 
   it('go to every Admin, the one who made the Appointment included, and never to Susan', async () => {
@@ -2582,29 +2592,20 @@ describe('Alerts', () => {
     clock.set(added.reminders[0].dueAt);
     sender.refuseNext();
     await core.runDue();
-    const { emails, notifications } = alerts(messenger);
-    for (const { to } of [...emails, ...notifications]) {
-      expect(to).toEqual(ADMINS);
-      expect(to).not.toContain(susan.person.id);
-    }
-    expect(emails).toHaveLength(1);
-    expect(notifications).toHaveLength(1);
+    expect(reached(messenger)).toEqual(EVERY_ADMIN);
+    expect(JSON.stringify(reached(messenger))).not.toContain(susan.person.id);
   });
 
   it('raise one Alert for one failed text, however many runs see it', async () => {
-    const { core, clock, sender, messenger, store } = await ready();
-    sender.breakNext(3);
-    for (const at of ['23:00', '23:02', '23:04', '23:06', '23:08', '23:30']) {
-      clock.set(`2026-11-19T${at}:00.000Z`);
-      await core.runDue();
-    }
-    expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'gaveUp' }]);
-    const { emails, notifications } = alerts(messenger);
-    expect(emails).toHaveLength(1);
-    expect(emails[0].email.body).toMatch(
+    const cal = await ready();
+    cal.sender.breakNext(3);
+    await cal.core.runDue();
+    for (const minutes of [2, 2, 2, 2, 22]) await later(cal, minutes);
+    expect(cal.store.texts()).toMatchObject([{ status: 'failed', reason: 'gaveUp' }]);
+    expect(reached(cal.messenger)).toEqual(EVERY_ADMIN);
+    expect(alerts(cal.messenger).emails[0].email.body).toMatch(
       /^A Reminder to Susan failed: sending did not go through after 3 tries\./,
     );
-    expect(notifications).toHaveLength(1);
   });
 
   it('raise one Alert when two runs overlap', async () => {
@@ -2618,8 +2619,7 @@ describe('Alerts', () => {
     });
     sender.refuseNext();
     await Promise.all([core.runDue(), other.runDue(), core.runDue()]);
-    expect(alerts(messenger).emails).toHaveLength(1);
-    expect(alerts(messenger).notifications).toHaveLength(1);
+    expect(reached(messenger)).toEqual(EVERY_ADMIN);
   });
 
   it('tell every Admin when a text is marked not confirmed delivered, and say so, not "failed"', async () => {
@@ -2632,9 +2632,8 @@ describe('Alerts', () => {
     const marked = await core.recordDelivery({ textId: sent.id, outcome: 'unconfirmed' });
     expect(marked).toMatchObject({ status: 'failed', reason: 'unconfirmed' });
     expect(store.texts()).toMatchObject([{ status: 'failed', reason: 'unconfirmed' }]);
+    expect(reached(messenger)).toEqual(EVERY_ADMIN);
     const { emails, notifications } = alerts(messenger);
-    expect(emails).toHaveLength(1);
-    expect(emails[0].to).toEqual(ADMINS);
     expect(emails[0].email.subject).toBe(
       "Susan's Calendar alert: a Reminder was not confirmed delivered",
     );
@@ -2643,14 +2642,13 @@ describe('Alerts', () => {
     );
     expect(`${emails[0].email.subject} ${emails[0].email.body}`).not.toMatch(/failed/i);
     expect(emails[0].email.opens).toBe(`/appointments/${added.id}`);
-    expect(notifications).toHaveLength(1);
     expect(notifications[0].notification.body).toMatch(/^A Reminder was not confirmed delivered: /);
     expect(notifications[0].notification.body).not.toMatch(/failed/i);
 
     // Marked once: hearing of it again changes nothing and raises no second Alert.
     expect(await core.recordDelivery({ textId: sent.id, outcome: 'unconfirmed' })).toBeNull();
     expect(await core.recordDelivery({ textId: sent.id, outcome: 'delivered' })).toBeNull();
-    expect(alerts(messenger).emails).toHaveLength(1);
+    expect(reached(messenger)).toEqual(EVERY_ADMIN);
   });
 
   it('tell every Admin when a text is reported as not delivered, as a failure', async () => {
@@ -2671,6 +2669,7 @@ describe('Alerts', () => {
     expect(await core.recordDelivery({ textId: sent.id, outcome: 'delivered' })).toMatchObject({
       status: 'delivered',
       reason: null,
+      alert: null,
     });
     expect(alerts(messenger)).toEqual({ emails: [], notifications: [] });
   });
@@ -2689,13 +2688,12 @@ describe('Alerts', () => {
   });
 
   it('tell every Admin when a Reminder could not be sent in time', async () => {
-    const { core, clock, sender, store, messenger } = await ready();
-    clock.set('2026-11-20T19:00:00.000Z'); // the runs stopped until the Appointment started
-    await core.runDue();
-    expect(sender.taken()).toEqual([]);
-    expect(store.texts()).toMatchObject([{ status: 'notSent', reason: 'tooLate' }]);
-    const { emails, notifications } = alerts(messenger);
-    expect(emails).toHaveLength(1);
+    const cal = await ready();
+    cal.clock.set('2026-11-20T19:00:00.000Z'); // the runs stopped until the Appointment started
+    await cal.core.runDue();
+    expect(cal.sender.taken()).toEqual([]);
+    expect(cal.store.texts()).toMatchObject([{ status: 'notSent', reason: 'tooLate' }]);
+    const { emails, notifications } = alerts(cal.messenger);
     expect(emails[0].email.subject).toBe(
       "Susan's Calendar alert: a Reminder could not be sent in time",
     );
@@ -2703,29 +2701,29 @@ describe('Alerts', () => {
       /^A Reminder to Susan could not be sent in time: the Appointment had started before it could go\. She was not reminded\./,
     );
     expect(notifications[0].notification.body).toMatch(/^A Reminder could not be sent in time: /);
-    clock.set('2026-11-20T19:05:00.000Z');
-    await core.runDue();
-    expect(alerts(messenger).emails).toHaveLength(1);
+    await later(cal, 5);
+    expect(reached(cal.messenger)).toEqual(EVERY_ADMIN);
   });
 
-  it("tell every Admin when a Reminder was not sent only because Susan's number is not set, as a setup problem", async () => {
+  it("tell every Admin when a Reminder was not sent only because Susan's number was not set, as a setup problem", async () => {
     const { core, clock, store, messenger } = calendar();
     const added = await core.addAppointment(linda, checkUp);
     clock.set(added.reminders[0].dueAt);
     await core.runDue();
     expect(store.texts()).toMatchObject([{ status: 'notSent', reason: 'noNumber' }]);
+    expect(reached(messenger)).toEqual(EVERY_ADMIN);
     const { emails, notifications } = alerts(messenger);
-    expect(emails).toHaveLength(1);
     expect(emails[0].email.subject).toBe(
-      "Susan's Calendar alert: a Reminder was not sent, because Susan's mobile number is not set",
+      "Susan's Calendar alert: a Reminder was not sent, because Susan's mobile number was not set",
     );
+    // Said as what happened when it came due: the number may have been set since.
     expect(emails[0].email.body).toMatch(
-      /^A Reminder to Susan was not sent: her mobile number is not set in Settings, so no texts are being sent to her\./,
+      /^A Reminder to Susan was not sent: her mobile number was not set in Settings when it came due\. She was not reminded\. Setting her number now does not send this one\./,
     );
     // Not a failure, nor a text that could not be sent in time.
     expect(`${emails[0].email.subject} ${emails[0].email.body}`).not.toMatch(/failed|in time/i);
     expect(notifications[0].notification.body).toMatch(
-      /^A Reminder was not sent: Susan's mobile number is not set\./,
+      /^A Reminder was not sent: Susan's mobile number was not set\./,
     );
   });
 
@@ -2733,8 +2731,7 @@ describe('Alerts', () => {
     const { core, sender, messenger } = await ready();
     sender.refuseNext();
     await core.runDue();
-    const { emails, notifications } = alerts(messenger);
-    const said = JSON.stringify([emails, notifications]);
+    const said = JSON.stringify(alerts(messenger));
     expect(said).toMatch(/Cardiology check-up, Fri, Nov 20, 2026 at 2:00 pm/);
     // Not her number, nor the text's words, the Private notes, the Note for Susan, the place, the
     // Driver or who it is with: whoever reads it opens the Appointment for those.
@@ -2769,13 +2766,44 @@ describe('Alerts', () => {
     expect(email.body).toMatch(/She may not know the Appointment changed\./);
   });
 
-  it('raise none for a test text that fails: whoever sent it sees its status', async () => {
-    const { core, sender, messenger } = calendar();
+  it('raise one for a test text that fails, by the next run, naming it and opening Settings', async () => {
+    const cal = calendar();
+    await cal.core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    cal.sender.refuseNext();
+    const text = await cal.core.sendTestText(linda);
+    expect(text).toMatchObject({ status: 'failed', reason: 'refused', alert: { state: 'due' } });
+    // The command only marks it: the scheduled run, the one function that may send email, sends
+    // it within the minute.
+    expect(alerts(cal.messenger)).toEqual({ emails: [], notifications: [] });
+    await later(cal, 1);
+    expect(reached(cal.messenger)).toEqual(EVERY_ADMIN);
+    const [{ email }] = alerts(cal.messenger).emails;
+    expect(email).toEqual({
+      subject: "Susan's Calendar alert: a test text failed",
+      body:
+        'A test text to Susan failed: the text was refused, so it did not go. ' +
+        'Texts may not be reaching her phone.\n\n' +
+        'It was sent from Settings, to check that texts reach her phone. Its status is in Settings.\n' +
+        'Text: the test text asked for Thu, Nov 19, 2026 at 3:00 pm\n\n' +
+        'You may want to call Susan.',
+      opens: '/settings',
+    });
+    expect(alerts(cal.messenger).notifications[0].notification).toMatchObject({
+      body: 'A test text failed. Texts may not be reaching her phone.',
+      opens: '/settings',
+    });
+  });
+
+  it('raise one for a test text later reported not delivered', async () => {
+    const { core, messenger } = calendar();
     await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
-    sender.refuseNext();
-    await core.sendTestText(linda);
-    await core.runDue();
-    expect(alerts(messenger)).toEqual({ emails: [], notifications: [] });
+    const text = await core.sendTestText(linda);
+    expect(text.status).toBe('sent');
+    await core.recordDelivery({ textId: text.id, outcome: 'undelivered' });
+    expect(reached(messenger)).toEqual(EVERY_ADMIN);
+    expect(alerts(messenger).emails[0].email.subject).toBe(
+      "Susan's Calendar alert: a test text failed",
+    );
   });
 
   it('raise none for a text that failed before the calendar raised Alerts', async () => {
@@ -2801,36 +2829,130 @@ describe('Alerts', () => {
     expect(alerts(messenger)).toEqual({ emails: [], notifications: [] });
   });
 
-  it('are raised by the next run when a run stopped before raising one', async () => {
-    const { core, clock, sender, store, messenger } = await ready();
-    sender.refuseNext();
-    messenger.fail(true);
+  it('try again, a little later, when nobody could be told at all', async () => {
+    const cal = await ready();
+    cal.sender.refuseNext();
+    cal.messenger.fail(true);
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await core.runDue();
+    await cal.core.runDue();
     // What broke is logged in fixed words, without the Appointment or the text.
-    expect(errors.mock.calls.flat().join(' ')).toMatch(/^Alert could not be sent \(\w+\)/);
+    expect(errors.mock.calls.flat().join(' ')).toMatch(/^Alert delivery could not be sent \(\w+\)/);
     expect(errors.mock.calls.flat().join(' ')).not.toMatch(/Cardiology|555/);
     errors.mockRestore();
-    expect(store.texts()).toMatchObject([{ status: 'failed', alert: 'due' }]);
-    messenger.fail(false);
-    clock.set('2026-11-19T23:01:00.000Z');
-    await core.runDue();
-    expect(alerts(messenger).emails).toHaveLength(1);
-    expect(alerts(messenger).notifications).toHaveLength(1);
-    expect(store.texts()).toMatchObject([{ alert: 'raised' }]);
-    clock.set('2026-11-19T23:02:00.000Z');
-    await core.runDue();
-    expect(alerts(messenger).emails).toHaveLength(1);
+    expect(cal.store.texts()).toMatchObject([
+      { status: 'failed', alert: { state: 'due', tries: 1, sent: [] } },
+    ]);
+    cal.messenger.fail(false);
+    await later(cal, 1); // too soon: it waits as long as a text does
+    expect(reached(cal.messenger)).toEqual({ email: [], app: [] });
+    await later(cal, 1);
+    expect(reached(cal.messenger)).toEqual(EVERY_ADMIN);
+    expect(cal.store.texts()).toMatchObject([{ alert: { state: 'raised', tries: 2 } }]);
+    await later(cal, 5);
+    expect(reached(cal.messenger)).toEqual(EVERY_ADMIN);
   });
 
-  it('still go by app notification when email cannot be sent', async () => {
-    const { core, sender, messenger } = await ready();
-    sender.refuseNext();
-    messenger.failEmail(true);
+  it('send again only what failed: one channel to one Admin, and never what went', async () => {
+    const cal = await ready();
+    cal.sender.refuseNext();
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    await core.runDue();
+    cal.messenger.failFor('email', 'person-mark');
+    await cal.core.runDue();
+    expect(reached(cal.messenger)).toEqual({
+      email: ['person-linda', 'person-ann'],
+      app: ADMINS,
+    });
+    expect(cal.store.texts()).toMatchObject([{ alert: { state: 'due', tries: 1 } }]);
+    await later(cal, 2);
     vi.restoreAllMocks();
-    expect(alerts(messenger).notifications).toHaveLength(1);
+    expect(reached(cal.messenger)).toEqual({
+      email: ['person-linda', 'person-ann', 'person-mark'],
+      app: ADMINS,
+    });
+    expect(cal.store.texts()).toMatchObject([{ alert: { state: 'raised', tries: 2 } }]);
+  });
+
+  it('still go by app notification when email cannot be sent at all', async () => {
+    const cal = await ready();
+    cal.sender.refuseNext();
+    cal.messenger.failEmail(true);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await cal.core.runDue();
+    expect(reached(cal.messenger)).toEqual({ email: [], app: ADMINS });
+    cal.messenger.failEmail(false);
+    await later(cal, 2);
+    vi.restoreAllMocks();
+    expect(reached(cal.messenger)).toEqual(EVERY_ADMIN);
+  });
+
+  it('give up a delivery that keeps failing after a few tries, and only that one', async () => {
+    const cal = await ready();
+    cal.sender.refuseNext();
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    cal.messenger.failFor('app', 'person-ann', 99);
+    await cal.core.runDue();
+    for (let n = 0; n < 6; n += 1) await later(cal, 2);
+    expect(reached(cal.messenger)).toEqual({ email: ADMINS, app: ['person-linda', 'person-mark'] });
+    expect(cal.store.texts()).toMatchObject([
+      { alert: { state: 'raised', tries: ALERT_ATTEMPTS } },
+    ]);
+    expect(errors.mock.calls.flat().join(' ')).toMatch(
+      /Alert gave up on deliveries that kept failing/,
+    );
+    vi.restoreAllMocks();
+  });
+
+  it('do not try again one refused for good, nor one with nothing to reach', async () => {
+    const cal = await ready();
+    cal.sender.refuseNext();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    // Mark's address will not be sent to; Ann has turned app notifications on for no device.
+    cal.messenger.refuseFor('email', 'person-mark');
+    cal.messenger.unreachable('app', 'person-ann');
+    await cal.core.runDue();
+    vi.restoreAllMocks();
+    expect(reached(cal.messenger)).toEqual({
+      email: ['person-linda', 'person-ann'],
+      app: ['person-linda', 'person-mark'],
+    });
+    expect(cal.store.texts()).toMatchObject([{ alert: { state: 'raised', tries: 1 } }]);
+  });
+
+  it('are finished by a later run, without repeats, when a run stops part way through', async () => {
+    const cal = await ready();
+    cal.sender.refuseNext();
+    // A run that stops while sending to Mark by app notification: what it sent before is kept.
+    const stopping = createCalendarCore({
+      store: cal.store,
+      clock: cal.clock,
+      messenger: {
+        ...cal.messenger,
+        admins: () => cal.messenger.admins(),
+        sendEmail: (...args) => cal.messenger.sendEmail(...args),
+        sendAppNotification: (to, ...rest) =>
+          to.includes('person-mark')
+            ? new Promise<never>(() => {})
+            : cal.messenger.sendAppNotification(to, ...rest),
+      },
+      textSender: cal.sender,
+      timeZone: EASTERN,
+    });
+    void stopping.runDue();
+    await vi.waitFor(() =>
+      expect(cal.store.texts()[0].alert?.sent).toEqual([
+        'email:person-linda',
+        'app:person-linda',
+        'email:person-mark',
+      ]),
+    );
+    expect(cal.store.texts()[0].alert?.state).toBe('sending');
+    // A run a minute on leaves it: the first may still be going.
+    await later(cal, 1);
+    expect(reached(cal.messenger).app).toEqual(['person-linda']);
+    // Once it has been held longer than any run lasts, a later run takes it up and sends the rest.
+    await later(cal, 1);
+    expect(reached(cal.messenger)).toEqual(EVERY_ADMIN);
+    expect(cal.store.texts()[0].alert).toMatchObject({ state: 'raised', tries: 2 });
   });
 
   it('do not undo or stop the run when they cannot be sent', async () => {

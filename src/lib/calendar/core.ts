@@ -27,7 +27,14 @@ import {
   type Stamp,
 } from './appointment';
 import { calendarFeed } from './feed';
-import type { AdminMessenger, AppNotification, Clock, Store, TextSender } from './ports';
+import type {
+  AdminMessenger,
+  AppNotification,
+  Clock,
+  Deliveries,
+  Store,
+  TextSender,
+} from './ports';
 import { reminderDue, reminderWords, STARTING_REMINDER } from './reminders';
 import {
   isSubscriptionSecret,
@@ -36,6 +43,7 @@ import {
   type MadeSubscriptionLink,
 } from './subscription';
 import {
+  ALERT_ATTEMPTS,
   mayHaveReachedSusan,
   reminderPlan,
   reminderTextId,
@@ -715,48 +723,96 @@ export function createCalendarCore({
   };
 
   /**
-   * Raises each Alert that is due among these texts, once: it is marked raised by a write that
-   * finds it still due, so two runs cannot both raise it, and then goes to every Admin by email and
-   * by app notification. Susan is not an Admin, so she is never told. A channel that fails does
-   * not stop the other; when both fail, nobody was told, so it is left due for the next run. What
-   * broke is logged in fixed words, without the Appointment or the text.
+   * Sends each Alert among these texts that is ready: one that is due and not tried, one due again
+   * RETRY_AFTER after a try in which a delivery failed, and one a run took up and stopped on. Each
+   * text has one Alert, sent by one run at a time.
    */
   async function raiseAlerts(texts: readonly Text[], appointments: readonly Appointment[]) {
-    const due = texts
-      .filter((text) => text.alert === 'due')
+    const now = clock.now().getTime();
+    const ready = texts
+      .filter(({ alert }) => {
+        if (!alert || alert.state === 'raised') return false;
+        if (alert.triedAt === null) return alert.state === 'due';
+        return Date.parse(alert.triedAt) <= now - RETRY_AFTER;
+      })
       .sort((a, b) => a.triedAt.localeCompare(b.triedAt) || a.id.localeCompare(b.id));
-    if (due.length === 0) return;
-    let admins: string[];
+    for (const text of ready) await raiseAlert(text, appointments);
+  }
+
+  /**
+   * Sends one Alert to every Admin, by email and by app notification. Susan is not an Admin, so she
+   * is never told. The run takes it up by a write that finds it as it was read, so two runs cannot
+   * both send it, then sends each delivery the messenger has not already made, one Admin and one
+   * channel at a time, and records each that went as soon as it has. A delivery that failed is
+   * tried again by a later run, up to ALERT_ATTEMPTS tries; one with nothing to reach (a channel
+   * not set up, no device) or refused for good is not. If the run stops part way, a later run takes
+   * it up and sends only what had not been recorded as sent. What broke is logged in fixed words,
+   * without the Appointment or the text.
+   */
+  async function raiseAlert(text: Text, appointments: readonly Appointment[]) {
+    const alert = text.alert!;
+    let held: Text = {
+      ...text,
+      alert: {
+        ...alert,
+        state: 'sending',
+        tries: alert.tries + 1,
+        triedAt: clock.now().toISOString(),
+      },
+    };
+    const keep = async (next: Text) => {
+      if (!(await store.changeText(next, held))) return false;
+      held = next;
+      return true;
+    };
+    const failed = (what: string, error: unknown) =>
+      console.error(`Alert ${what} could not be sent (${failureKind(error)})`);
     try {
-      admins = [...new Set(await messenger.admins())];
+      if (!(await store.changeText(held, text))) return;
     } catch (error) {
-      // Left due: the next run tries again.
-      console.error(`Alert could not be sent (${failureKind(error)})`);
+      failed('record', error);
       return;
     }
-    for (const text of due) {
-      const raised: Text = { ...text, alert: 'raised' };
-      try {
-        if (!(await store.changeText(raised, text))) continue;
-      } catch (error) {
-        console.error(`Alert could not be sent (${failureKind(error)})`);
-        continue;
+    const appointment = appointments.find((each) => each.id === text.appointmentId) ?? null;
+    const { email, notification } = alertFor(text, appointment, timeZone);
+    let retry = false;
+    try {
+      for (const admin of [...new Set(await messenger.admins())]) {
+        for (const channel of ['email', 'app notification'] as const) {
+          const skip = held.alert!.sent;
+          let went: Deliveries;
+          try {
+            went =
+              channel === 'email'
+                ? await messenger.sendEmail([admin], email, skip)
+                : await messenger.sendAppNotification([admin], notification, skip);
+          } catch (error) {
+            failed(channel, error);
+            retry = true;
+            continue;
+          }
+          if (went.failed.length) {
+            console.error(`Alert ${channel} could not be sent (failed ${went.failed.length})`);
+            retry = true;
+          }
+          if (went.refused.length)
+            console.error(`Alert ${channel} was refused (refused ${went.refused.length})`);
+          if (went.sent.length === 0) continue;
+          const sent = [...new Set([...skip, ...went.sent])];
+          // Another run took it up: this one had stopped too long. It sends what is left.
+          if (!(await keep({ ...held, alert: { ...held.alert!, sent } }))) return;
+        }
       }
-      if (admins.length === 0) continue;
-      const appointment = appointments.find((each) => each.id === text.appointmentId) ?? null;
-      const { email, notification } = alertFor(text, appointment, timeZone);
-      const sent = await Promise.allSettled([
-        messenger.sendEmail(admins, email),
-        messenger.sendAppNotification(admins, notification),
-      ]);
-      for (const [n, result] of sent.entries())
-        if (result.status === 'rejected')
-          console.error(
-            `Alert ${n === 0 ? 'email' : 'app notification'} could not be sent (${failureKind(result.reason)})`,
-          );
-      if (sent.every((result) => result.status === 'rejected'))
-        await store.changeText(text, raised).catch(() => {});
+    } catch (error) {
+      failed('delivery', error);
+      retry = true;
     }
+    const giveUp = retry && held.alert!.tries >= ALERT_ATTEMPTS;
+    if (giveUp) console.error('Alert gave up on deliveries that kept failing');
+    const state = retry && !giveUp ? 'due' : 'raised';
+    await keep({ ...held, alert: { ...held.alert!, state } }).catch((error: unknown) =>
+      failed('record', error),
+    );
   }
 
   /**

@@ -127,9 +127,14 @@ const schema = a
         triedAt: a.datetime().required(),
         sentAt: a.datetime(),
         reference: a.string(),
-        // The Alert about it: due, then raised once by a conditional write. Missing on a text
-        // recorded before ticket 15, which raises none.
+        // The Alert about it (TextAlert in src/lib/calendar/texts.ts), flat so that a write can be
+        // conditioned on it: its state, how many times a run took it up and when it last did, and
+        // each delivery known to have gone. Missing on a text recorded before ticket 15, which
+        // raises none.
         alert: a.enum(ALERT_STATES),
+        alertTries: a.integer(),
+        alertTriedAt: a.datetime(),
+        alertSent: a.string().array(),
       })
       .secondaryIndexes((index) => [index('appointmentId').queryField('textsByAppointment')])
       .authorization((allow) => [allow.authenticated().to(['read'])]),

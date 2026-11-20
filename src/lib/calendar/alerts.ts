@@ -2,22 +2,23 @@
 // banner shows while it stands. Pure, so that the scheduled run, the commands and the screens all
 // decide the same way.
 //
-// A Reminder or Change notice raises an Alert when its record reaches failed, or not sent because
-// it could not go in time or because Susan's number is not set, whatever caused it. The core marks
-// the Alert due in the same write that settles the text (`alertMarked`), and the run raises each
-// due Alert once, by a conditional write, by email and by app notification to every Admin.
-// Susan is not an Admin, so she is never told.
+// A text to Susan, of any kind, raises an Alert when its record reaches failed, or not sent
+// because it could not go in time or because Susan's number was not set, whatever caused it. The
+// core marks the Alert due in the same write that settles the text (`alertMarked`), and the
+// scheduled run sends it to every Admin by email and by app notification: one Alert per text, each
+// delivery sent once and recorded as it goes, and any that failed tried again. Susan is not an
+// Admin, so she is never told.
 
 import { formatDate, formatMoment, formatTime } from '../localTime';
 import type { Appointment } from './appointment';
 import type { AdminEmail, AppNotification } from './ports';
-import { SEND_ATTEMPTS, type Text, type TextKind } from './texts';
+import { SEND_ATTEMPTS, type Text, type TextAlert, type TextKind } from './texts';
 
 /**
  * What went wrong with a text. failed: it was refused, or did not go through, or was reported not
  * delivered. unconfirmed: it was sent but never confirmed delivered. tooLate: it could not be sent
- * before the Appointment started. noNumber: it was not sent because Susan's mobile number is not
- * set, which is a gap in the setup, not a failure.
+ * before the Appointment started. noNumber: it was not sent because Susan's mobile number was not
+ * set when it came due, which is a gap in the setup, not a failure.
  */
 export type TextTrouble = 'failed' | 'unconfirmed' | 'tooLate' | 'noNumber';
 
@@ -30,8 +31,8 @@ export function troubleOf(text: Text): TextTrouble | null {
   return null;
 }
 
-/** The kinds of text an Alert is raised about: the ones about an Appointment (CONTEXT.md). */
-const ALERTED: readonly TextKind[] = ['reminder', 'changeNotice'];
+/** An Alert that is to be sent and has not been tried. */
+export const NEW_ALERT: TextAlert = { state: 'due', tries: 0, triedAt: null, sent: [] };
 
 /**
  * The record as it is to be kept, with its Alert marked due when it has just come to need one.
@@ -39,8 +40,8 @@ const ALERTED: readonly TextKind[] = ['reminder', 'changeNotice'];
  * it came to fail: in sending, in trying again, or when its delivery is reported (`deliveredText`).
  */
 export function alertMarked(text: Text): Text {
-  if (text.alert !== null || !ALERTED.includes(text.kind) || !troubleOf(text)) return text;
-  return { ...text, alert: 'due' };
+  if (text.alert !== null || !troubleOf(text)) return text;
+  return { ...text, alert: NEW_ALERT };
 }
 
 /** What the text sender says became of a text after it took it. */
@@ -105,18 +106,26 @@ function failedBecause(text: Text): string {
   }
 }
 
+/** What may follow for Susan from a text of this kind not reaching her. */
+const MAY_NOT: Record<TextKind, string> = {
+  reminder: 'She may not have been reminded.',
+  changeNotice: 'She may not know the Appointment changed.',
+  automaticAnswer: 'She may not have been told who to call.',
+  test: 'Texts may not be reaching her phone.',
+};
+/** What follows for Susan from a text of this kind that was never sent. */
+const DID_NOT: Record<TextKind, string> = {
+  reminder: 'She was not reminded.',
+  changeNotice: 'She was not told of the change.',
+  automaticAnswer: 'She was not told who to call.',
+  test: 'It did not go to her phone.',
+};
+
 /** How each trouble is said: what became of the text, why, and what follows for Susan. */
 function said(trouble: TextTrouble, text: Text) {
-  const reminder = text.kind === 'reminder';
   switch (trouble) {
     case 'failed':
-      return {
-        became: 'failed',
-        why: failedBecause(text),
-        after: reminder
-          ? 'She may not have been reminded.'
-          : 'She may not know the Appointment changed.',
-      };
+      return { became: 'failed', why: failedBecause(text), after: MAY_NOT[text.kind] };
     case 'unconfirmed':
       return {
         became: 'was not confirmed delivered',
@@ -127,16 +136,25 @@ function said(trouble: TextTrouble, text: Text) {
       return {
         became: 'could not be sent in time',
         why: 'the Appointment had started before it could go',
-        after: reminder ? 'She was not reminded.' : 'She was not told of the change.',
+        after: DID_NOT[text.kind],
       };
     case 'noNumber':
+      // Said as what happened then: the number may have been set since.
       return {
         became: 'was not sent',
-        why: 'her mobile number is not set in Settings, so no texts are being sent to her',
-        after: `${reminder ? 'She was not reminded.' : 'She was not told of the change.'} Setting her number now does not send this one.`,
+        why: 'her mobile number was not set in Settings when it came due',
+        after: `${DID_NOT[text.kind]} Setting her number now does not send this one.`,
       };
   }
 }
+
+/** Where to look into a text that concerns no Appointment. */
+const OPENS: Record<TextKind, string> = {
+  reminder: '/',
+  changeNotice: '/',
+  automaticAnswer: '/replies',
+  test: '/settings',
+};
 
 /** An Alert, in both the forms it goes in. */
 export interface Alert {
@@ -153,24 +171,36 @@ export interface Alert {
 export function alertFor(text: Text, appointment: Appointment | null, timeZone: string): Alert {
   const trouble = troubleOf(text) ?? 'failed';
   const name = NAMES[text.kind];
+  const a = `${text.kind === 'automaticAnswer' ? 'an' : 'a'} ${name}`;
+  const A = `${a.charAt(0).toUpperCase()}${a.slice(1)}`;
   const { became, why, after } = said(trouble, text);
   const which = appointment
     ? `${appointment.what}, ${formatDate(appointment.date, 'short')} at ${formatTime(appointment.time)}`
-    : 'one that is no longer in the calendar';
-  const opens = appointment ? `/appointments/${appointment.id}` : '/';
+    : text.appointmentId
+      ? 'one that is no longer in the calendar'
+      : null;
+  const opens = appointment ? `/appointments/${appointment.id}` : OPENS[text.kind];
   const subject =
     trouble === 'noNumber'
-      ? `Susan's Calendar alert: a ${name} was not sent, because Susan's mobile number is not set`
-      : `Susan's Calendar alert: a ${name} ${became}`;
+      ? `Susan's Calendar alert: ${a} was not sent, because Susan's mobile number was not set`
+      : `Susan's Calendar alert: ${a} ${became}`;
+  const about =
+    which !== null
+      ? `Appointment: ${which}`
+      : text.kind === 'test'
+        ? 'It was sent from Settings, to check that texts reach her phone. Its status is in Settings.'
+        : 'It concerns no Appointment.';
   const body =
-    `A ${name} to Susan ${became}: ${why}. ${after}\n\n` +
-    `Appointment: ${which}\n` +
-    `Text: the ${name} due ${formatMoment(text.dueAt, timeZone)}\n\n` +
-    'You may want to call Susan. The Appointment and its texts are in the app.';
+    `${A} to Susan ${became}: ${why}. ${after}\n\n` +
+    `${about}\n` +
+    `Text: the ${name} ${text.kind === 'test' ? 'asked for' : 'due'} ${formatMoment(text.dueAt, timeZone)}\n\n` +
+    (which === null
+      ? 'You may want to call Susan.'
+      : 'You may want to call Susan. The Appointment and its texts are in the app.');
   const short =
     trouble === 'noNumber'
-      ? `A ${name} was not sent: Susan's mobile number is not set. ${which}.`
-      : `A ${name} ${became}: ${which}. ${after}`;
+      ? `${A} was not sent: Susan's mobile number was not set.${which ? ` ${which}.` : ''}`
+      : `${A} ${became}${which ? `: ${which}.` : '.'} ${after}`;
   return {
     email: { subject, body, opens },
     notification: {

@@ -5,8 +5,9 @@ import { troubleWords } from '../lib/textStatus';
 
 /**
  * The banner on every screen while the most recent text to Susan did not get through: it failed,
- * was not confirmed delivered, or could not be sent in time, or no texts go to her because her
- * number is not set. It clears once a later text goes (textTrouble in src/lib/calendar/alerts.ts).
+ * was not confirmed delivered, could not be sent in time, or was not sent because her number was
+ * not set. It says what happened to that text, and clears once a later text goes (textTrouble in
+ * src/lib/calendar/alerts.ts).
  */
 export function TextsBanner() {
   const { texts } = useCalendar();

@@ -8,10 +8,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const out = mkdtempSync(join(tmpdir(), 'susans-calendar-synth-'));
+/** The address Alert emails come from, as the owner sets it at deploy (ALERT_EMAIL_FROM). */
+const ALERTS_FROM = 'alerts@example.com';
 const result = spawnSync('npx', ['tsx', 'amplify/backend.ts'], {
   stdio: 'inherit',
   env: {
     ...process.env,
+    ALERT_EMAIL_FROM: ALERTS_FROM,
     CDK_OUTDIR: out,
     CDK_DEFAULT_REGION: 'us-east-1',
     CDK_DEFAULT_ACCOUNT: '123456789012',
@@ -568,9 +571,9 @@ function checks() {
     ],
     [
       // Alert emails (amplify/calendar/alert-email.ts): the scheduled run alone may send email,
-      // and only through identities in its own account and region, which in the SES sandbox must
-      // be verified, recipients included. It is told the address to send from (empty for none).
-      'only the scheduled run may send email, and only through its own account and region',
+      // only from the configured address, and only through identities in its own account and
+      // region. It is told the address to send from.
+      'only the scheduled run may send email, only from its configured address, in its own account and region',
       (() => {
         const ses = statementsFor('ses');
         const runRole = run.properties.Role?.['Fn::GetAtt']?.[0];
@@ -583,18 +586,21 @@ function checks() {
           resource.includes(':identity/*') &&
           resource.includes('AWS::Region') &&
           resource.includes('AWS::AccountId') &&
-          typeof run.properties.Environment?.Variables?.ALERT_EMAIL_FROM === 'string'
+          JSON.stringify(ses[0].statement.Condition) ===
+            JSON.stringify({ StringEquals: { 'ses:FromAddress': ALERTS_FROM } }) &&
+          run.properties.Environment?.Variables?.ALERT_EMAIL_FROM === ALERTS_FROM
         );
       })(),
     ],
     [
-      // An Alert is marked raised by the run whose write finds it still due (changeText in
-      // amplify/calendar/data-store.ts), so two runs cannot both raise it.
-      'an Alert is raised once, by a write whose condition holds as it is written',
+      // An Alert is taken up, and its progress recorded, only by the run whose write finds it as it
+      // read it, in the same state and taken up at the same moment (changeText in
+      // amplify/calendar/data-store.ts), so two runs cannot both send it.
+      'an Alert is sent by one run at a time, by writes whose condition holds as they are written',
       retake.includes('$util.qr($UpdateItem.put("condition", $Conditions))') &&
         run.code.includes('updateText(input: $input, condition: $condition)') &&
         /\{\s*alert:\s*\{\s*eq:/.test(run.code) &&
-        /alert:\s*"raised"/.test(run.code),
+        /\{\s*alertTriedAt:\s*\{\s*eq:/.test(run.code),
     ],
     [
       // The feed has the only public address. Its link is checked inside the function.

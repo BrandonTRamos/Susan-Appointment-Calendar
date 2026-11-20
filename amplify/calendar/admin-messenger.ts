@@ -8,7 +8,7 @@ import {
   ListUsersInGroupCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
 import webpush from 'web-push';
-import type { AdminMessenger, AppNotification } from '../../src/lib/calendar';
+import type { AdminMessenger, AppNotification, Deliveries } from '../../src/lib/calendar';
 import type { VapidKeys } from '../../src/lib/vapid';
 import type { EmailSender } from './alert-email';
 import type { Device, Devices } from './app-notification-devices';
@@ -113,11 +113,13 @@ export function adminMessenger({
     async admins() {
       return (await admins()).map((admin) => admin.id);
     },
-    async sendAppNotification(to, notification: AppNotification) {
-      if (to.length === 0) return;
+    // Each delivery is one device, named 'app:<device ID>'.
+    async sendAppNotification(to, notification: AppNotification, skip = []) {
+      const result: Deliveries = { sent: [], failed: [], refused: [] };
+      if (to.length === 0) return result;
       const [keys, reached] = await Promise.all([devices.keys(), devices.of(to)]);
-      // No key pair yet means nobody has turned notifications on.
-      if (!keys) return;
+      // No key pair yet means nobody has turned notifications on: nothing to reach.
+      if (!keys) return result;
       const payload: PushPayload = {
         title: notification.title,
         body: notification.body,
@@ -126,31 +128,39 @@ export function adminMessenger({
       };
       await Promise.all(
         reached.map(async (device) => {
-          if ((await push.send(device, payload, keys)) !== 'gone') return;
+          const key = `app:${device.id}`;
+          if (skip.includes(key)) return;
+          const went = await push.send(device, payload, keys);
+          if (went === 'sent') result.sent.push(key);
+          if (went === 'failed') result.failed.push(key);
+          // Gone: nothing to reach there any more, so it is forgotten and not tried again.
+          if (went !== 'gone') return;
           await devices.forgetGone(device).catch((error: unknown) => {
             console.error('Forgetting a gone device failed', (error as Error).name);
           });
         }),
       );
+      return result;
     },
-    // Only to an Admin's own sign-in address: a person ID that is not an Admin's, such as Susan's,
-    // reaches nobody.
-    async sendEmail(to, { subject, body, opens }) {
-      if (to.length === 0) return;
+    // Each delivery is one email to one Admin, named 'email:<person ID>', and only to an Admin's
+    // own sign-in address: a person ID that is not an Admin's, such as Susan's, reaches nobody.
+    async sendEmail(to, { subject, body, opens }, skip = []) {
+      const result: Deliveries = { sent: [], failed: [], refused: [] };
+      if (to.length === 0) return result;
+      // Not set up: nothing to reach by email, which is not a failure.
       if (!email) {
         console.log('Alert email is not set up, so none was sent');
-        return;
+        return result;
       }
-      const addresses = (await admins())
-        .filter((admin) => to.includes(admin.id))
-        .flatMap((admin) => admin.email ?? []);
-      if (addresses.length === 0) return;
       // The only words the messenger adds: the address of what it is about, on a line of its own.
       const link = /^https?:\/\//.test(appUrl) ? `\n\n${new URL(opens, appUrl).href}` : '';
-      const results: string[] = [];
-      for (const address of [...new Set(addresses)])
-        results.push(await email.send({ to: address, subject, body: `${body}${link}` }));
-      if (!results.includes('sent')) throw new Error('No Alert email could be sent');
+      for (const admin of await admins()) {
+        const key = `email:${admin.id}`;
+        if (!to.includes(admin.id) || !admin.email || skip.includes(key)) continue;
+        const went = await email.send({ to: admin.email, subject, body: `${body}${link}` });
+        result[went === 'rejected' ? 'refused' : went].push(key);
+      }
+      return result;
     },
   };
 }

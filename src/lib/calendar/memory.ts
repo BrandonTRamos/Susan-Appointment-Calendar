@@ -7,6 +7,7 @@ import type {
   AdminMessenger,
   AppNotification,
   Clock,
+  Deliveries,
   SendResult,
   Store,
   TextSender,
@@ -87,7 +88,9 @@ export function createMemoryStore(): MemoryStore {
         kept.status === current.status &&
         kept.attempts === current.attempts &&
         kept.triedAt === current.triedAt &&
-        (current.alert === null || kept.alert === current.alert);
+        (current.alert === null ||
+          (kept.alert?.state === current.alert.state &&
+            kept.alert.triedAt === current.alert.triedAt));
       if (!still) return false;
       texts.set(next.id, structuredClone(next));
       changed();
@@ -206,42 +209,83 @@ export function createStandInSender(): StandInSender {
   };
 }
 
+/** A channel the messenger reaches Admins by. */
+export type MemoryChannel = 'email' | 'app';
+
 /** A messenger that keeps what it is asked to send. */
 export interface MemoryMessenger extends AdminMessenger {
-  /** Every app notification sent, oldest first, with the person IDs it went to. */
+  /** Every app notification sent, oldest first, with the person IDs it reached. */
   appNotifications(): { to: string[]; notification: AppNotification }[];
-  /** Every email sent, oldest first, with the person IDs it went to. */
+  /** Every email sent, oldest first, with the person IDs it reached. */
   emails(): { to: string[]; email: AdminEmail }[];
   /** Makes the messenger fail, as when the push service or the user pool is not answering. */
   fail(failing: boolean): void;
-  /** Makes only email fail, as when the email service is not answering. */
+  /** Makes sending email throw, as when nobody can tell what was sent. */
   failEmail(failing: boolean): void;
+  /** The next `times` deliveries to this person by this channel fail, and may go if tried again. */
+  failFor(channel: MemoryChannel, personId: string, times?: number): void;
+  /** Deliveries to this person by this channel are refused for good. */
+  refuseFor(channel: MemoryChannel, personId: string): void;
+  /** This person has nothing to be reached by on this channel: no address, or no device. */
+  unreachable(channel: MemoryChannel, personId: string): void;
 }
 
-/** `admins` is the person ID of every Admin. */
+/**
+ * `admins` is the person ID of every Admin. Each delivery is named by its channel and person, as
+ * 'email:<person ID>' or 'app:<person ID>': here, each person has one device.
+ */
 export function createMemoryMessenger(admins: readonly string[] = []): MemoryMessenger {
   const sent: { to: string[]; notification: AppNotification }[] = [];
   const emailed: { to: string[]; email: AdminEmail }[] = [];
   let failing = false;
   let failingEmail = false;
+  const failures = new Map<string, number>();
+  const refused = new Set<string>();
+  const unreachable = new Set<string>();
   const check = () => {
     if (failing) throw new Error('The messenger is not answering');
   };
+  /** Makes each delivery to these people by this channel, and answers what became of each. */
+  function deliver(channel: MemoryChannel, to: readonly string[], skip: readonly string[]) {
+    const result: Deliveries = { sent: [], failed: [], refused: [] };
+    const reached: string[] = [];
+    for (const id of to) {
+      const key = `${channel}:${id}`;
+      // As the backend's does, email goes only to Admins.
+      if (skip.includes(key) || unreachable.has(key)) continue;
+      if (channel === 'email' && !admins.includes(id)) continue;
+      if (refused.has(key)) {
+        result.refused.push(key);
+        continue;
+      }
+      const left = failures.get(key) ?? 0;
+      if (left > 0) {
+        failures.set(key, left - 1);
+        result.failed.push(key);
+        continue;
+      }
+      result.sent.push(key);
+      reached.push(id);
+    }
+    return { result, reached };
+  }
   return {
     async admins() {
       check();
       return [...admins];
     },
-    async sendAppNotification(to, notification) {
+    async sendAppNotification(to, notification, skip = []) {
       check();
-      sent.push(structuredClone({ to: [...to], notification }));
+      const { result, reached } = deliver('app', to, skip);
+      if (reached.length) sent.push(structuredClone({ to: reached, notification }));
+      return result;
     },
-    async sendEmail(to, email) {
+    async sendEmail(to, email, skip = []) {
       check();
       if (failingEmail) throw new Error('The email service is not answering');
-      // As the backend's does, it emails only Admins.
-      const reached = to.filter((id) => admins.includes(id));
+      const { result, reached } = deliver('email', to, skip);
       if (reached.length) emailed.push(structuredClone({ to: reached, email }));
+      return result;
     },
     appNotifications: () => structuredClone(sent),
     emails: () => structuredClone(emailed),
@@ -250,6 +294,15 @@ export function createMemoryMessenger(admins: readonly string[] = []): MemoryMes
     },
     failEmail(next) {
       failingEmail = next;
+    },
+    failFor(channel, personId, times = 1) {
+      failures.set(`${channel}:${personId}`, times);
+    },
+    refuseFor(channel, personId) {
+      refused.add(`${channel}:${personId}`);
+    },
+    unreachable(channel, personId) {
+      unreachable.add(`${channel}:${personId}`);
     },
   };
 }

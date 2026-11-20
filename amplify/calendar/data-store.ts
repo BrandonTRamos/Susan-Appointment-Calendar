@@ -17,6 +17,7 @@ import {
   SETTINGS_ID,
   toAppointment,
   toSettings,
+  textRow,
   toText,
   type AppointmentRow,
   type TextRow,
@@ -111,7 +112,7 @@ export function dataStore(client: DataClient): Store {
     try {
       answer = (await client.graphql({
         query: CHANGE_TEXT,
-        variables: { input: next, condition },
+        variables: { input: textRow(next), condition },
       })) as { errors?: readonly DataError[] };
     } catch (thrown) {
       if (!(thrown && typeof thrown === 'object' && 'errors' in thrown)) throw thrown;
@@ -159,7 +160,7 @@ export function dataStore(client: DataClient): Store {
     },
     // The data API creates a row only if none has its ID, in one step: the claim.
     async claimText(text) {
-      const result = await Text.create(text);
+      const result = await Text.create(textRow(text));
       if (alreadyThere(result.errors)) return false;
       check(result);
       return true;
@@ -174,19 +175,20 @@ export function dataStore(client: DataClient): Store {
         ],
       });
     },
-    // Only if no other run has changed it since it was read: settled it, or raised its Alert.
+    // Only if no other run has changed it since it was read: settled it, or taken up its Alert.
     async changeText(next, current) {
       return changeTextIf(next, {
         and: [
           { status: { eq: current.status } },
           { attempts: { eq: current.attempts } },
           { triedAt: { eq: current.triedAt } },
-          ...(current.alert ? [{ alert: { eq: current.alert } }] : []),
+          ...(current.alert ? [{ alert: { eq: current.alert.state } }] : []),
+          ...(current.alert?.triedAt ? [{ alertTriedAt: { eq: current.alert.triedAt } }] : []),
         ],
       });
     },
     async replaceText(text: Text) {
-      check(await Text.update(text));
+      check(await Text.update(textRow(text)));
     },
     async settings() {
       const row = check(await CalendarSettings.get({ id: SETTINGS_ID }));

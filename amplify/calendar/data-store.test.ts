@@ -317,24 +317,49 @@ describe('the calendar kept in the data API', () => {
     expect(await store.everyText()).toEqual([again]);
   });
 
-  it('settles a text, or raises its Alert, only while it is as it was read', async () => {
-    const { store, core } = calendar();
+  it('settles a text, or takes up its Alert, only while it is as it was read', async () => {
+    const { api, store, core } = calendar();
     await core.changeSettings(linda, { susansNumber: '555 555 0123' });
     const sent = await core.sendTestText(linda);
     const failed = {
       ...sent,
       status: 'failed' as const,
       reason: 'unconfirmed' as const,
-      alert: 'due' as const,
+      alert: { state: 'due' as const, tries: 0, triedAt: null, sent: [] },
     };
     expect(await store.changeText(failed, sent)).toBe(true);
     // A second run read it as sent too: it has been settled since, so its write is refused.
     expect(await store.changeText({ ...sent, status: 'delivered' }, sent)).toBe(false);
-    const raised = { ...failed, alert: 'raised' as const };
-    expect(await store.changeText(raised, failed)).toBe(true);
-    // Raised once: a second run that read it as due cannot raise it again.
-    expect(await store.changeText(raised, failed)).toBe(false);
-    expect(await store.everyText()).toEqual([raised]);
+    const taken = {
+      ...failed,
+      alert: { state: 'sending' as const, tries: 1, triedAt: '2026-11-19T20:01:00.000Z', sent: [] },
+    };
+    expect(await store.changeText(taken, failed)).toBe(true);
+    // Taken up once: a second run that read it as due cannot take it up too.
+    expect(await store.changeText(taken, failed)).toBe(false);
+    // The run holding it records each delivery as it goes.
+    const progress = { ...taken, alert: { ...taken.alert, sent: ['email:person-linda'] } };
+    expect(await store.changeText(progress, taken)).toBe(true);
+    // A run that takes it over later, at another moment, leaves the first run's writes refused.
+    const over = {
+      ...progress,
+      alert: { ...progress.alert, tries: 2, triedAt: '2026-11-19T20:04:00.000Z' },
+    };
+    expect(await store.changeText(over, progress)).toBe(true);
+    expect(
+      await store.changeText(
+        { ...progress, alert: { ...progress.alert, state: 'raised' as const } },
+        progress,
+      ),
+    ).toBe(false);
+    expect(await store.everyText()).toEqual([over]);
+    // Kept flat beside the rest, so that a write can be conditioned on it.
+    expect(api.texts()[0]).toMatchObject({
+      alert: 'sending',
+      alertTries: 2,
+      alertTriedAt: '2026-11-19T20:04:00.000Z',
+      alertSent: ['email:person-linda'],
+    });
   });
 
   it('reads a text kept before Alerts as having none', async () => {
