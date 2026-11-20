@@ -11,7 +11,6 @@ type Outputs = ResourcesConfig & {
     contactEmail?: string;
     ownerName?: string;
     subscriptionFeedUrl?: string;
-    textSender?: string;
   };
 };
 
@@ -37,9 +36,3 @@ export const ownerName = resolveOwnerName(found?.custom?.ownerName);
 
 /** The calendar subscription feed's address (amplify/backend.ts), or null when the backend has none. */
 export const subscriptionFeedUrl = found?.custom?.subscriptionFeedUrl || null;
-
-/**
- * Whether the backend's texts are only recorded, by the stand-in sender, and reach no phone
- * (amplify/calendar/text-sender.ts). Ticket 13 adds the sender that really sends.
- */
-export const textsRecordedOnly = (found?.custom?.textSender ?? 'stand-in') === 'stand-in';

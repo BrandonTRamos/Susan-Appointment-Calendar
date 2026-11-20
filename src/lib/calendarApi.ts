@@ -163,6 +163,7 @@ export function toText(row: Kept<TextRow, Text>): Text {
     triedAt: row.triedAt,
     sentAt: row.sentAt ?? null,
     reference: row.reference ?? null,
+    creditLeft: row.creditLeft ?? null,
   };
 }
 

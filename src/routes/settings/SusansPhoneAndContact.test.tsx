@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, screen, within } from '@testing-library/react';
+import { act, cleanup, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createSampleCalendar, SAMPLE_NUMBER } from '../../data/sampleCalendar';
@@ -75,6 +75,20 @@ describe("the Susan's phone and contact section of Settings", () => {
     expect(calendar.store.texts()).toMatchObject([{ kind: 'test', status: 'sent' }]);
   });
 
+  it('shows the test text delivered once the phone company has accepted it', async () => {
+    const user = userEvent.setup();
+    const calendar = createSampleCalendar(EASTERN, { empty: true });
+    renderApp('/settings', { calendar });
+    await user.click(await section().findByRole('button', { name: 'Send a test text' }));
+    expect(await section().findByRole('status', { name: 'Test text' })).toHaveTextContent('Sent');
+    // What the scheduled run records once Textbelt says it was delivered.
+    const [test] = calendar.store.texts();
+    await act(() => calendar.store.replaceText({ ...test, status: 'delivered' }));
+    expect(await section().findByRole('status', { name: 'Test text' })).toHaveTextContent(
+      'Delivered Her phone company accepted it for her phone.',
+    );
+  });
+
   it('shows a test text the sender refused as failed', async () => {
     const user = userEvent.setup();
     const calendar = createSampleCalendar(EASTERN, { empty: true });
@@ -100,5 +114,20 @@ describe("the Susan's phone and contact section of Settings", () => {
   it('says when texts are only recorded and reach no phone', async () => {
     renderApp('/settings', { calendar: noNumber() });
     expect(await section().findByText(/Texts are recorded here, not sent to a phone/)).toBeTruthy();
+  });
+
+  it('says nothing of the kind once the backend sends texts through Textbelt', async () => {
+    let asked = false;
+    const calendar = {
+      ...noNumber(),
+      textsRecordedOnly: async () => {
+        asked = true;
+        return false;
+      },
+    };
+    renderApp('/settings', { calendar });
+    expect(await section().findByRole('note')).toBeTruthy();
+    expect(asked).toBe(true);
+    expect(section().queryByText(/Texts are recorded here/)).not.toBeInTheDocument();
   });
 });
