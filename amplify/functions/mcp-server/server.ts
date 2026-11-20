@@ -6,7 +6,9 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { z } from 'zod';
+import type { ZodRawShapeCompat } from '@modelcontextprotocol/sdk/server/zod-compat.js';
+// zod's version 4 API, which the version the Amplify toolchain pins (3.25) also ships.
+import { z } from 'zod/v4';
 import {
   CalendarRefusal,
   REMINDER_SHAPES,
@@ -356,7 +358,9 @@ export function createMcpServer(ctx: ToolContext): McpServer {
       {
         title: each.title,
         description: each.description + aboutTimeAndTexts(ctx.timeZone),
-        inputSchema: each.inputSchema,
+        // The library keeps a zod of its own for its types; it reads these schemas by their shape
+        // whatever copy made them, and checks every call against them (mcp.test.ts).
+        inputSchema: each.inputSchema as unknown as ZodRawShapeCompat,
         annotations: {
           readOnlyHint: !each.changes,
           destructiveHint: each.changes === 'takes away',

@@ -297,6 +297,21 @@ describe('the tools an agent is given', () => {
       );
   });
 
+  it('refuse a call whose arguments do not fit, before the calendar is asked', async () => {
+    const cal = await calendar();
+    const client = await cal.connect();
+    const add = vi.spyOn(cal.core, 'addAppointment');
+    for (const args of [
+      { date: '2026-11-20', time: '14:00' },
+      { ...checkUp, what: 42 },
+    ]) {
+      const said = await cal.call(client, 'add_appointment', args);
+      expect(said.refused).toMatch(/what/);
+    }
+    expect(add).not.toHaveBeenCalled();
+    expect(cal.store.appointments()).toEqual([]);
+  });
+
   it('expose no settings, keys, subscription links or accounts', async () => {
     const cal = await calendar();
     const client = await cal.connect();
