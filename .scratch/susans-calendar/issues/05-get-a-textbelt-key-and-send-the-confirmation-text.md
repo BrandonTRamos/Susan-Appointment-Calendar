@@ -8,7 +8,7 @@ Until 19 November 2026 this ticket was "Submit Twilio registration and record Su
 
 **Spec:** `.scratch/susans-calendar/spec.md`, "Further Notes"; `docs/adr/0002-textbelt-for-text-messages.md`.
 
-**Blocked by:** None. It can be done at any time.
+**Blocked by:** None. The owner has chosen not to text Susan until the app is built, so the Confirmation text is sent on the day of ticket 18 and not before. Until then every real text goes to the owner's own phone (ticket 13). The sender name can be set at any time.
 
 **Parallel:** Yes. Nothing else waits on it except ticket 18.
 

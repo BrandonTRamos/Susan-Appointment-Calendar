@@ -8,7 +8,7 @@ Until 19 November 2026 this ticket was "Twilio and delivery reports". ADR 0002 r
 
 **Blocked by:** 11 (Sending texts on schedule).
 
-**Parallel:** Yes, with 14, 15 and 16. It is built and tested against recorded examples; sending to Susan's phone is checked in ticket 18.
+**Parallel:** Yes, with 14, 15 and 16. It is built and tested against recorded examples. Once it is merged, the owner can try real texts on the owner's own phone, by storing the key and entering that phone's number in Settings; nothing is sent to Susan's phone before ticket 18.
 
 **Status:** ready-for-agent
 
@@ -23,4 +23,4 @@ Until 19 November 2026 this ticket was "Twilio and delivery reports". ADR 0002 r
 - [ ] No text the app sends holds a web address. A test checks every kind of text.
 - [ ] Textbelt's current documentation has been checked against `docs/text-message-setup.md` for the send and status requests and their answers. Anything that has changed is corrected there and in the spec's "Further Notes".
 - [ ] Tests against recorded examples cover a refused send, each status mapping, and the unconfirmed case.
-- [ ] The README says which secret the owner must supply.
+- [ ] The README says which secret the owner must supply, and how to try real texts on the owner's own phone before go-live: store the key, and enter that phone's number in Settings where Susan's will later go.
