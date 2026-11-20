@@ -3,7 +3,7 @@ import { Link, useMatch } from 'react-router-dom';
 import { CalendarLoading, CalendarTrouble } from '../components/CalendarTrouble';
 import { CarIcon, PersonIcon, PlaceIcon, PlusIcon } from '../components/Icons';
 import { Page } from '../components/Page';
-import { RemindersToSend } from '../components/RemindersToSend';
+import { ReminderCount, RemindersToSend } from '../components/RemindersToSend';
 import { RepeatMark } from '../components/RepeatMark';
 import { useCalendar } from '../data/CalendarContext';
 import { upcomingAppointments, type Appointment } from '../lib/calendar';
@@ -120,47 +120,52 @@ function NextCard({
 
   return (
     <Link className="next-card" to={`/appointments/${id}`} aria-current={picked || undefined}>
-      <div className="next-when">
-        <p className="next-day">{dayInWords(date, today)}</p>
-        <p className="next-time">{formatTime(time)}</p>
-      </div>
-      <div className="next-what">
-        <p className="next-title">{what}</p>
-        <RepeatMark appointment={appointment} />
-        {desktop ? (
-          <>
-            {withWhom && (
-              <p className="with-icon muted">
-                <PersonIcon size={22} />
-                {withWhom}
-              </p>
-            )}
-            {where && (
-              <p className="with-icon muted">
-                <PlaceIcon size={22} />
-                {where}
-              </p>
-            )}
-            {driver && (
-              <p className="with-icon">
-                <CarIcon size={22} />
-                {driver}
-              </p>
-            )}
-          </>
-        ) : (
-          <>
-            {(withWhom || where) && <p className="muted">{joined(' · ', withWhom, where)}</p>}
-            {driver && <p className="next-driver">{driver}</p>}
-          </>
-        )}
-        <RemindersToSend appointment={appointment} />
+      <div className="next-body">
+        <div className="next-when">
+          <p className="next-day">{dayInWords(date, today)}</p>
+          <p className="next-time">{formatTime(time)}</p>
+        </div>
+        <div className="next-what">
+          <p className="next-title">{what}</p>
+          <RepeatMark appointment={appointment} />
+          {desktop ? (
+            <>
+              {withWhom && (
+                <p className="with-icon muted">
+                  <PersonIcon size={22} />
+                  {withWhom}
+                </p>
+              )}
+              {where && (
+                <p className="with-icon muted">
+                  <PlaceIcon size={22} />
+                  {where}
+                </p>
+              )}
+              {driver && (
+                <p className="with-icon">
+                  <CarIcon size={22} />
+                  {driver}
+                </p>
+              )}
+            </>
+          ) : (
+            <>
+              {(withWhom || where) && <p className="muted">{joined(' · ', withWhom, where)}</p>}
+              {driver && <p className="next-driver">{driver}</p>}
+            </>
+          )}
+          <RemindersToSend appointment={appointment} />
+        </div>
       </div>
     </Link>
   );
 }
 
-/** A later Appointment: its date first, then what it is, its time, who with and where. */
+/**
+ * A later Appointment: its date first, then what it is, its time, who with and where; and on a
+ * desktop, how many of its Reminders are still to be sent.
+ */
 function Row({ appointment, picked }: { appointment: Appointment; picked: boolean }) {
   const desktop = useDesktopWidth();
   const { id, what, date, time, withWhom, placeName } = appointment;
@@ -184,6 +189,8 @@ function Row({ appointment, picked }: { appointment: Appointment; picked: boolea
           <RepeatMark appointment={appointment} />
         </span>
       </span>
+      {/* As the desktop mockup has it; on a phone the row is narrow, and the count is on Month. */}
+      {desktop && <ReminderCount appointment={appointment} />}
     </Link>
   );
 }

@@ -185,114 +185,124 @@ function Detail({
       <ReminderList appointment={appointment} timeZone={timeZone} now={new Date()} texts={texts} />
       <TextList appointment={appointment} texts={texts} timeZone={timeZone} now={new Date()} />
 
-      {problem && (
-        <p className="error" role="alert">
-          {problem}
-        </p>
-      )}
-
-      {asking === 'cancel' && appointment.series && (
-        <div className="card confirm" role="group" aria-label="Cancel which Appointments?">
-          <p>
-            <strong>Cancel only this one, or this and all later ones?</strong> This Appointment
-            repeats. Whatever is cancelled stays in the calendar, marked cancelled.
+      <div className="detail-foot">
+        {problem && (
+          <p className="error" role="alert">
+            {problem}
           </p>
-          <div className="actions">
+        )}
+
+        {asking === 'cancel' && appointment.series && (
+          <div className="card confirm" role="group" aria-label="Cancel which Appointments?">
+            <p>
+              <strong>Cancel only this one, or this and all later ones?</strong> This Appointment
+              repeats. Whatever is cancelled stays in the calendar, marked cancelled.
+            </p>
+            <div className="actions">
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={busy}
+                onClick={() => carryOut(() => client.cancelAppointment(id))}
+              >
+                Cancel only this one
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={busy}
+                onClick={() => carryOut(() => client.endSeries(id))}
+              >
+                Cancel this and all later ones
+              </button>
+              <button type="button" className="btn" disabled={busy} onClick={() => setAsking(null)}>
+                No, keep them
+              </button>
+            </div>
+          </div>
+        )}
+        {asking === 'cancel' && !appointment.series && (
+          <div className="card confirm" role="group" aria-label="Cancel this Appointment?">
+            <p>
+              <strong>Cancel this Appointment?</strong> It stays in the calendar, marked cancelled.
+            </p>
+            <div className="actions">
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={busy}
+                onClick={() => carryOut(() => client.cancelAppointment(id))}
+              >
+                Yes, cancel it
+              </button>
+              <button type="button" className="btn" disabled={busy} onClick={() => setAsking(null)}>
+                No, keep it
+              </button>
+            </div>
+          </div>
+        )}
+        {asking === 'delete' && (
+          <div className="card confirm" role="group" aria-label="Delete this Appointment?">
+            <p>
+              <strong>Delete this Appointment?</strong> Deleting is for one entered by mistake. It
+              is removed for good.
+            </p>
+            <div className="actions">
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={busy}
+                onClick={() =>
+                  carryOut(async () => {
+                    onDeleting(true);
+                    try {
+                      await client.deleteAppointment(id);
+                      navigate(back.to, { replace: true });
+                    } finally {
+                      onDeleting(false);
+                    }
+                  })
+                }
+              >
+                Yes, delete it
+              </button>
+              <button type="button" className="btn" disabled={busy} onClick={() => setAsking(null)}>
+                No, keep it
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!asking && (
+          <div className="actions detail-actions">
+            {!cancelled && (
+              <Link className="btn" to={`/appointments/${id}/edit`}>
+                Edit
+              </Link>
+            )}
+            {!cancelled && (
+              <button
+                type="button"
+                className="btn btn-danger-text"
+                onClick={() => setAsking('cancel')}
+              >
+                Cancel Appointment
+              </button>
+            )}
             <button
               type="button"
-              className="btn btn-danger"
-              disabled={busy}
-              onClick={() => carryOut(() => client.cancelAppointment(id))}
+              className={cancelled ? 'btn wide' : 'btn btn-ghost wide'}
+              onClick={() => setAsking('delete')}
             >
-              Cancel only this one
-            </button>
-            <button
-              type="button"
-              className="btn btn-danger"
-              disabled={busy}
-              onClick={() => carryOut(() => client.endSeries(id))}
-            >
-              Cancel this and all later ones
-            </button>
-            <button type="button" className="btn" disabled={busy} onClick={() => setAsking(null)}>
-              No, keep them
+              Delete Appointment
             </button>
           </div>
-        </div>
-      )}
-      {asking === 'cancel' && !appointment.series && (
-        <div className="card confirm" role="group" aria-label="Cancel this Appointment?">
-          <p>
-            <strong>Cancel this Appointment?</strong> It stays in the calendar, marked cancelled.
-          </p>
-          <div className="actions">
-            <button
-              type="button"
-              className="btn btn-danger"
-              disabled={busy}
-              onClick={() => carryOut(() => client.cancelAppointment(id))}
-            >
-              Yes, cancel it
-            </button>
-            <button type="button" className="btn" disabled={busy} onClick={() => setAsking(null)}>
-              No, keep it
-            </button>
-          </div>
-        </div>
-      )}
-      {asking === 'delete' && (
-        <div className="card confirm" role="group" aria-label="Delete this Appointment?">
-          <p>
-            <strong>Delete this Appointment?</strong> Deleting is for one entered by mistake. It is
-            removed for good.
-          </p>
-          <div className="actions">
-            <button
-              type="button"
-              className="btn btn-danger"
-              disabled={busy}
-              onClick={() =>
-                carryOut(async () => {
-                  onDeleting(true);
-                  try {
-                    await client.deleteAppointment(id);
-                    navigate(back.to, { replace: true });
-                  } finally {
-                    onDeleting(false);
-                  }
-                })
-              }
-            >
-              Yes, delete it
-            </button>
-            <button type="button" className="btn" disabled={busy} onClick={() => setAsking(null)}>
-              No, keep it
-            </button>
-          </div>
-        </div>
-      )}
+        )}
 
-      {!asking && (
-        <div className="actions">
-          {!cancelled && (
-            <Link className="btn btn-primary" to={`/appointments/${id}/edit`}>
-              Edit
-            </Link>
-          )}
-          {!cancelled && (
-            <button type="button" className="btn" onClick={() => setAsking('cancel')}>
-              Cancel Appointment
-            </button>
-          )}
-          <button type="button" className="btn" onClick={() => setAsking('delete')}>
-            Delete Appointment
-          </button>
+        <div className="stamps muted">
+          <p>{stamp('Added', added)}</p>
+          {lastChanged && <p>{stamp(cancelled ? 'Cancelled' : 'Last changed', lastChanged)}</p>}
         </div>
-      )}
-
-      <div className="stamps muted">
-        <p>{stamp('Added', added)}</p>
-        {lastChanged && <p>{stamp(cancelled ? 'Cancelled' : 'Last changed', lastChanged)}</p>}
       </div>
     </Page>
   );
