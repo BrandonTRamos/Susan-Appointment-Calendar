@@ -97,6 +97,11 @@ const NAMES: Record<TextKind, string> = {
 
 /** Why a failed text failed, as the rest of a sentence. */
 function failedBecause(text: Text): string {
+  // A Change notice is about the Appointment's time, not a Reminder's (changeNotices.ts).
+  if (text.kind === 'changeNotice' && text.reason === 'outdated')
+    return 'sending did not go through before the Appointment was changed again';
+  if (text.kind === 'changeNotice' && text.reason === 'tooLate')
+    return "sending did not go through before the Appointment's old and new times had passed";
   switch (text.reason) {
     case 'refused':
       return 'the text was refused, so it did not go';
@@ -146,7 +151,10 @@ function said(trouble: TextTrouble, text: Text) {
     case 'tooLate':
       return {
         became: 'could not be sent in time',
-        why: 'the Appointment had started before it could go',
+        why:
+          text.kind === 'changeNotice'
+            ? "the Appointment's old and new times had both passed before it could go"
+            : 'the Appointment had started before it could go',
         after: DID_NOT[text.kind],
       };
     case 'webAddress':

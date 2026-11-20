@@ -1,5 +1,6 @@
-// Reminders: when each goes out, and the words Susan reads. Pure, so that the form can show what a
-// Reminder will do while it is being typed, and the core and the scheduled run work it out the same.
+// Reminders: when each goes out, and the words Susan reads, in a Reminder and in a Change notice.
+// Pure, so that the form can show what a Reminder will do while it is being typed, and the core and
+// the scheduled run work it out the same.
 
 import {
   addDays,
@@ -11,7 +12,7 @@ import {
   momentOf,
   momentOrSkipped,
 } from '../localTime';
-import { reminderPlan } from './texts';
+import { reminderPlan, type Told } from './texts';
 import { holdsWebAddress } from './webAddress';
 import type {
   Appointment,
@@ -141,8 +142,6 @@ export function reminderWords(
   { dueAt }: { dueAt: string | Date },
   timeZone: string,
 ): string {
-  const what = line(appointment.what) ?? 'Appointment';
-  const withWhom = line(appointment.withWhom);
   const where = [line(appointment.placeName), line(appointment.placeAddress)]
     .filter(Boolean)
     .join(', ');
@@ -150,7 +149,7 @@ export function reminderWords(
   const pickup = isTime(appointment.pickupTime ?? '') ? formatTime(appointment.pickupTime!) : null;
   const note = appointment.noteForSusan?.trim();
 
-  let first = withWhom ? `${what} with ${withWhom}` : what;
+  let first = whatWithWhom(appointment);
   first += `, ${dayInWords(appointment.date, new Date(dueAt), timeZone)}`;
   if (isTime(appointment.time)) first += ` at ${formatTime(appointment.time)}`;
   if (where) first += `, at ${where}`;
@@ -160,6 +159,35 @@ export function reminderWords(
   else if (pickup) parts.push(`Pickup is at ${pickup}.`);
   if (note) parts.push(sentence(note));
   return basicCharacters(parts.join(' '));
+}
+
+/** What the Appointment is and who it is with, as a text names it: "Eye exam with Dr. Lee". */
+function whatWithWhom(appointment: Pick<AppointmentDetails, 'what' | 'withWhom'>): string {
+  const what = line(appointment.what) ?? 'Appointment';
+  const withWhom = line(appointment.withWhom);
+  return withWhom ? `${what} with ${withWhom}` : what;
+}
+
+/**
+ * The words of a Change notice, as Susan reads them when it goes out at `dueAt`: the opening
+ * "Susan's Calendar:", "Change:", what the Appointment is and who with, then the old day and time
+ * she was told (`was`) and either the new ones or that it is cancelled (`told`). Each day is in
+ * words as seen from when it goes out.
+ */
+export function changeNoticeWords(
+  appointment: Pick<AppointmentDetails, 'what' | 'withWhom'>,
+  { was, told }: { was: Told; told: Told },
+  { dueAt }: { dueAt: string | Date },
+  timeZone: string,
+): string {
+  const from = new Date(dueAt);
+  const when = ({ date, time }: Told) =>
+    `${dayInWords(date, from, timeZone)} at ${isTime(time) ? formatTime(time) : time}`;
+  const named = whatWithWhom(appointment);
+  const change = told.cancelled
+    ? `${named}, ${when(was)}, is cancelled.`
+    : `${named} has moved from ${when(was)} to ${when(told)}.`;
+  return basicCharacters(`Susan's Calendar: Change: ${change}`);
 }
 
 /** The characters a text message can carry without falling back to a costlier encoding. */

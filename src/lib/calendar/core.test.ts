@@ -30,6 +30,7 @@ import {
   STATUS_READS_AT_ONCE,
   TEXT_KINDS,
   TEST_TEXT_WORDS,
+  type CalendarCore,
 } from './index';
 
 const EASTERN = 'America/New_York';
@@ -3306,6 +3307,7 @@ describe('sending texts on schedule', () => {
         // The stand-in names no text: nobody can be asked what became of it.
         reference: null,
         creditLeft: null,
+        told: { date: '2026-11-20', time: '14:00', cancelled: false },
         alert: null,
       },
     ]);
@@ -3438,6 +3440,7 @@ describe('sending texts on schedule', () => {
       sentAt: null,
       reference: null,
       creditLeft: null,
+      told: { date: added.date, time: added.time, cancelled: false },
       alert: null,
     });
     clock.set('2026-11-19T23:05:00.000Z');
@@ -4344,6 +4347,7 @@ describe('Alerts', () => {
       reference: 'stand-in-9',
       creditLeft: null,
       alert: null,
+      told: null,
     };
     await store.claimText(failed);
     await core.recordDelivery({ textId: failed.id, outcome: 'undelivered' });
@@ -4411,6 +4415,7 @@ describe('Alerts', () => {
       reference: null,
       creditLeft: null,
       alert: null,
+      told: null,
     });
     clock.set('2026-11-19T23:10:00.000Z');
     await core.runDue();
@@ -4671,6 +4676,7 @@ describe('the trouble with texts to Susan', () => {
     reference: null,
     creditLeft: null,
     alert: null,
+    told: null,
     ...settled,
   });
 
@@ -5142,6 +5148,8 @@ describe('web addresses', () => {
         reference: null,
         creditLeft: null,
         alert: null,
+        // A Change notice tells of the Appointment as it is, as the core's would.
+        told: kind === 'test' ? null : { date: added.date, time: added.time, cancelled: false },
       });
     }
     clock.set('2026-11-19T23:00:00.000Z');
@@ -5154,7 +5162,7 @@ describe('web addresses', () => {
   });
 
   it('are in none of the texts the calendar writes today', async () => {
-    const { core, clock, sender } = calendar();
+    const { core, clock, sender, store } = calendar();
     await core.changeSettings(linda, {
       susansNumber: SUSANS_NUMBER,
       contactName: 'Linda',
@@ -5178,6 +5186,15 @@ describe('web addresses', () => {
       await core.runDue();
     }
     expect(sender.taken()).toHaveLength(4);
+    // A move and then a cancellation, each told in a Change notice once settled.
+    await core.changeAppointment(mark, (await store.everyAppointment())[0].id, { time: '15:00' });
+    clock.set('2026-11-20T17:05:00.000Z');
+    await core.runDue();
+    await core.cancelAppointment(mark, (await store.everyAppointment())[0].id);
+    clock.set('2026-11-20T17:10:00.000Z');
+    await core.runDue();
+    const notices = sender.taken().filter(({ words }) => words.includes('Change:'));
+    expect(notices).toHaveLength(2);
     for (const { words } of sender.taken()) expect(holdsWebAddress(words)).toBe(false);
   });
 });
@@ -5360,5 +5377,686 @@ describe('Alerts for a text holding a web address', () => {
     const said = JSON.stringify([messenger.emails(), alertNotifications(messenger)]);
     expect(said).toMatch(/an Appointment, Fri, Nov 20, 2026 at 2:00 pm/);
     expect(said).not.toMatch(/example\.com/);
+  });
+});
+
+describe('Change notices', () => {
+  /**
+   * Susan's number set, and an Appointment tomorrow (Friday) at 2:00 pm with Dr. Patel, whose
+   * Reminder the evening before (Thursday 6:00 pm) has gone to her phone.
+   */
+  async function reminded(details: Partial<NewAppointment> = {}) {
+    const cal = calendar();
+    const added = await cal.core.addAppointment(linda, { ...everyDetail, ...details });
+    await remind(cal, added);
+    expect(cal.sender.taken()).toHaveLength(1);
+    return { ...cal, added };
+  }
+
+  /** Runs what is due at a moment, given as an ISO timestamp. */
+  async function runAt({ core, clock }: ReturnType<typeof calendar>, at: string) {
+    clock.set(at);
+    return core.runDue();
+  }
+
+  /** The words of every Change notice that went to her phone, oldest first. */
+  const notices = ({ sender }: ReturnType<typeof calendar>) =>
+    sender
+      .taken()
+      .map((text) => text.words)
+      .filter((words) => words.includes('Change:'));
+
+  it('tells her when an Appointment she was reminded of moves, with the old and new time', async () => {
+    const cal = await reminded();
+    cal.clock.set('2026-11-19T23:10:00.000Z'); // 6:10 pm
+    await cal.core.changeAppointment(mark, cal.added.id, { date: '2026-11-23', time: '10:00' });
+    await runAt(cal, '2026-11-19T23:15:00.000Z');
+    expect(notices(cal)).toEqual([
+      "Susan's Calendar: Change: Cardiology check-up with Dr. Patel has moved from tomorrow at 2:00 pm to Monday, November 23 at 10:00 am.",
+    ]);
+    expect(cal.sender.taken().at(-1)?.to).toBe(SUSANS_NUMBER);
+  });
+
+  it('tells her when an Appointment she was reminded of is cancelled', async () => {
+    const cal = await reminded();
+    cal.clock.set('2026-11-19T23:10:00.000Z');
+    await cal.core.cancelAppointment(mark, cal.added.id);
+    await runAt(cal, '2026-11-19T23:15:00.000Z');
+    expect(notices(cal)).toEqual([
+      "Susan's Calendar: Change: Cardiology check-up with Dr. Patel, tomorrow at 2:00 pm, is cancelled.",
+    ]);
+  });
+
+  it('records each one like a Reminder: its kind, Appointment, words, due time, status and what it told her', async () => {
+    const cal = await reminded();
+    cal.clock.set('2026-11-19T23:10:00.000Z');
+    await cal.core.changeAppointment(mark, cal.added.id, { time: '15:00' });
+    await runAt(cal, '2026-11-19T23:15:30.000Z');
+    const notice = cal.store.texts().find((text) => text.kind === 'changeNotice');
+    expect(notice).toEqual({
+      id: expect.any(String),
+      kind: 'changeNotice',
+      appointmentId: cal.added.id,
+      reminderId: null,
+      words: notices(cal)[0],
+      dueAt: '2026-11-19T23:15:00.000Z',
+      status: 'sent',
+      reason: null,
+      attempts: 1,
+      triedAt: '2026-11-19T23:15:30.000Z',
+      sentAt: '2026-11-19T23:15:30.000Z',
+      reference: null,
+      creditLeft: null,
+      alert: null,
+      told: { date: '2026-11-20', time: '15:00', cancelled: false },
+    });
+    expect(JSON.stringify(cal.store.texts())).not.toMatch(/5555550123|prescription/);
+    // It is about the Appointment, so deleting it is refused like after any text.
+    await refused(cal.core.deleteAppointment(linda, cal.added.id), 'texted');
+  });
+
+  it('sends nothing about a move or a cancellation before any text about the Appointment went out', async () => {
+    const cal = calendar();
+    await cal.core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    const moving = await cal.core.addAppointment(linda, everyDetail);
+    const going = await cal.core.addAppointment(linda, { ...checkUp, what: 'Blood draw' });
+    await cal.core.changeAppointment(mark, moving.id, { date: '2026-11-23' });
+    await cal.core.cancelAppointment(mark, going.id);
+    await runAt(cal, '2026-11-19T20:30:00.000Z');
+    await runAt(cal, '2026-11-19T22:00:00.000Z');
+    expect(cal.sender.taken()).toEqual([]);
+    expect(cal.store.texts()).toEqual([]);
+  });
+
+  it('sends nothing when no text about it can have reached her: none sent, or refused outright', async () => {
+    const cal = calendar();
+    const unsent = await cal.core.addAppointment(linda, everyDetail);
+    const refusedOne = await cal.core.addAppointment(linda, { ...checkUp, what: 'Blood draw' });
+    // No number yet when the first Reminders come due; then one is refused.
+    await runAt(cal, '2026-11-19T23:00:00.000Z');
+    await cal.core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    await cal.core.changeAppointment(linda, refusedOne.id, {
+      reminders: [{ shape: 'before', amount: 2, unit: 'hours' }],
+    });
+    cal.sender.refuseNext();
+    await runAt(cal, '2026-11-20T17:00:00.000Z');
+    cal.clock.set('2026-11-20T17:05:00.000Z');
+    await cal.core.changeAppointment(mark, unsent.id, { time: '16:00' });
+    await cal.core.cancelAppointment(mark, refusedOne.id);
+    await runAt(cal, '2026-11-20T17:30:00.000Z');
+    expect(cal.sender.taken()).toEqual([]);
+    expect(cal.store.texts().map((text) => text.kind)).toEqual([
+      'reminder',
+      'reminder',
+      'reminder',
+    ]);
+  });
+
+  it.each([
+    [
+      'moved',
+      (core: CalendarCore, id: string) => core.changeAppointment(mark, id, { time: '16:00' }),
+    ],
+    ['cancelled', (core: CalendarCore, id: string) => core.cancelAppointment(mark, id)],
+  ])(
+    'sends nothing when it is %s after a run claimed its Reminder and stopped before sending',
+    async (_, edit) => {
+      const cal = calendar();
+      await cal.core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+      const added = await cal.core.addAppointment(linda, everyDetail);
+      const [reminder] = added.reminders;
+      // What a run that stopped after its claim leaves: tried once, never handed to the sender.
+      await cal.store.claimText({
+        id: `reminder:${added.id}:${reminder.id}:${reminder.dueAt}`,
+        kind: 'reminder',
+        appointmentId: added.id,
+        reminderId: reminder.id,
+        words: reminderWords(added, reminder, EASTERN),
+        dueAt: reminder.dueAt,
+        status: 'waiting',
+        reason: null,
+        attempts: 1,
+        triedAt: reminder.dueAt,
+        sentAt: null,
+        reference: null,
+        creditLeft: null,
+        alert: null,
+        told: { date: added.date, time: added.time, cancelled: false },
+      });
+      cal.clock.set('2026-11-19T23:00:30.000Z');
+      await edit(cal.core, added.id);
+      for (const at of ['23:02', '23:06', '23:30']) await runAt(cal, `2026-11-19T${at}:00.000Z`);
+      // A move leaves that Reminder's time as it was, so it is tried again with the new details;
+      // a cancellation gives it up. Either way she was never told of it, so no notice.
+      expect(notices(cal)).toEqual([]);
+      expect(cal.store.texts().map((text) => text.kind)).toEqual(['reminder']);
+    },
+  );
+
+  it('sends nothing after a Reminder whose only try had no answer', async () => {
+    const cal = calendar();
+    await cal.core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    const added = await cal.core.addAppointment(linda, everyDetail);
+    cal.sender.breakNext();
+    await runAt(cal, '2026-11-19T23:00:00.000Z');
+    cal.clock.set('2026-11-19T23:01:00.000Z');
+    await cal.core.cancelAppointment(mark, added.id);
+    for (const at of ['23:02', '23:06', '23:30']) await runAt(cal, `2026-11-19T${at}:00.000Z`);
+    expect(cal.sender.taken()).toEqual([]);
+    expect(cal.store.texts()).toMatchObject([{ kind: 'reminder', status: 'failed' }]);
+  });
+
+  it('counts a Reminder the sender took on a second try as one she was told', async () => {
+    const cal = calendar();
+    await cal.core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    const added = await cal.core.addAppointment(linda, everyDetail);
+    cal.sender.breakNext();
+    await runAt(cal, '2026-11-19T23:00:00.000Z');
+    await runAt(cal, '2026-11-19T23:02:00.000Z');
+    expect(cal.store.texts()).toMatchObject([{ status: 'sent', attempts: 2 }]);
+    cal.clock.set('2026-11-19T23:10:00.000Z');
+    await cal.core.cancelAppointment(mark, added.id);
+    await runAt(cal, '2026-11-19T23:15:00.000Z');
+    expect(notices(cal)).toEqual([
+      "Susan's Calendar: Change: Cardiology check-up with Dr. Patel, tomorrow at 2:00 pm, is cancelled.",
+    ]);
+  });
+
+  it('does not count a Reminder the sender reported undelivered as one she was told', async () => {
+    const cal = calendar();
+    const sender = createStandInSender({ reportsDelivery: true });
+    const core = createCalendarCore({
+      store: cal.store,
+      clock: cal.clock,
+      messenger: createMemoryMessenger(),
+      textSender: sender,
+      timeZone: EASTERN,
+    });
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    const added = await core.addAppointment(linda, everyDetail);
+    await runAt({ ...cal, core }, '2026-11-19T23:00:00.000Z');
+    sender.report('stand-in-1', 'failed');
+    await runAt({ ...cal, core }, '2026-11-19T23:01:00.000Z');
+    expect(cal.store.texts()).toMatchObject([{ status: 'failed', reason: 'undelivered' }]);
+    cal.clock.set('2026-11-19T23:10:00.000Z');
+    await core.changeAppointment(mark, added.id, { time: '15:00' });
+    await runAt({ ...cal, core }, '2026-11-19T23:15:00.000Z');
+    expect(sender.taken()).toHaveLength(1);
+    expect(cal.store.texts().map((text) => text.kind)).toEqual(['reminder']);
+  });
+
+  it('counts a Reminder sent but not confirmed delivered as one she was told', async () => {
+    const cal = calendar();
+    const sender = createStandInSender({ reportsDelivery: true });
+    const core = createCalendarCore({
+      store: cal.store,
+      clock: cal.clock,
+      messenger: createMemoryMessenger(),
+      textSender: sender,
+      timeZone: EASTERN,
+    });
+    await core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    const added = await core.addAppointment(linda, everyDetail);
+    await runAt({ ...cal, core }, '2026-11-19T23:00:00.000Z');
+    await runAt({ ...cal, core }, '2026-11-19T23:30:00.000Z');
+    expect(cal.store.texts()).toMatchObject([{ status: 'failed', reason: 'unconfirmed' }]);
+    cal.clock.set('2026-11-19T23:40:00.000Z');
+    await core.cancelAppointment(mark, added.id);
+    await runAt({ ...cal, core }, '2026-11-19T23:45:00.000Z');
+    expect(sender.taken().at(-1)?.words).toBe(
+      "Susan's Calendar: Change: Cardiology check-up with Dr. Patel, tomorrow at 2:00 pm, is cancelled.",
+    );
+  });
+
+  it('is not sent when its words would hold a web address, like any text', async () => {
+    const cal = await reminded();
+    cal.clock.set('2026-11-19T23:10:00.000Z');
+    await cal.core.changeAppointment(mark, cal.added.id, {
+      time: '15:00',
+      withWhom: 'drpatel.com',
+    });
+    await runAt(cal, '2026-11-19T23:15:00.000Z');
+    expect(notices(cal)).toEqual([]);
+    expect(cal.store.texts().at(-1)).toMatchObject({
+      kind: 'changeNotice',
+      status: 'notSent',
+      reason: 'webAddress',
+    });
+  });
+
+  /** Every Alert delivery so far: who each email and each app notification went to, by subject. */
+  const alertsSent = ({ messenger }: ReturnType<typeof calendar>) => ({
+    emails: messenger.emails().flatMap(({ to, email }) => to.map((id) => `${id} ${email.subject}`)),
+    notifications: messenger
+      .appNotifications()
+      .filter(({ notification }) => notification.tag.startsWith('alert-'))
+      .flatMap(({ to, notification }) => to.map((id) => `${id} ${notification.tag}`)),
+  });
+
+  it('raises one Alert, to every Admin by each channel, when the core sends one that fails', async () => {
+    const cal = await reminded();
+    cal.clock.set('2026-11-19T23:10:00.000Z');
+    await cal.core.changeAppointment(mark, cal.added.id, { time: '15:00' });
+    cal.sender.refuseNext();
+    await runAt(cal, '2026-11-19T23:15:00.000Z');
+    const notice = cal.store.texts().find((text) => text.kind === 'changeNotice')!;
+    expect(notice).toMatchObject({
+      status: 'failed',
+      reason: 'refused',
+      alert: { state: 'raised' },
+    });
+    for (const at of ['23:16', '23:20', '23:40']) await runAt(cal, `2026-11-19T${at}:00.000Z`);
+    expect(alertsSent(cal)).toEqual({
+      emails: ADMINS.map((id) => `${id} Susan's Calendar alert: a Change notice failed`),
+      notifications: ADMINS.map((id) => `${id} alert-${notice.id}`),
+    });
+    const [{ email }] = cal.messenger.emails();
+    expect(email.body).toMatch(/She may not know the Appointment changed\./);
+    expect(email.opens).toBe(`/appointments/${cal.added.id}`);
+  });
+
+  it('raises one Alert for a notice recorded as not sent, in words that fit a Change notice', async () => {
+    const cal = await reminded();
+    cal.clock.set('2026-11-19T23:10:00.000Z');
+    await cal.core.changeAppointment(mark, cal.added.id, { time: '13:00' });
+    await runAt(cal, '2026-11-20T19:30:00.000Z');
+    await runAt(cal, '2026-11-20T19:40:00.000Z');
+    const notice = cal.store.texts().find((text) => text.kind === 'changeNotice')!;
+    expect(notice).toMatchObject({ status: 'notSent', reason: 'tooLate' });
+    expect(alertsSent(cal).emails).toEqual(
+      ADMINS.map((id) => `${id} Susan's Calendar alert: a Change notice could not be sent in time`),
+    );
+    expect(cal.messenger.emails()[0].email.body).toMatch(
+      /old and new times had both passed before it could go\. She was not told of the change\./,
+    );
+  });
+
+  it('describes the net change in one notice after several edits in a row', async () => {
+    const cal = await reminded();
+    cal.clock.set('2026-11-19T23:10:00.000Z');
+    await cal.core.changeAppointment(mark, cal.added.id, { time: '15:00' });
+    cal.clock.set('2026-11-19T23:12:00.000Z');
+    await cal.core.changeAppointment(linda, cal.added.id, { time: '16:00' });
+    cal.clock.set('2026-11-19T23:14:00.000Z');
+    await cal.core.changeAppointment(mark, cal.added.id, { noteForSusan: 'Bring your glasses.' });
+    // Five minutes after the first edit is not five minutes after the last: still settling.
+    await runAt(cal, '2026-11-19T23:15:00.000Z');
+    await runAt(cal, '2026-11-19T23:18:00.000Z');
+    expect(notices(cal)).toEqual([]);
+    await runAt(cal, '2026-11-19T23:19:00.000Z');
+    await runAt(cal, '2026-11-19T23:30:00.000Z');
+    expect(notices(cal)).toEqual([
+      "Susan's Calendar: Change: Cardiology check-up with Dr. Patel has moved from tomorrow at 2:00 pm to tomorrow at 4:00 pm.",
+    ]);
+  });
+
+  it('sends nothing when an edit is put back before the notice goes out', async () => {
+    const cal = await reminded();
+    cal.clock.set('2026-11-19T23:10:00.000Z');
+    await cal.core.changeAppointment(mark, cal.added.id, { date: '2026-11-21', time: '09:00' });
+    cal.clock.set('2026-11-19T23:13:00.000Z');
+    await cal.core.changeAppointment(mark, cal.added.id, { date: '2026-11-20', time: '14:00' });
+    for (const at of ['23:15', '23:18', '23:30']) await runAt(cal, `2026-11-19T${at}:00.000Z`);
+    expect(notices(cal)).toEqual([]);
+    expect(cal.store.texts().map((text) => text.kind)).toEqual(['reminder']);
+  });
+
+  it('compares against what she was last told, so a later move is told from the time she last heard', async () => {
+    const cal = await reminded();
+    cal.clock.set('2026-11-19T23:10:00.000Z');
+    await cal.core.changeAppointment(mark, cal.added.id, { date: '2026-11-23', time: '10:00' });
+    await runAt(cal, '2026-11-19T23:15:00.000Z');
+    cal.clock.set('2026-11-19T23:40:00.000Z');
+    await cal.core.changeAppointment(linda, cal.added.id, { date: '2026-11-24', time: '11:00' });
+    await runAt(cal, '2026-11-19T23:45:00.000Z');
+    // Put back to what her last notice said: nothing more to tell her.
+    cal.clock.set('2026-11-20T00:10:00.000Z');
+    await cal.core.changeAppointment(linda, cal.added.id, { date: '2026-11-23', time: '10:00' });
+    cal.clock.set('2026-11-20T00:12:00.000Z');
+    await cal.core.changeAppointment(linda, cal.added.id, { date: '2026-11-24', time: '11:00' });
+    await runAt(cal, '2026-11-20T00:20:00.000Z');
+    cal.clock.set('2026-11-20T00:30:00.000Z');
+    await cal.core.cancelAppointment(mark, cal.added.id);
+    await runAt(cal, '2026-11-20T00:35:00.000Z');
+    await runAt(cal, '2026-11-20T01:00:00.000Z');
+    expect(notices(cal)).toEqual([
+      "Susan's Calendar: Change: Cardiology check-up with Dr. Patel has moved from tomorrow at 2:00 pm to Monday, November 23 at 10:00 am.",
+      "Susan's Calendar: Change: Cardiology check-up with Dr. Patel has moved from Monday, November 23 at 10:00 am to Tuesday, November 24 at 11:00 am.",
+      "Susan's Calendar: Change: Cardiology check-up with Dr. Patel, Tuesday, November 24 at 11:00 am, is cancelled.",
+    ]);
+  });
+
+  it('sends nothing for a change to the place, Driver, pickup time or notes; later Reminders carry them', async () => {
+    const cal = await reminded({
+      reminders: [
+        { shape: 'daysBefore', days: 1, time: '18:00' },
+        { shape: 'before', amount: 2, unit: 'hours' },
+      ],
+    });
+    cal.clock.set('2026-11-19T23:10:00.000Z');
+    await cal.core.changeAppointment(mark, cal.added.id, {
+      placeName: 'Riverside Clinic',
+      placeAddress: '12 River Rd',
+      driverName: 'Mark',
+      pickupTime: '13:00',
+      noteForSusan: 'Bring your glasses.',
+      privateNotes: 'Parking is at the back.',
+    });
+    await runAt(cal, '2026-11-19T23:30:00.000Z');
+    expect(notices(cal)).toEqual([]);
+    await runAt(cal, '2026-11-20T17:00:00.000Z'); // noon Friday: the second Reminder
+    expect(cal.sender.taken().at(-1)?.words).toBe(
+      "Susan's Calendar: Cardiology check-up with Dr. Patel, today at 2:00 pm, at Riverside Clinic, 12 River Rd. Mark picks you up at 1:00 pm. Bring your glasses.",
+    );
+  });
+
+  it('sends each notice once, however many runs see it, even when they overlap', async () => {
+    const cal = await reminded();
+    const other = createCalendarCore({
+      store: cal.store,
+      clock: cal.clock,
+      messenger: createMemoryMessenger(),
+      textSender: cal.sender,
+      timeZone: EASTERN,
+    });
+    cal.clock.set('2026-11-19T23:10:00.000Z');
+    await cal.core.changeAppointment(mark, cal.added.id, { time: '15:00' });
+    cal.clock.set('2026-11-19T23:15:00.000Z');
+    await Promise.all([cal.core.runDue(), other.runDue(), cal.core.runDue()]);
+    await runAt(cal, '2026-11-19T23:16:00.000Z');
+    await runAt(cal, '2026-11-19T23:40:00.000Z');
+    expect(notices(cal)).toHaveLength(1);
+    expect(cal.store.texts().filter((text) => text.kind === 'changeNotice')).toHaveLength(1);
+  });
+
+  it('tries again a notice that might not have gone through', async () => {
+    const cal = await reminded();
+    cal.clock.set('2026-11-19T23:10:00.000Z');
+    await cal.core.changeAppointment(mark, cal.added.id, { time: '15:00' });
+    cal.sender.breakNext();
+    await runAt(cal, '2026-11-19T23:15:00.000Z');
+    expect(cal.store.texts().at(-1)).toMatchObject({ kind: 'changeNotice', status: 'waiting' });
+    await runAt(cal, '2026-11-19T23:16:00.000Z');
+    await runAt(cal, '2026-11-19T23:17:00.000Z');
+    expect(cal.store.texts().at(-1)).toMatchObject({ status: 'sent', attempts: 2 });
+    expect(notices(cal)).toHaveLength(1);
+  });
+
+  it('gives up a waiting notice that a later edit made wrong, and tells her the outcome from what she last heard', async () => {
+    const cal = await reminded();
+    cal.clock.set('2026-11-19T23:10:00.000Z');
+    await cal.core.changeAppointment(mark, cal.added.id, { time: '15:00' });
+    cal.sender.breakNext();
+    await runAt(cal, '2026-11-19T23:15:00.000Z');
+    cal.clock.set('2026-11-19T23:16:00.000Z');
+    await cal.core.changeAppointment(mark, cal.added.id, { time: '16:00' });
+    await runAt(cal, '2026-11-19T23:17:00.000Z');
+    await runAt(cal, '2026-11-19T23:21:00.000Z');
+    const kept = cal.store.texts().filter((text) => text.kind === 'changeNotice');
+    expect(kept.map((text) => [text.status, text.reason])).toEqual([
+      ['failed', 'outdated'],
+      ['sent', null],
+    ]);
+    // The sender never took the first, so the second is told from the Reminder she was sent.
+    expect(notices(cal)).toEqual([
+      "Susan's Calendar: Change: Cardiology check-up with Dr. Patel has moved from tomorrow at 2:00 pm to tomorrow at 4:00 pm.",
+    ]);
+  });
+
+  it('records a notice as not sent while her number is not set, and sends none of them later', async () => {
+    const cal = await reminded();
+    await cal.core.changeSettings(linda, { susansNumber: null });
+    cal.clock.set('2026-11-19T23:10:00.000Z');
+    await cal.core.changeAppointment(mark, cal.added.id, { time: '15:00' });
+    await runAt(cal, '2026-11-19T23:15:00.000Z');
+    await cal.core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    await runAt(cal, '2026-11-19T23:30:00.000Z');
+    expect(notices(cal)).toEqual([]);
+    expect(cal.store.texts().at(-1)).toMatchObject({
+      kind: 'changeNotice',
+      status: 'notSent',
+      reason: 'noNumber',
+    });
+  });
+
+  it('sends nothing, and records nothing, for an edit made once both the old and new times had passed', async () => {
+    const cal = await reminded();
+    cal.clock.set('2026-11-21T15:00:00.000Z'); // Saturday: the Appointment was yesterday
+    await cal.core.changeAppointment(mark, cal.added.id, { time: '15:00' });
+    await runAt(cal, '2026-11-21T15:10:00.000Z');
+    expect(notices(cal)).toEqual([]);
+    expect(cal.store.texts().map((text) => text.kind)).toEqual(['reminder']);
+  });
+
+  it('records a notice as not sent when the run reaches it only after both times have passed', async () => {
+    const cal = await reminded();
+    cal.clock.set('2026-11-19T23:10:00.000Z');
+    await cal.core.changeAppointment(mark, cal.added.id, { time: '13:00' });
+    // No run between the edit and the Appointment's old time.
+    await runAt(cal, '2026-11-20T19:30:00.000Z');
+    expect(notices(cal)).toEqual([]);
+    expect(cal.store.texts().at(-1)).toMatchObject({
+      kind: 'changeNotice',
+      status: 'notSent',
+      reason: 'tooLate',
+    });
+  });
+
+  it('pays no heed to a text recorded before the calendar kept what each one told her', async () => {
+    const cal = calendar();
+    await cal.core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    const added = await cal.core.addAppointment(linda, everyDetail);
+    await cal.store.claimText({
+      id: `reminder:${added.id}:${added.reminders[0].id}:${added.reminders[0].dueAt}`,
+      kind: 'reminder',
+      appointmentId: added.id,
+      reminderId: added.reminders[0].id,
+      words: reminderWords(added, added.reminders[0], EASTERN),
+      dueAt: added.reminders[0].dueAt,
+      status: 'sent',
+      reason: null,
+      attempts: 1,
+      triedAt: added.reminders[0].dueAt,
+      sentAt: added.reminders[0].dueAt,
+      reference: null,
+      creditLeft: null,
+      alert: null,
+      told: null,
+    });
+    cal.clock.set('2026-11-19T23:10:00.000Z');
+    await cal.core.changeAppointment(mark, added.id, { time: '15:00' });
+    await runAt(cal, '2026-11-19T23:30:00.000Z');
+    expect(cal.sender.taken()).toEqual([]);
+  });
+
+  it('keeps to the basic text-message characters where it can', async () => {
+    const cal = await reminded({ what: 'Dr. O’Brien’s check-up', withWhom: null });
+    cal.clock.set('2026-11-19T23:10:00.000Z');
+    await cal.core.cancelAppointment(mark, cal.added.id);
+    await runAt(cal, '2026-11-19T23:15:00.000Z');
+    expect(notices(cal)).toEqual([
+      "Susan's Calendar: Change: Dr. O'Brien's check-up, tomorrow at 2:00 pm, is cancelled.",
+    ]);
+  });
+});
+
+describe('Reminders for a moved Appointment', () => {
+  it('a Reminder that already went out is due again at its new time, after the notice', async () => {
+    const cal = calendar();
+    await cal.core.changeSettings(linda, { susansNumber: SUSANS_NUMBER });
+    const added = await cal.core.addAppointment(linda, {
+      ...everyDetail,
+      reminders: [{ shape: 'before', amount: 2, unit: 'hours' }],
+    });
+    cal.clock.set('2026-11-20T17:00:00.000Z'); // noon Friday
+    await cal.core.runDue();
+    cal.clock.set('2026-11-20T17:30:00.000Z');
+    await cal.core.changeAppointment(mark, added.id, { time: '17:00' });
+    for (const at of ['17:35', '19:59', '20:00', '20:30']) {
+      cal.clock.set(`2026-11-20T${at}:00.000Z`);
+      await cal.core.runDue();
+    }
+    expect(cal.sender.taken().map((text) => text.words)).toEqual([
+      "Susan's Calendar: Cardiology check-up with Dr. Patel, today at 2:00 pm, at Heart Clinic, 400 Main St. Linda picks you up at 1:15 pm. Bring your list of medicines.",
+      "Susan's Calendar: Change: Cardiology check-up with Dr. Patel has moved from today at 2:00 pm to today at 5:00 pm.",
+      "Susan's Calendar: Cardiology check-up with Dr. Patel, today at 5:00 pm, at Heart Clinic, 400 Main St. Linda picks you up at 1:15 pm. Bring your list of medicines.",
+    ]);
+  });
+});
+
+describe('a Change notice that comes up overnight', () => {
+  type Calendar = ReturnType<typeof calendar>;
+
+  /** Reminded of the Appointment, then an edit at 10:00 pm on Thursday, Susan's time. */
+  async function lateEdit(
+    details: Partial<NewAppointment>,
+    edit: (cal: Calendar, id: string) => Promise<unknown>,
+  ) {
+    const cal = calendar();
+    const added = await cal.core.addAppointment(linda, { ...everyDetail, ...details });
+    await remind(cal, added);
+    cal.clock.set('2026-11-20T03:00:00.000Z'); // 10:00 pm Thursday
+    await edit(cal, added.id);
+    return cal;
+  }
+
+  async function runAt({ core, clock }: Calendar, at: string) {
+    clock.set(at);
+    return core.runDue();
+  }
+
+  const sentAt = (cal: Calendar) =>
+    cal.store.texts().find((text) => text.kind === 'changeNotice')?.sentAt;
+
+  it('waits until 7:00 am when both the old and new times are later', async () => {
+    const cal = await lateEdit({}, ({ core }, id) =>
+      core.changeAppointment(mark, id, { time: '15:00' }),
+    );
+    for (const at of ['2026-11-20T03:05', '2026-11-20T08:00', '2026-11-20T11:59'])
+      await runAt(cal, `${at}:00.000Z`);
+    expect(sentAt(cal)).toBeUndefined();
+    await runAt(cal, '2026-11-20T12:00:00.000Z'); // 7:00 am Friday
+    expect(sentAt(cal)).toBe('2026-11-20T12:00:00.000Z');
+    expect(cal.sender.taken().at(-1)?.words).toBe(
+      "Susan's Calendar: Change: Cardiology check-up with Dr. Patel has moved from today at 2:00 pm to today at 3:00 pm.",
+    );
+  });
+
+  it('waits until 7:00 am for a cancellation too', async () => {
+    const cal = await lateEdit({}, ({ core }, id) => core.cancelAppointment(mark, id));
+    await runAt(cal, '2026-11-20T03:05:00.000Z');
+    expect(sentAt(cal)).toBeUndefined();
+    await runAt(cal, '2026-11-20T12:00:00.000Z');
+    expect(sentAt(cal)).toBe('2026-11-20T12:00:00.000Z');
+  });
+
+  it('waits when it is due just after 9:00 pm', async () => {
+    const cal = calendar();
+    const added = await cal.core.addAppointment(linda, everyDetail);
+    await remind(cal, added);
+    cal.clock.set('2026-11-20T01:58:00.000Z'); // 8:58 pm: settled at 9:03 pm
+    await cal.core.changeAppointment(mark, added.id, { time: '15:00' });
+    await runAt(cal, '2026-11-20T02:03:00.000Z');
+    expect(sentAt(cal)).toBeUndefined();
+    await runAt(cal, '2026-11-20T12:00:00.000Z');
+    expect(sentAt(cal)).toBe('2026-11-20T12:00:00.000Z');
+  });
+
+  it('goes at once when the new time is before 7:00 am', async () => {
+    const cal = await lateEdit({}, ({ core }, id) =>
+      core.changeAppointment(mark, id, { time: '06:30', pickupTime: null }),
+    );
+    await runAt(cal, '2026-11-20T03:05:00.000Z');
+    expect(sentAt(cal)).toBe('2026-11-20T03:05:00.000Z');
+    expect(cal.sender.taken().at(-1)?.words).toBe(
+      "Susan's Calendar: Change: Cardiology check-up with Dr. Patel has moved from tomorrow at 2:00 pm to tomorrow at 6:30 am.",
+    );
+  });
+
+  it('goes at once when the old time is before 7:00 am', async () => {
+    const cal = await lateEdit({ time: '06:30', pickupTime: null }, ({ core }, id) =>
+      core.changeAppointment(mark, id, { time: '10:00' }),
+    );
+    await runAt(cal, '2026-11-20T03:05:00.000Z');
+    expect(sentAt(cal)).toBe('2026-11-20T03:05:00.000Z');
+  });
+
+  it('goes at once for the cancellation of an Appointment before 7:00 am', async () => {
+    const cal = await lateEdit({ time: '06:30', pickupTime: null }, ({ core }, id) =>
+      core.cancelAppointment(mark, id),
+    );
+    await runAt(cal, '2026-11-20T03:05:00.000Z');
+    expect(sentAt(cal)).toBe('2026-11-20T03:05:00.000Z');
+  });
+
+  it('waits when the new time is 7:00 am itself: that is not before then', async () => {
+    const cal = await lateEdit({}, ({ core }, id) =>
+      core.changeAppointment(mark, id, { time: '07:00', pickupTime: null }),
+    );
+    await runAt(cal, '2026-11-20T03:05:00.000Z');
+    expect(sentAt(cal)).toBeUndefined();
+    await runAt(cal, '2026-11-20T12:00:00.000Z');
+    expect(sentAt(cal)).toBe('2026-11-20T12:00:00.000Z');
+  });
+
+  /**
+   * Thursday's Appointment at a time that evening, reminded two hours before, then moved at 10:00
+   * pm to Friday at 10:00 am, after 7:00 am: only its old time could hurry the notice.
+   */
+  const movedFromThisEvening = (time: string) =>
+    lateEdit(
+      {
+        date: '2026-11-19',
+        time,
+        pickupTime: null,
+        reminders: [{ shape: 'before', amount: 2, unit: 'hours' }],
+      },
+      ({ core }, id) => core.changeAppointment(mark, id, { date: '2026-11-20', time: '10:00' }),
+    );
+
+  it('waits when the old time had already passed at the edit, though it is before 7:00 am', async () => {
+    const cal = await movedFromThisEvening('21:30');
+    await runAt(cal, '2026-11-20T03:05:00.000Z');
+    expect(sentAt(cal)).toBeUndefined();
+    await runAt(cal, '2026-11-20T12:00:00.000Z');
+    expect(sentAt(cal)).toBe('2026-11-20T12:00:00.000Z');
+  });
+
+  it('waits when the old time is the very moment of the edit: it is not ahead of it', async () => {
+    const cal = await movedFromThisEvening('22:00');
+    await runAt(cal, '2026-11-20T03:05:00.000Z');
+    expect(sentAt(cal)).toBeUndefined();
+    await runAt(cal, '2026-11-20T12:00:00.000Z');
+    expect(sentAt(cal)).toBe('2026-11-20T12:00:00.000Z');
+  });
+
+  it('goes at once when the old time is a minute after the edit and before 7:00 am', async () => {
+    const cal = await movedFromThisEvening('22:01');
+    await runAt(cal, '2026-11-20T03:05:00.000Z');
+    expect(sentAt(cal)).toBe('2026-11-20T03:05:00.000Z');
+  });
+
+  it('waits when the new time had already passed at the edit and the old one is after 7:00 am', async () => {
+    const cal = await lateEdit({}, ({ core }, id) =>
+      core.changeAppointment(mark, id, { date: '2026-11-19', time: '21:30', pickupTime: null }),
+    );
+    await runAt(cal, '2026-11-20T03:05:00.000Z');
+    expect(sentAt(cal)).toBeUndefined();
+    await runAt(cal, '2026-11-20T12:00:00.000Z');
+    expect(sentAt(cal)).toBe('2026-11-20T12:00:00.000Z');
+    expect(cal.sender.taken().at(-1)?.words).toBe(
+      "Susan's Calendar: Change: Cardiology check-up with Dr. Patel has moved from today at 2:00 pm to Thursday, November 19 at 9:30 pm.",
+    );
+  });
+
+  it("counts the night in Susan's time zone, not the machine's or US Eastern", async () => {
+    // In Los Angeles that moment is 7:00 pm, not overnight: the notice goes once settled.
+    const cal = calendar('America/Los_Angeles');
+    const added = await cal.core.addAppointment(linda, everyDetail);
+    await remind(cal, added);
+    cal.clock.set('2026-11-20T03:00:00.000Z');
+    await cal.core.changeAppointment(mark, added.id, { time: '15:00' });
+    await runAt(cal, '2026-11-20T03:05:00.000Z');
+    expect(sentAt(cal)).toBe('2026-11-20T03:05:00.000Z');
   });
 });
