@@ -1,6 +1,6 @@
 # 18: Go live with real texts
 
-**What to do:** Switch the app from the stand-in sender to Textbelt and prove that a text reaches Susan's phone. It needs the owner's Textbelt key, Susan's phone number and her phone in hand, so an agent cannot do it.
+**What to do:** Point the app at Susan's phone and prove that a text reaches it. Until this ticket, real texts have gone only to the owner's own phone. It needs the owner's Textbelt key, Susan's phone number and her phone in hand, so an agent cannot do it.
 
 **Spec:** `.scratch/susans-calendar/spec.md`, "Further Notes"; `docs/adr/0002-textbelt-for-text-messages.md`; `docs/text-message-setup.md`.
 
@@ -10,10 +10,10 @@
 
 **Status:** ready-for-human
 
-- [ ] The Textbelt key is stored as the deployment secret the README names, and the app has been redeployed.
+- [ ] The Textbelt key is stored as the deployment secret the README names, and the app has been redeployed. (It may already be, from trying the app on the owner's phone.)
 - [ ] The key holds enough credit for the first months.
 - [ ] An account exists for Susan and for each Admin, each with a display name, and each Admin's account is marked as an Admin's (README, "Accounts"). Ticket 03 created only the owner's.
-- [ ] Susan's mobile number and the contact name and number are entered in Settings.
+- [ ] The mobile number in Settings is Susan's, replacing the owner's own if that was entered for the trial, and the contact name and number are entered.
 - [ ] Susan has had the Confirmation text (ticket 05) before any other text: it is the one that tells her how to stop them.
 - [ ] The test text from Settings arrives on Susan's iPhone, and its status in the app reaches "delivered".
 - [ ] The test text came from the same number as the Confirmation text, the one saved in Susan's iPhone contacts in ticket 05.

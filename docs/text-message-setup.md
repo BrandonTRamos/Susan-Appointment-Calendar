@@ -31,7 +31,7 @@ Prices on 19 November 2026. Credit is bought in advance; nothing is owed monthly
 
 ## Step 2: The Confirmation text
 
-Send this once. It must be the first text she gets from Textbelt, because it is the one that tells her how to stop the texts. Any day will do; tell her to expect it. To change a word, change `src/lib/consent.ts` and this document together; a test fails if they differ.
+Send this once. It must be the first text she gets from Textbelt, because it is the one that tells her how to stop the texts. Send it on the day the app goes live (ticket 18), not before: until then real texts go only to the owner's own phone. Tell her to expect it. To change a word, change `src/lib/consent.ts` and this document together; a test fails if they differ.
 
 ```text
 Susan's Calendar: You agreed to get text reminders about your appointments. Msg frequency varies. Msg & data rates may apply. Reply HELP for help. Reply STOP to unsubscribe.
