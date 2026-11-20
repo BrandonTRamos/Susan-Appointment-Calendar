@@ -985,6 +985,11 @@ export function createCalendarCore({
       };
       next.madeThrough = horizonOf(next);
       const dates = repeatDates(repeat, starts, ends, next.madeThrough);
+      // Every Appointment the new Series will have is worked out before anything is written, so
+      // that a change the core refuses, such as one that would put a Reminder at or after the start,
+      // changes nothing. Its Reminders follow each Appointment and none is at an exact time, so one
+      // changed in place below is refused exactly when a new one on its date is.
+      for (const date of dates) occurrence(next, date, undefined, by, at);
       // The new Series is written first, with the end it keeps, so that a change cut off after
       // this point still knows it when sent again. Then the old line is ended here, before its
       // Appointments are read, so that a top-up running now either makes its Appointments before

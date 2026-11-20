@@ -2431,6 +2431,37 @@ describe('a Series', () => {
       expect(inSeries(store, changed.series!.id)).toHaveLength(appointments.length);
     });
 
+    it('is refused, changing nothing, when it would put a Reminder at or after the start', async () => {
+      const { core, store } = calendar();
+      // 9:00 am, with a Reminder at 8:00 am the same day.
+      const { appointments } = await core.addSeries(linda, {
+        ...dialysis,
+        reminders: [{ shape: 'daysBefore', days: 0, time: '08:00' }],
+      });
+      const before = {
+        appointments: store.appointments(),
+        series: store.everySeriesKept(),
+        activity: store.activity(),
+      };
+      for (const time of ['08:00', '07:30']) {
+        const refusal = await refused(
+          core.changeSeries(mark, appointments[2].id, { time }),
+          'invalid',
+        );
+        expect(refusal.detail).toBe('reminders');
+        expect(refusal.message).toMatch(/after the Appointment starts/);
+      }
+      expect(store.appointments()).toEqual(before.appointments);
+      expect(store.everySeriesKept()).toEqual(before.series);
+      expect(store.activity()).toEqual(before.activity);
+      // The same move with a Reminder that fits it is carried out.
+      const moved = await core.changeSeries(mark, appointments[2].id, {
+        time: '07:30',
+        reminders: [{ shape: 'daysBefore', days: 0, time: '06:30' }],
+      });
+      expect(moved).toMatchObject({ time: '07:30' });
+    });
+
     describe('cut off partway and sent again', () => {
       /**
        * A calendar whose store fails once, just after the Series write `failAfter` names (counted
