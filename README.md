@@ -277,8 +277,12 @@ one: no word in it changes, cancels or confirms anything. A person reads it.
   on, even when two of their devices mark it at once. On sample data (`npm run dev` with no
   `amplify_outputs.json`) two invented Replies show, so the tab and its count can be seen.
 - **STOP and HELP.** Textbelt handles STOP and START itself. If either, or HELP, reaches the reply
-  address, it is a Reply like any other. What Textbelt does with each has to be seen on a real
-  phone: [`docs/text-message-setup.md`](docs/text-message-setup.md), "Checking STOP and HELP".
+  address, it is a Reply like any other. Whether Textbelt passes them on at all is unverified: the
+  owner deferred the real-phone check for this release
+  ([`docs/text-message-setup.md`](docs/text-message-setup.md), "Checking STOP and HELP").
+- **Checking it after a deploy.** One test text to the phone in Settings and one ordinary reply,
+  before and after saving older Settings once:
+  [`docs/text-message-setup.md`](docs/text-message-setup.md), "Checking Replies after a deploy".
 - Logs never hold her number, her words or the signature: a refused request logs only why
   (unsigned, forged, stale or unreadable).
 
@@ -298,9 +302,10 @@ so she never gets one.
   and raises none. Texts recorded before Alerts existed raise none.
 - **Blocked texts.** When Textbelt refuses a send because Susan opted out, or reports that she
   did, the Alert says texts to her are blocked and that only she can undo it, by replying START.
-  Textbelt does not document what either looks like, so until the owner's check
-  ([`docs/text-message-setup.md`](docs/text-message-setup.md), "Checking STOP and HELP") records
-  it, such a send is an ordinary refusal and its Alert says "failed".
+  Textbelt does not document what either looks like, and the owner deferred the real-phone check
+  ([`docs/text-message-setup.md`](docs/text-message-setup.md), "Checking STOP and HELP"), so no
+  refusal is taken as blocked: such a send is an ordinary refusal and its Alert says "failed". The
+  blocked Alert and banner are tested only against synthetic sends and reports.
 - **Low credit.** One Alert when the credit Textbelt says is left falls below 20, and not again
   until a send shows it topped up to 20 or more.
 - **Who sends it.** The scheduled run, every minute, after its sends and after it has asked Textbelt

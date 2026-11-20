@@ -35,9 +35,9 @@ export const TEXTBELT_STATUSES: Readonly<Record<string, DeliveryReport>> = {
 /**
  * The `error` words of a refused send that mean the number has opted out, as by replying STOP, so
  * that texts to it are blocked. Textbelt documents none: what a send to a number that has opted
- * out returns is to be seen on a real phone (ticket 17; docs/text-message-setup.md, "STOP and
- * HELP"). Until the owner's check records the words here, such a send is an ordinary refusal: it
- * fails, and its Alert says so.
+ * out returns is unverified: the owner deferred the real-phone check (ticket 17;
+ * docs/text-message-setup.md, "Checking STOP and HELP"). Until it records the words here, such a
+ * send is an ordinary refusal: it fails, and its Alert says so. Nothing is guessed.
  */
 export const TEXTBELT_OPTED_OUT_ERRORS: readonly string[] = [];
 
