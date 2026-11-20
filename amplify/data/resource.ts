@@ -5,8 +5,8 @@ import { subscriptionFeed } from '../functions/subscription-feed/resource';
 
 // Calendar data, and the only way to change it.
 //
-// Anyone signed in can read everything, with live updates, and nobody signed in can write a model
-// directly. Writing goes through the calendar core (src/lib/calendar), whose commands are the
+// Anyone signed in can read the calendar, with live updates, and their own subscription link; nobody
+// signed in can write a model directly. Writing goes through the calendar core (src/lib/calendar), whose commands are the
 // mutations at the end. `npm run synth` checks that those are the only mutations a signed-in
 // person can call (scripts/synth.mjs).
 

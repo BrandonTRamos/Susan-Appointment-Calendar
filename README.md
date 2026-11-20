@@ -16,8 +16,9 @@ installable web app on AWS Amplify Gen 2.
 So far: sign-in, the [public pages](#public-pages), and Appointments. Anyone signed in can add an
 Appointment, see the next one in full and the later ones beneath it, open one, change it, cancel it,
 and delete one entered by mistake, and is warned when one overlaps another; what one person changes
-shows for the others as it happens. Reminders, texts and the other tabs arrive with the later
-tickets.
+shows for the others as it happens. Anyone signed in can also get their own
+[calendar subscription](#calendar-subscription) link. Reminders, texts and the other tabs arrive
+with the later tickets.
 
 ## Run it locally
 
@@ -83,6 +84,28 @@ is the only thing that writes calendar data.
 - The tables can be restored to any moment in the last 35 days, and on `main` they cannot be deleted
   by accident.
 - On sample data the same core runs in the browser, over a store kept in memory.
+
+## Calendar subscription
+
+Under **Settings → Calendar subscription**, anyone signed in can get their own link to paste into
+Apple Calendar, Google Calendar or Outlook, which then shows Susan's Appointments beside their own.
+It is view-only.
+
+- The link is the feed's address with a secret on the end. Only a hash of the secret is kept, so the
+  link is shown in full only when it is made. Getting a new link switches off the old one; a person
+  can also switch theirs off. Each person's link is their own.
+- The feed is served by the `subscription-feed` backend function at its own public address (a
+  Lambda function URL, passed to the app as `subscriptionFeedUrl` in `amplify_outputs.json`), with
+  at most three requests at once. A link that is unknown or switched off gets the same "not found".
+- The feed holds active Appointments: what, who with, where, the Driver and pickup time, and the
+  Note for Susan. It leaves out Private notes and cancelled Appointments. Each is shown an hour
+  long, and times are written in UTC, so they are right in any time zone.
+- The feed is read afresh on every request and never cached. How soon a change shows is up to the
+  calendar app: Apple Calendar and Outlook can be set to check often; Google Calendar checks on its
+  own schedule, which can be several hours.
+- Removing a person's account does not switch off their link. Before removing one, delete their row
+  from the `SubscriptionLink` table in DynamoDB (it is keyed by their account's `sub`).
+- On sample data a link can be made, copied and switched off, but nothing answers at its address.
 
 ## Hosting
 
