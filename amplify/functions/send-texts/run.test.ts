@@ -1,0 +1,72 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  createCalendarCore,
+  createFixedClock,
+  createMemoryMessenger,
+  createMemoryStore,
+  createStandInSender,
+  type Actor,
+} from '../../../src/lib/calendar';
+import { sendTextsHandler } from './run';
+
+const linda: Actor = { person: { id: 'person-linda', name: 'Linda' }, viaAgent: false };
+
+/** The scheduled run over a calendar in memory, with one Appointment whose Reminder is due. */
+async function run() {
+  const store = createMemoryStore();
+  const clock = createFixedClock('2026-11-19T20:00:00.000Z');
+  const sender = createStandInSender();
+  const core = createCalendarCore({
+    store,
+    clock,
+    messenger: createMemoryMessenger(),
+    textSender: sender,
+    timeZone: 'America/New_York',
+  });
+  await core.changeSettings(linda, { susansNumber: '+15555550123' });
+  await core.addAppointment(linda, {
+    what: 'Cardiology check-up',
+    date: '2026-11-20',
+    time: '14:00',
+    noteForSusan: 'Bring your list of medicines.',
+  });
+  clock.set('2026-11-19T23:00:00.000Z');
+  return { store, sender, handler: sendTextsHandler({ core: async () => core }) };
+}
+
+afterEach(() => vi.restoreAllMocks());
+
+describe('the scheduled run', () => {
+  it('sends what is due, and logs only how many texts ended up in each status', async () => {
+    const logged = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { handler, sender } = await run();
+    await handler();
+    expect(sender.taken()).toHaveLength(1);
+    const words = logged.mock.calls.flat().join(' ');
+    expect(words).toBe('Texts run waiting 0, sent 1, delivered 0, failed 0, notSent 0');
+  });
+
+  it('logs nothing when nothing was due', async () => {
+    const logged = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { handler } = await run();
+    await handler();
+    logged.mockClear();
+    await handler();
+    expect(logged).not.toHaveBeenCalled();
+  });
+
+  it("fails without putting Susan's number or a text's words in the logs", async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const handler = sendTextsHandler({
+      core: async () => {
+        throw new Error(
+          'Could not write {"to":"+15555550123","words":"Susan\'s Calendar: Cardiology check-up"}',
+        );
+      },
+    });
+    await expect(handler()).rejects.toThrow();
+    const words = logged.mock.calls.flat().join(' ');
+    expect(words).toMatch(/Texts run failed/);
+    expect(words).not.toMatch(/555|Cardiology/);
+  });
+});

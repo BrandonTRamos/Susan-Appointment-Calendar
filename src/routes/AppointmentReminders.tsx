@@ -1,11 +1,13 @@
 import { useId } from 'react';
 import { Field } from '../components/Field';
+import { TextStatus } from '../components/TextStatus';
 import { useInPanel } from '../components/Page';
 import {
   describeReminder,
   isOvernight,
   REMINDER_UNITS,
   reminderDue,
+  reminderStanding,
   reminderWords,
   STARTING_REMINDER,
   type Appointment,
@@ -15,8 +17,10 @@ import {
   type ReminderShape,
   type ReminderTiming,
   type ReminderUnit,
+  type Text,
 } from '../lib/calendar';
 import { formatMoment, isDate, isTime, momentOf } from '../lib/localTime';
+import { planStatus, textStatus } from '../lib/textStatus';
 
 // An Appointment's Reminders: the part of the form that sets them, and the part of the detail that
 // shows them. Kept apart from the form and the detail so that each can change without the other.
@@ -348,15 +352,20 @@ function Preview({ words }: { words: string }) {
   );
 }
 
-/** The Reminders on an opened Appointment: when each goes out, and its exact words. */
+/**
+ * The Reminders on an opened Appointment: when each goes out, whether it is waiting, sent or was
+ * not sent, and its exact words. `texts` is the record of every text, or null until it is read.
+ */
 export function ReminderList({
   appointment,
   timeZone,
   now,
+  texts = null,
 }: {
   appointment: Appointment;
   timeZone: string;
   now: Date;
+  texts?: readonly Text[] | null;
 }) {
   const { reminders, state } = appointment;
   const headingId = useId();
@@ -379,13 +388,14 @@ export function ReminderList({
                   <strong>{describeReminder(reminder)}</strong>
                 </p>
                 <p>{`Goes out ${formatMoment(due, timeZone)}`}</p>
+                {texts && <ReminderStatus {...{ appointment, reminder, texts, now, timeZone }} />}
                 {reminder.needsReview && (
                   <p className="warning">
                     The Appointment has moved since this Reminder was set, and it kept its time.
                     Edit the Appointment to keep it or change it.
                   </p>
                 )}
-                {due <= now && <p className="muted">This time has passed.</p>}
+                {!texts && due <= now && <p className="muted">This time has passed.</p>}
                 {due > now && isOvernight(due, timeZone) && (
                   <p className="warning">This goes out overnight, between 9:00 pm and 7:00 am.</p>
                 )}
@@ -396,5 +406,27 @@ export function ReminderList({
         </ul>
       )}
     </section>
+  );
+}
+
+/** Whether a Reminder is waiting, sent or was not sent. */
+function ReminderStatus({
+  appointment,
+  reminder,
+  texts,
+  now,
+  timeZone,
+}: {
+  appointment: Appointment;
+  reminder: Reminder;
+  texts: readonly Text[];
+  now: Date;
+  timeZone: string;
+}) {
+  const standing = reminderStanding(appointment, reminder, texts, now);
+  return (
+    <TextStatus
+      status={'text' in standing ? textStatus(standing.text, timeZone) : planStatus(standing.plan)}
+    />
   );
 }
