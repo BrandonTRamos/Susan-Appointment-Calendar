@@ -5999,6 +5999,56 @@ describe('a Change notice that comes up overnight', () => {
     expect(sentAt(cal)).toBe('2026-11-20T12:00:00.000Z');
   });
 
+  /**
+   * Thursday's Appointment at a time that evening, reminded two hours before, then moved at 10:00
+   * pm to Friday at 10:00 am, after 7:00 am: only its old time could hurry the notice.
+   */
+  const movedFromThisEvening = (time: string) =>
+    lateEdit(
+      {
+        date: '2026-11-19',
+        time,
+        pickupTime: null,
+        reminders: [{ shape: 'before', amount: 2, unit: 'hours' }],
+      },
+      ({ core }, id) => core.changeAppointment(mark, id, { date: '2026-11-20', time: '10:00' }),
+    );
+
+  it('waits when the old time had already passed at the edit, though it is before 7:00 am', async () => {
+    const cal = await movedFromThisEvening('21:30');
+    await runAt(cal, '2026-11-20T03:05:00.000Z');
+    expect(sentAt(cal)).toBeUndefined();
+    await runAt(cal, '2026-11-20T12:00:00.000Z');
+    expect(sentAt(cal)).toBe('2026-11-20T12:00:00.000Z');
+  });
+
+  it('waits when the old time is the very moment of the edit: it is not ahead of it', async () => {
+    const cal = await movedFromThisEvening('22:00');
+    await runAt(cal, '2026-11-20T03:05:00.000Z');
+    expect(sentAt(cal)).toBeUndefined();
+    await runAt(cal, '2026-11-20T12:00:00.000Z');
+    expect(sentAt(cal)).toBe('2026-11-20T12:00:00.000Z');
+  });
+
+  it('goes at once when the old time is a minute after the edit and before 7:00 am', async () => {
+    const cal = await movedFromThisEvening('22:01');
+    await runAt(cal, '2026-11-20T03:05:00.000Z');
+    expect(sentAt(cal)).toBe('2026-11-20T03:05:00.000Z');
+  });
+
+  it('waits when the new time had already passed at the edit and the old one is after 7:00 am', async () => {
+    const cal = await lateEdit({}, ({ core }, id) =>
+      core.changeAppointment(mark, id, { date: '2026-11-19', time: '21:30', pickupTime: null }),
+    );
+    await runAt(cal, '2026-11-20T03:05:00.000Z');
+    expect(sentAt(cal)).toBeUndefined();
+    await runAt(cal, '2026-11-20T12:00:00.000Z');
+    expect(sentAt(cal)).toBe('2026-11-20T12:00:00.000Z');
+    expect(cal.sender.taken().at(-1)?.words).toBe(
+      "Susan's Calendar: Change: Cardiology check-up with Dr. Patel has moved from today at 2:00 pm to Thursday, November 19 at 9:30 pm.",
+    );
+  });
+
   it("counts the night in Susan's time zone, not the machine's or US Eastern", async () => {
     // In Los Angeles that moment is 7:00 pm, not overnight: the notice goes once settled.
     const cal = calendar('America/Los_Angeles');

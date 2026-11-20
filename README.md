@@ -197,7 +197,8 @@ still to go out at the top.
   cancellation sends Susan a Change notice, giving the time she was last told and the new time or
   that it is cancelled. It goes five minutes after the last edit, so a run of corrections makes one
   notice about the net change and an edit put back makes none. One that comes up between 9:00 pm
-  and 7:00 am, Susan's time, waits until 7:00 am unless the old or new time comes before then.
+  and 7:00 am, Susan's time, waits until 7:00 am unless the old or new time is still to come,
+  after the edit and before that 7:00 am.
   Changes to the place, Driver, pickup time or notes send none; later Reminders carry them, and
   Reminders follow a moved Appointment to its new time.
 - Logs never hold Susan's number, the words of a text or the key: they say only how many texts
