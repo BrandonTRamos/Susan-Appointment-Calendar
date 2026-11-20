@@ -122,6 +122,10 @@ export function createSampleCalendar(
     changeAppointment: (id, changes) => core.changeAppointment(YOU, id, changes),
     cancelAppointment: (id) => core.cancelAppointment(YOU, id),
     deleteAppointment: (id) => core.deleteAppointment(YOU, id),
+    addSeries: async (details, id) => (await core.addSeries(YOU, details, id)).appointments[0],
+    changeSeries: (id, changes) => core.changeSeries(YOU, id, changes),
+    endSeries: (id) => core.endSeries(YOU, id),
+    series: (id) => store.series(id),
     async subscriptionLink() {
       const link = await store.subscriptionLinkOf(YOU.person.id);
       return link && { madeAt: link.madeAt };

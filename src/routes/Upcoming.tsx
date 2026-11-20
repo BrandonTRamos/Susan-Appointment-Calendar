@@ -4,6 +4,7 @@ import { CalendarLoading, CalendarTrouble } from '../components/CalendarTrouble'
 import { CarIcon, PersonIcon, PlaceIcon, PlusIcon } from '../components/Icons';
 import { Page } from '../components/Page';
 import { RemindersToSend } from '../components/RemindersToSend';
+import { RepeatMark } from '../components/RepeatMark';
 import { useCalendar } from '../data/CalendarContext';
 import { upcomingAppointments, type Appointment } from '../lib/calendar';
 import { dateParts, dayInWords, formatTime } from '../lib/localTime';
@@ -125,6 +126,7 @@ function NextCard({
       </div>
       <div className="next-what">
         <p className="next-title">{what}</p>
+        <RepeatMark appointment={appointment} />
         {desktop ? (
           <>
             {withWhom && (
@@ -179,6 +181,7 @@ function Row({ appointment, picked }: { appointment: Appointment; picked: boolea
           <span className="muted">
             {desktop ? withAndWhere : joined(' · ', formatTime(time), withAndWhere)}
           </span>
+          <RepeatMark appointment={appointment} />
         </span>
       </span>
     </Link>

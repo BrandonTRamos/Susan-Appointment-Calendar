@@ -1,8 +1,8 @@
 // Synthesizes the Amplify backend with CDK locally, without AWS credentials. It catches CDK and
 // bundling errors before a deploy, then checks the sign-in rules, the rules about who may read and
 // write calendar data and subscription links, the feed's public address, the scheduled run that
-// sends texts and raises Alerts, the Textbelt key's secret, and the cost tags in what was
-// synthesized. Usage: npm run synth
+// sends texts and raises Alerts, the Textbelt key's secret, the daily Series top-up's schedule
+// and access, and the cost tags in what was synthesized. Usage: npm run synth
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -116,8 +116,11 @@ const listOf = (model) => `list${model}${model.endsWith('s') ? '' : 's'}`;
 /** The calendar core's commands (amplify/data/resource.ts): the only way to change the calendar. */
 const COMMANDS = [
   'addAppointment',
+  'addSeries',
   'cancelAppointment',
   'changeAppointment',
+  'changeSeries',
+  'endSeries',
   'changeSettings',
   'makeSubscriptionLink',
   'removeAppointment',
@@ -125,10 +128,10 @@ const COMMANDS = [
   'switchOffSubscriptionLink',
 ];
 /**
- * The calendar, the record of texts, and the settings (amplify/data/resource.ts). Only the commands
- * function and the scheduled run write these directly.
+ * The calendar, its Series, the record of texts, and the settings (amplify/data/resource.ts). Only
+ * the commands function, the scheduled run and the Series top-up write these directly.
  */
-const MODELS = ['Appointment', 'ActivityRecord', 'Text', 'CalendarSettings'];
+const MODELS = ['Appointment', 'Series', 'ActivityRecord', 'Text', 'CalendarSettings'];
 /** Kept per person, and read only by that person. Only the commands function writes these. */
 const OWN_MODELS = ['SubscriptionLink'];
 /**
@@ -151,18 +154,27 @@ const APP_NOTIFICATION_FIELDS = [
   'Query/getAppNotificationKey',
 ];
 
+/** All the Series top-up may call in the data API: SERIES_TOP_UP_FIELDS in its access.ts. */
+const SERIES_TOP_UP_FIELDS = (() => {
+  const words = readFileSync('amplify/functions/series-top-up/access.ts', 'utf8');
+  const of = (type) =>
+    [...(new RegExp(`${type}: \\[([^\\]]*)\\]`).exec(words)?.[1] ?? '').matchAll(/'(\w+)'/g)].map(
+      ([, field]) => `${type}/${field}`,
+    );
+  return [...of('Query'), ...of('Mutation')].sort();
+})();
 /**
- * What the app-notifications function's role may call in the data API, as 'Type/field', or
- * 'Type/*' for a whole type. Its role is the one its own policies name.
+ * What a function's role may call in the data API, as 'Type/field', or 'Type/*' for a whole type.
+ * Its role is the one its own policies name, found by the start of its ID.
  */
-function appNotificationsAccess() {
+function dataApiAccess(rolePrefix) {
   return stacks()
     .flatMap((stack) => Object.values(stack))
     .filter(
       (resource) =>
         resource.Type === 'AWS::IAM::Policy' &&
         resource.Properties.Roles?.some((each) =>
-          /^appnotificationslambdaServiceRole/.test(each.Ref ?? ''),
+          new RegExp(`^${rolePrefix}`).test(each.Ref ?? ''),
         ),
     )
     .flatMap((policy) => policy.Properties.PolicyDocument.Statement)
@@ -253,20 +265,22 @@ function feedFunction() {
 }
 
 /**
- * The scheduled run's function: the one a schedule invokes. Gives its schedules, its properties,
- * its settings for being invoked by the schedule, what its role may do outside the data API, and
- * the code it runs as bundled for the deploy.
+ * A scheduled function, found by the start of its ID: the scheduled run (`sendtextslambda`) or the
+ * Series top-up (`seriestopuplambda`). Gives the schedules that invoke it, its properties, its
+ * settings for being invoked by them, what its role may do outside the data API, and the code it
+ * runs as bundled for the deploy.
  */
-function scheduledFunction() {
+function scheduledFunction(prefix) {
   const all = stacks().flatMap((stack) => Object.entries(stack));
+  const [name, lambda] =
+    all.find(
+      ([id, resource]) =>
+        resource.Type === 'AWS::Lambda::Function' && new RegExp(`^${prefix}[0-9A-F]+$`).test(id),
+    ) ?? [];
   const schedules = all
     .filter(([, resource]) => resource.Type === 'AWS::Scheduler::Schedule')
-    .map(([, resource]) => resource.Properties);
-  const targets = new Set(schedules.map((schedule) => schedule.Target?.Arn?.['Fn::GetAtt']?.[0]));
-  const [name] = targets.size === 1 ? [...targets] : [];
-  const lambda = all.find(
-    ([id, resource]) => id === name && resource.Type === 'AWS::Lambda::Function',
-  )?.[1];
+    .map(([, resource]) => resource.Properties)
+    .filter((schedule) => name && schedule.Target?.Arn?.['Fn::GetAtt']?.[0] === name);
   const invoke = all
     .filter(([, resource]) => resource.Type === 'AWS::Lambda::EventInvokeConfig')
     .map(([, resource]) => resource.Properties)
@@ -374,7 +388,8 @@ function checks() {
   const queries = openToSignedIn('Query');
   const queryRules = ruleSteps('Query');
   const feed = feedFunction();
-  const run = scheduledFunction();
+  const run = scheduledFunction('sendtextslambda');
+  const topUp = scheduledFunction('seriestopuplambda');
   const claim = writeStep('Mutation', 'createText');
   const retake = writeStep('Mutation', 'updateText');
   const mutations = openToSignedIn('Mutation');
@@ -466,7 +481,7 @@ function checks() {
     ],
     [
       'the app-notifications function may call only the device and key operations it needs',
-      appNotificationsAccess().join() === APP_NOTIFICATION_FIELDS.join(),
+      dataApiAccess('appnotificationslambdaServiceRole').join() === APP_NOTIFICATION_FIELDS.join(),
     ],
     [
       'a device is deleted only if the condition it is deleted on holds when DynamoDB deletes it',
@@ -559,10 +574,45 @@ function checks() {
       ),
     ],
     [
-      "the commands, feed and scheduled run functions are told Susan's time zone",
+      "the commands, feed, scheduled run and Series top-up functions are told Susan's time zone",
       resources('AWS::Lambda::Function').filter(
         (lambda) => lambda.Environment?.Variables?.SUSAN_TIME_ZONE,
-      ).length === 3 && Boolean(run.properties.Environment?.Variables?.SUSAN_TIME_ZONE),
+      ).length === 4 &&
+        Boolean(run.properties.Environment?.Variables?.SUSAN_TIME_ZONE) &&
+        Boolean(topUp.properties.Environment?.Variables?.SUSAN_TIME_ZONE),
+    ],
+    [
+      'the Series top-up runs once a day, one run at a time, with its retries bounded',
+      topUp.schedules.length === 1 &&
+        /^cron\(\d+ \d+ \* \* \? \*\)$/.test(topUp.schedules[0].ScheduleExpression) &&
+        topUp.schedules[0].State === 'ENABLED' &&
+        topUp.properties.ReservedConcurrentExecutions === 1 &&
+        topUp.schedules[0].Target?.RetryPolicy?.MaximumRetryAttempts <= 2 &&
+        topUp.schedules[0].Target?.RetryPolicy?.MaximumEventAgeInSeconds <= 3600 &&
+        topUp.invoke.length === 1 &&
+        topUp.invoke[0].MaximumRetryAttempts === 0,
+    ],
+    [
+      // Its list in access.ts, which a test proves is what its code calls, and nothing more: no
+      // activity record, and no text written.
+      'the Series top-up may call only the data API fields its access list names',
+      SERIES_TOP_UP_FIELDS.length === 9 &&
+        dataApiAccess('seriestopuplambdaServiceRole').join() === SERIES_TOP_UP_FIELDS.join() &&
+        !SERIES_TOP_UP_FIELDS.some((field) => /ActivityRecord|Text$|Texts$|Settings/.test(field)),
+    ],
+    [
+      // Outside the data API it reads only what the data API client needs to start: no email, no
+      // accounts, no Textbelt key. It sends no text, Alert or app notification.
+      'the Series top-up can send no text, Alert or email, and read no account',
+      topUp.statements.length > 0 &&
+        topUp.statements.every((statement) =>
+          [statement.Action]
+            .flat()
+            .every((action) => ['s3:GetObject', 'ssm:GetParameters'].includes(action)),
+        ) &&
+        Object.keys(topUp.properties.Environment?.Variables ?? {}).every(
+          (name) => !/TEXTBELT|ALERT|USER_POOL/.test(name),
+        ),
     ],
     [
       // Every minute, in a cron expression, and one function for it.

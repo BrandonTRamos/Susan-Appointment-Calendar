@@ -7,6 +7,9 @@ import type {
   AppointmentChanges,
   CalendarSettings,
   NewAppointment,
+  NewSeries,
+  Series,
+  SeriesChanges,
   SettingsChanges,
   Text,
 } from '../lib/calendar';
@@ -29,6 +32,17 @@ export interface CalendarClient {
   changeAppointment(id: string, changes: AppointmentChanges): Promise<Appointment>;
   cancelAppointment(id: string): Promise<Appointment>;
   deleteAppointment(id: string): Promise<void>;
+  /**
+   * Adds a Series and answers with its first Appointment. The others reach the calendar as it is
+   * kept up to date. `id` is the Series' ID, chosen here so that sending the add twice adds one.
+   */
+  addSeries(details: NewSeries, id?: string): Promise<Appointment>;
+  /** Changes this Appointment and all later ones in its Series; answers with this one. */
+  changeSeries(id: string, changes: SeriesChanges): Promise<Appointment>;
+  /** Cancels this Appointment and all later ones in its Series; answers with this one. */
+  endSeries(id: string): Promise<Appointment>;
+  /** The Series with this ID, read once, or null when the calendar has none. */
+  series(id: string): Promise<Series | null>;
 
   // The signed-in person's own calendar subscription link (src/lib/calendar/subscription.ts).
   /** When their link was made, or null when they have none. */

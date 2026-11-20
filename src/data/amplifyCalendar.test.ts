@@ -26,10 +26,14 @@ const api = vi.hoisted(() => {
       changeAppointment: vi.fn(),
       cancelAppointment: vi.fn(),
       removeAppointment: vi.fn(),
+      addSeries: vi.fn(),
+      changeSeries: vi.fn(),
+      endSeries: vi.fn(),
       makeSubscriptionLink: vi.fn(),
       switchOffSubscriptionLink: vi.fn(),
     },
     links: vi.fn(),
+    series: vi.fn(),
     hub: undefined as undefined | ((event: { payload: { event: string; data: unknown } }) => void),
     model: {
       onCreate: subscription(listening.onCreate),
@@ -44,6 +48,7 @@ vi.mock('aws-amplify/data', async (original) => ({
     models: {
       Appointment: { ...api.model, list: api.list },
       SubscriptionLink: { list: api.links },
+      Series: { get: api.series },
     },
     mutations: api.mutations,
   }),
@@ -78,6 +83,7 @@ function appointment(what: string, date: string, changes: Partial<Appointment> =
     privateNotes: null,
     state: 'active',
     reminders: [],
+    series: null,
     added: { ...linda, at: '2026-11-19T20:00:00.000Z' },
     lastChanged: null,
     ...changes,
@@ -266,6 +272,77 @@ describe("another person's change", () => {
     await settled();
     for (const heard of api.listening.onUpdate) heard.error(new Error('Connection closed'));
     expect(onError).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('a Series', () => {
+  const place = {
+    id: 'series-1',
+    date: '2026-11-23',
+    repeat: { every: 'week' as const, interval: 1, weekdays: [0, 3] },
+    individuallyChanged: false,
+    shiftedFrom: null,
+  };
+  const dialysis = appointment('Dialysis', '2026-11-23', { series: place });
+
+  it("is added, changed and ended by the core's mutations, showing what they answer at once", async () => {
+    const { calendar, seen } = watch();
+    await settled();
+    api.mutations.addSeries.mockResolvedValue({ data: { appointment: dialysis } });
+    const details = {
+      what: 'Dialysis',
+      date: '2026-11-23',
+      time: '14:00',
+      repeat: { every: 'week' as const, weekdays: [0, 3] },
+    };
+    expect(await calendar.addSeries(details, 'series-1')).toEqual(dialysis);
+    expect(api.mutations.addSeries).toHaveBeenCalledWith({
+      id: 'series-1',
+      details: JSON.stringify(details),
+    });
+    expect(seen.at(-1)).toContain('Dialysis');
+
+    const later = { ...dialysis, time: '15:00' };
+    api.mutations.changeSeries.mockResolvedValue({ data: { appointment: later } });
+    expect(await calendar.changeSeries(dialysis.id, { time: '15:00' })).toEqual(later);
+    expect(api.mutations.changeSeries).toHaveBeenCalledWith({
+      id: dialysis.id,
+      changes: JSON.stringify({ time: '15:00' }),
+    });
+
+    api.mutations.endSeries.mockResolvedValue({
+      data: { appointment: { ...later, state: 'cancelled' } },
+    });
+    expect((await calendar.endSeries(dialysis.id)).state).toBe('cancelled');
+  });
+
+  it('is read once, as the data API carries it', async () => {
+    const calendar = createAmplifyCalendar(FEED);
+    api.series.mockResolvedValue({
+      data: {
+        id: 'series-1',
+        what: 'Dialysis',
+        time: '09:00',
+        repeat: { every: 'week', interval: 1, weekdays: [0, 3], day: null },
+        starts: '2026-11-23',
+        ends: null,
+        reminders: [{ shape: 'daysBefore', days: 1, time: '18:00', amount: null, unit: null }],
+        madeThrough: '2027-05-24',
+        added: { personId: 'person-linda', personName: 'Linda', viaAgent: false, at: 'x' },
+        lastChanged: null,
+        createdAt: 'x',
+        updatedAt: 'x',
+      },
+    });
+    expect(await calendar.series('series-1')).toMatchObject({
+      what: 'Dialysis',
+      withWhom: null,
+      repeat: { every: 'week', interval: 1, weekdays: [0, 3] },
+      ends: null,
+      reminders: [{ shape: 'daysBefore', days: 1, time: '18:00' }],
+    });
+    api.series.mockResolvedValue({ data: null });
+    expect(await calendar.series('none')).toBeNull();
   });
 });
 

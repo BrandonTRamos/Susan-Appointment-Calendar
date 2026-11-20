@@ -164,6 +164,13 @@ function wordsFor(details: TypedDetails | Appointment, due: Date, timeZone: stri
   return reminderWords(blankless(details), { dueAt: due }, timeZone);
 }
 
+/**
+ * A Reminder that follows its Appointment, held for review because the clocks, going forward that
+ * night, put it at or after the start of an Appointment a Series made. It is never sent as it is.
+ */
+const HELD =
+  'The clocks go forward that night, which puts this Reminder at or after the start, so it is held and will not be sent. Change its time or remove it.';
+
 /** The Reminders section of the Appointment form. */
 export function ReminderFields({
   details,
@@ -171,12 +178,15 @@ export function ReminderFields({
   onChange,
   timeZone,
   now,
+  exactTime = true,
 }: {
   details: TypedDetails;
   reminders: TypedReminder[];
   onChange: (reminders: TypedReminder[]) => void;
   timeZone: string;
   now: Date;
+  /** Whether a Reminder can be at an exact time: not on a Series, whose Reminders follow each one. */
+  exactTime?: boolean;
 }) {
   const headingId = useId();
   const change = (key: string, changes: Partial<TypedReminder>) =>
@@ -186,7 +196,11 @@ export function ReminderFields({
   return (
     <section className="form-reminders" aria-labelledby={headingId}>
       <Heading id={headingId}>Reminders</Heading>
-      <p className="hint muted">Texts to Susan about this Appointment, at her local time.</p>
+      <p className="hint muted">
+        {exactTime
+          ? 'Texts to Susan about this Appointment, at her local time.'
+          : 'Texts to Susan about each Appointment in the Series, at her local time. They go out a set time before each one.'}
+      </p>
       {reminders.length === 0 && (
         <p>No Reminders. Susan will not be texted about this Appointment.</p>
       )}
@@ -207,7 +221,9 @@ export function ReminderFields({
                 >
                   <option value="before">Some time before the start</option>
                   <option value="daysBefore">Days before, at a set time</option>
-                  <option value="at">At an exact date and time</option>
+                  {(exactTime || typed.shape === 'at') && (
+                    <option value="at">At an exact date and time</option>
+                  )}
                 </select>
               )}
             </Field>
@@ -300,7 +316,12 @@ export function ReminderFields({
             )}
 
             {due && <p className="reminder-due">{`Goes out ${formatMoment(due, timeZone)}`}</p>}
-            {flagged && (
+            {flagged && typed.shape !== 'at' && (
+              <div className="warning" role="group" aria-label="Check this Reminder">
+                <p>{HELD}</p>
+              </div>
+            )}
+            {flagged && typed.shape === 'at' && (
               <div className="warning" role="group" aria-label="Check this Reminder">
                 <p>
                   The Appointment has moved since this Reminder was set, and it kept its time. Check
@@ -430,7 +451,10 @@ export function ReminderList({
                 </p>
                 <p>{`Goes out ${formatMoment(due, timeZone)}`}</p>
                 {texts && <ReminderStatus {...{ appointment, reminder, texts, now, timeZone }} />}
-                {reminder.needsReview && (
+                {reminder.needsReview && reminder.shape !== 'at' && (
+                  <p className="warning">{`${HELD} Edit the Appointment to change it.`}</p>
+                )}
+                {reminder.needsReview && reminder.shape === 'at' && (
                   <p className="warning">
                     The Appointment has moved since this Reminder was set, and it kept its time.
                     Edit the Appointment to keep it or change it.
