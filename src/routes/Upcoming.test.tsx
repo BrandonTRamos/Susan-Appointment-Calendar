@@ -111,6 +111,38 @@ describe('the next Appointment, on a phone', () => {
     );
   });
 
+  it('leaves out a Reminder whose words hold a web address: it will not be sent', async () => {
+    const calendar = emptyCalendar();
+    await calendar.core.addAppointment(linda, {
+      what: 'Hair',
+      date: daysFromToday(2),
+      time: '11:00',
+      reminders: [
+        { shape: 'daysBefore', days: 1, time: '18:00' },
+        { shape: 'before', amount: 2, unit: 'hours' },
+      ],
+    });
+    const blocked = await calendar.core.addAppointment(linda, {
+      what: 'Eye exam',
+      date: daysFromToday(1),
+      time: '15:30',
+      noteForSusan: 'Check in at example.de',
+    });
+    renderApp('/', { calendar });
+    // The Eye exam is next, and its only Reminder would hold the address.
+    const card = await nextCard();
+    expect(card).toHaveTextContent(/Eye exam/);
+    expect(within(card).getByText('No Reminder to be sent')).toBeInTheDocument();
+    expect(within(card).queryByRole('list', { name: 'Reminders still to be sent' })).toBeNull();
+    // Once the address is out, it is to be sent again.
+    await act(() =>
+      calendar.core.changeAppointment(linda, blocked.id, { noteForSusan: 'Check in first' }),
+    );
+    expect(
+      within(await nextCard()).getByRole('list', { name: 'Reminders still to be sent' }),
+    ).toBeInTheDocument();
+  });
+
   it('opens the Appointment', async () => {
     const calendar = emptyCalendar();
     const { id } = await calendar.core.addAppointment(linda, {

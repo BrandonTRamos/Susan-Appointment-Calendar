@@ -4,9 +4,11 @@ import { TextStatus } from '../components/TextStatus';
 import { useInPanel } from '../components/Page';
 import {
   describeReminder,
+  holdsWebAddress,
   isOvernight,
   REMINDER_UNITS,
   reminderDue,
+  reminderHoldsWebAddress,
   reminderStanding,
   reminderWords,
   STARTING_REMINDER,
@@ -20,7 +22,7 @@ import {
   type Text,
 } from '../lib/calendar';
 import { formatMoment, isDate, isTime, momentOf } from '../lib/localTime';
-import { planStatus, textStatus } from '../lib/textStatus';
+import { planStatus, textStatus, WEB_ADDRESS_WARNING, webAddressStatus } from '../lib/textStatus';
 
 // An Appointment's Reminders: the part of the form that sets them, and the part of the detail that
 // shows them. Kept apart from the form and the detail so that each can change without the other.
@@ -103,7 +105,8 @@ function startOf({ date, time }: TypedDetails, timeZone: string): Date | null {
 
 /**
  * Whether saving the typed Appointment would leave it with no Reminder still to be sent: it starts
- * in the future, and none of its Reminders goes out between now and then.
+ * in the future, and none of its Reminders goes out between now and then with words that can be
+ * sent. A Reminder whose words hold a web address is never sent, so its time alone does not count.
  */
 export function noReminderToSend(
   details: TypedDetails,
@@ -113,18 +116,52 @@ export function noReminderToSend(
 ): boolean {
   const start = startOf(details, timeZone);
   if (!start || start <= now) return false;
-  return !reminders.some((typed) => {
+  return !inTime(details, reminders, timeZone, now, start).some(
+    (due) => !reminderHoldsWebAddress(blankless(details), { dueAt: due }, timeZone),
+  );
+}
+
+/**
+ * Whether a Reminder would go out in time but for its words holding a web address: what the
+ * question about saving with no Reminder says, so the person knows why and what to change.
+ */
+export function addressKeepsReminders(
+  details: TypedDetails,
+  reminders: TypedReminder[],
+  timeZone: string,
+  now: Date,
+): boolean {
+  const start = startOf(details, timeZone);
+  if (!start || start <= now) return false;
+  return inTime(details, reminders, timeZone, now, start).some((due) =>
+    reminderHoldsWebAddress(blankless(details), { dueAt: due }, timeZone),
+  );
+}
+
+/** When each typed Reminder that falls between now and the start goes out. */
+function inTime(
+  details: TypedDetails,
+  reminders: TypedReminder[],
+  timeZone: string,
+  now: Date,
+  start: Date,
+): Date[] {
+  return reminders.flatMap((typed) => {
     const due = reminderDue(timingOf(typed), details, timeZone);
-    return due && due > now && due < start;
+    return due && due > now && due < start ? [due] : [];
   });
+}
+
+/** The details as the calendar keeps them, from what is typed: nothing typed is nothing. */
+function blankless(details: TypedDetails | Appointment): AppointmentDetails {
+  return Object.fromEntries(
+    Object.entries(details).map(([key, value]) => [key, value || null]),
+  ) as unknown as AppointmentDetails;
 }
 
 /** The words a Reminder sends, worked out from what is typed, with nothing typed as nothing. */
 function wordsFor(details: TypedDetails | Appointment, due: Date, timeZone: string) {
-  const blankless = Object.fromEntries(
-    Object.entries(details).map(([key, value]) => [key, value || null]),
-  ) as unknown as AppointmentDetails;
-  return reminderWords(blankless, { dueAt: due }, timeZone);
+  return reminderWords(blankless(details), { dueAt: due }, timeZone);
 }
 
 /** The Reminders section of the Appointment form. */
@@ -342,12 +379,16 @@ function Warnings({
   );
 }
 
-/** The exact words Susan will read. */
+/**
+ * The exact words Susan will read, and a warning when they hold a web address: such a text is not
+ * sent (src/lib/calendar/webAddress.ts). The words are shown as they are; nothing is changed.
+ */
 function Preview({ words }: { words: string }) {
   return (
     <div className="text-preview">
       <p className="muted">What Susan will read</p>
       <p className="quoted">{words}</p>
+      {holdsWebAddress(words) && <p className="warning">{WEB_ADDRESS_WARNING}</p>}
     </div>
   );
 }
@@ -424,9 +465,9 @@ function ReminderStatus({
   timeZone: string;
 }) {
   const standing = reminderStanding(appointment, reminder, texts, now);
-  return (
-    <TextStatus
-      status={'text' in standing ? textStatus(standing.text, timeZone) : planStatus(standing.plan)}
-    />
-  );
+  if ('text' in standing) return <TextStatus status={textStatus(standing.text, timeZone)} />;
+  // One still to go whose words hold a web address will not be sent when its time comes.
+  const toGo = standing.plan === 'later' || standing.plan === 'send';
+  const blocked = toGo && reminderHoldsWebAddress(appointment, reminder, timeZone);
+  return <TextStatus status={blocked ? webAddressStatus() : planStatus(standing.plan)} />;
 }

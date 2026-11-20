@@ -61,10 +61,7 @@ async function command(call: () => Promise<Answer>) {
  * The calendar over the data API. `feedUrl` is the subscription feed's address, from the backend's
  * outputs (src/config.ts); null when the backend has none.
  */
-export function createAmplifyCalendar(
-  feedUrl: string | null,
-  { textsRecordedOnly = true }: { textsRecordedOnly?: boolean } = {},
-): CalendarClient {
+export function createAmplifyCalendar(feedUrl: string | null): CalendarClient {
   const client = generateClient<Schema>();
   const texts = liveTexts(client);
   const model = client.models.Appointment;
@@ -212,7 +209,11 @@ export function createAmplifyCalendar(
       await command(() => client.mutations.switchOffSubscriptionLink());
     },
 
-    textsRecordedOnly,
+    async textsRecordedOnly() {
+      const { data, errors } = await client.queries.textSender();
+      if (errors?.length) throw new Error(errors.map((e) => e.message).join('; '));
+      return data !== 'textbelt';
+    },
     watchTexts: (listener, onError) => texts.watch(listener, onError),
     async settings() {
       const { data, errors } = await client.models.CalendarSettings.get({ id: SETTINGS_ID });
