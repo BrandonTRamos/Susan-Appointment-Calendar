@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   CalendarRefusal,
   createCalendarCore,
   createFixedClock,
+  createMemoryMessenger,
   createMemoryStore,
+  NO_ADMIN_MESSENGER,
   overlappingAppointments,
   pastAppointments,
   remindersStillToSend,
@@ -25,6 +27,9 @@ const mark: Actor = { person: { id: 'person-mark', name: 'Mark' }, viaAgent: fal
 /** The one account that is not an Admin's. The core is never told which account that is. */
 const susan: Actor = { person: { id: 'person-susan', name: 'Susan' }, viaAgent: false };
 const lindasAgent: Actor = { person: linda.person, viaAgent: true };
+const ann: Actor = { person: { id: 'person-ann', name: 'Ann' }, viaAgent: false };
+/** Every Admin. Susan is not one of them. */
+const ADMINS = [linda, mark, ann].map((admin) => admin.person.id);
 
 const checkUp: NewAppointment = { what: 'Cardiology check-up', date: '2026-11-20', time: '14:00' };
 const everyDetail: NewAppointment = {
@@ -42,7 +47,13 @@ const everyDetail: NewAppointment = {
 function calendar(timeZone = EASTERN) {
   const store = createMemoryStore();
   const clock = createFixedClock('2026-11-19T20:00:00.000Z');
-  return { store, clock, core: createCalendarCore({ store, clock, timeZone }) };
+  const messenger = createMemoryMessenger(ADMINS);
+  return {
+    store,
+    clock,
+    messenger,
+    core: createCalendarCore({ store, clock, messenger, timeZone }),
+  };
 }
 
 /** Expects the command to be refused for `reason`, with words a person can read. */
@@ -432,6 +443,220 @@ describe('activity records', () => {
     await refused(core.deleteAppointment(mark, id), 'texted');
     await refused(core.cancelAppointment(mark, 'no-such-appointment'), 'missing');
     expect(store.activity()).toHaveLength(1);
+  });
+});
+
+describe('Activity updates', () => {
+  /** Who was told, and in what words, for every app notification sent so far. */
+  const told = (messenger: ReturnType<typeof calendar>['messenger']) =>
+    messenger.appNotifications().map(({ to, notification }) => ({ to, ...notification }));
+
+  it('tell the other Admins, by app notification, who added an Appointment and when it is', async () => {
+    const { core, messenger } = calendar();
+    const { id } = await core.addAppointment(linda, checkUp);
+    expect(told(messenger)).toEqual([
+      {
+        to: ['person-mark', 'person-ann'],
+        title: "Susan's Calendar",
+        body: 'Linda added Cardiology check-up, Fri, Nov 20, 2026 at 2:00 pm.',
+        opens: `/appointments/${id}`,
+        tag: `appointment-${id}`,
+      },
+    ]);
+  });
+
+  it('say what changed, and the time it was before when it moved', async () => {
+    const { core, messenger } = calendar();
+    const { id } = await core.addAppointment(linda, everyDetail);
+    await core.changeAppointment(mark, id, { time: '15:30', driverName: 'Ann', placeName: null });
+    expect(told(messenger)[1]).toMatchObject({
+      to: ['person-linda', 'person-ann'],
+      body:
+        'Mark changed Cardiology check-up, Fri, Nov 20, 2026 at 3:30 pm: ' +
+        "the start time (was 2:00 pm), the place's name and the Driver's name.",
+      opens: `/appointments/${id}`,
+    });
+
+    await core.changeAppointment(ann, id, { date: '2026-11-23', what: 'Heart check-up' });
+    expect(told(messenger)[2]).toMatchObject({
+      to: ['person-linda', 'person-mark'],
+      body:
+        'Ann changed Heart check-up, Mon, Nov 23, 2026 at 3:30 pm: ' +
+        'what it is (was Cardiology check-up) and the date (was Fri, Nov 20, 2026).',
+    });
+
+    await core.changeAppointment(linda, id, { privateNotes: 'Ask about the new dose.' });
+    expect(told(messenger)[3]).toMatchObject({
+      to: ['person-mark', 'person-ann'],
+      body: 'Linda changed Heart check-up, Mon, Nov 23, 2026 at 3:30 pm: the Private notes.',
+    });
+  });
+
+  it('name the Reminders when they are what changed', async () => {
+    const { core, messenger } = calendar();
+    const { id } = await core.addAppointment(linda, checkUp);
+    await core.changeAppointment(mark, id, {
+      reminders: [{ shape: 'before', amount: 2, unit: 'hours' }],
+    });
+    expect(told(messenger)[1]).toMatchObject({
+      to: ['person-linda', 'person-ann'],
+      body: 'Mark changed Cardiology check-up, Fri, Nov 20, 2026 at 2:00 pm: the Reminders.',
+    });
+  });
+
+  it('do not name the Reminders when only moving the Appointment worked them out again', async () => {
+    const { core, messenger } = calendar();
+    const { id } = await core.addAppointment(linda, {
+      ...checkUp,
+      reminders: [
+        { shape: 'daysBefore', days: 1, time: '18:00' },
+        { shape: 'at', date: '2026-11-20', time: '09:00' },
+      ],
+    });
+    const moved = await core.changeAppointment(mark, id, { time: '15:30' });
+    // The exact-time Reminder is flagged for review, and the other falls due afresh: both follow
+    // from the move, which is all Mark did.
+    expect(moved.reminders.some((r) => r.needsReview)).toBe(true);
+    expect(told(messenger)[1].body).toBe(
+      'Mark changed Cardiology check-up, Fri, Nov 20, 2026 at 3:30 pm: the start time (was 2:00 pm).',
+    );
+
+    // Confirming the flagged one is a change to the Reminders.
+    await core.changeAppointment(ann, id, {
+      reminders: moved.reminders.map((r) => (r.needsReview ? { ...r, reviewed: true } : r)),
+    });
+    expect(told(messenger)[2].body).toBe(
+      'Ann changed Cardiology check-up, Fri, Nov 20, 2026 at 3:30 pm: the Reminders.',
+    );
+  });
+
+  it('say who cancelled an Appointment', async () => {
+    const { core, messenger } = calendar();
+    const { id } = await core.addAppointment(linda, checkUp);
+    await core.cancelAppointment(mark, id);
+    expect(told(messenger)[1]).toMatchObject({
+      to: ['person-linda', 'person-ann'],
+      body: 'Mark cancelled Cardiology check-up, Fri, Nov 20, 2026 at 2:00 pm.',
+      opens: `/appointments/${id}`,
+    });
+  });
+
+  it('never tell the person who made the change what they just did', async () => {
+    const { core, messenger } = calendar();
+    const { id } = await core.addAppointment(linda, checkUp);
+    await core.changeAppointment(linda, id, { time: '15:30' });
+    await core.cancelAppointment(linda, id);
+    expect(messenger.appNotifications().flatMap(({ to }) => to)).not.toContain('person-linda');
+    expect(messenger.appNotifications()).toHaveLength(3);
+  });
+
+  it('go to nobody when the only Admin made the change', async () => {
+    const store = createMemoryStore();
+    const messenger = createMemoryMessenger(['person-linda']);
+    const clock = createFixedClock('2026-11-19T20:00:00.000Z');
+    const core = createCalendarCore({ store, clock, messenger, timeZone: EASTERN });
+    await core.addAppointment(linda, checkUp);
+    expect(messenger.appNotifications()).toEqual([]);
+  });
+
+  it("through an agent, name the agent's owner and do not tell them", async () => {
+    const { core, messenger } = calendar();
+    const { id } = await core.addAppointment(lindasAgent, checkUp);
+    await core.changeAppointment(lindasAgent, id, { time: '15:30' });
+    await core.cancelAppointment(lindasAgent, id);
+    expect(told(messenger)).toMatchObject([
+      { to: ['person-mark', 'person-ann'], body: expect.stringMatching(/^Linda's agent added /) },
+      { to: ['person-mark', 'person-ann'], body: expect.stringMatching(/^Linda's agent changed /) },
+      {
+        to: ['person-mark', 'person-ann'],
+        body: expect.stringMatching(/^Linda's agent cancelled /),
+      },
+    ]);
+  });
+
+  it('never go to Susan, and tell every Admin when she makes the change', async () => {
+    const { core, messenger } = calendar();
+    const { id } = await core.addAppointment(susan, checkUp);
+    await core.changeAppointment(linda, id, { time: '15:30' });
+    await core.cancelAppointment(susan, id);
+    expect(told(messenger)).toMatchObject([
+      {
+        to: ['person-linda', 'person-mark', 'person-ann'],
+        body: expect.stringMatching(/^Susan added /),
+      },
+      { to: ['person-mark', 'person-ann'] },
+      { to: ['person-linda', 'person-mark', 'person-ann'] },
+    ]);
+    expect(messenger.appNotifications().flatMap(({ to }) => to)).not.toContain('person-susan');
+  });
+
+  it('are one per command, however many details it changes', async () => {
+    const { core, messenger } = calendar();
+    const { id } = await core.addAppointment(linda, checkUp);
+    await core.changeAppointment(mark, id, {
+      ...everyDetail,
+      what: 'Heart check-up',
+      time: '09:00',
+      date: '2026-11-21',
+    });
+    expect(messenger.appNotifications()).toHaveLength(2);
+  });
+
+  it('are not sent for a command that changes nothing, is refused, or arrives twice', async () => {
+    const { core, store, messenger } = calendar();
+    const sentId = '3f0c8a52-9d1e-4b7a-8c11-5e2f6a7b8c9d';
+    await core.addAppointment(linda, checkUp, sentId);
+    await core.addAppointment(linda, checkUp, sentId);
+    await core.changeAppointment(mark, sentId, { time: '14:00' });
+    await refused(core.changeAppointment(mark, sentId, { what: '' }), 'invalid');
+    await core.cancelAppointment(mark, sentId);
+    await refused(core.cancelAppointment(mark, sentId), 'cancelled');
+    store.noteTextSentAbout(sentId);
+    await refused(core.deleteAppointment(mark, sentId), 'texted');
+    expect(messenger.appNotifications().map(({ notification }) => notification.body)).toEqual([
+      expect.stringMatching(/^Linda added /),
+      expect.stringMatching(/^Mark cancelled /),
+    ]);
+  });
+
+  it('are not sent for deleting an Appointment entered by mistake', async () => {
+    const { core, messenger } = calendar();
+    const { id } = await core.addAppointment(linda, checkUp);
+    await core.deleteAppointment(mark, id);
+    expect(messenger.appNotifications()).toHaveLength(1);
+  });
+
+  it('are never sent by a calendar that only reads, such as the subscription feed', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = createMemoryStore();
+    const clock = createFixedClock('2026-11-19T20:00:00.000Z');
+    const core = createCalendarCore({
+      store,
+      clock,
+      messenger: NO_ADMIN_MESSENGER,
+      timeZone: EASTERN,
+    });
+    await core.addAppointment(linda, checkUp);
+    // It knows no Admins, so it never even tries.
+    expect(await NO_ADMIN_MESSENGER.admins()).toEqual([]);
+    expect(logged).not.toHaveBeenCalled();
+    logged.mockRestore();
+  });
+
+  it('that cannot be sent leave the change made', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { core, store, messenger } = calendar();
+    messenger.fail(true);
+    const added = await core.addAppointment(linda, checkUp);
+    const changed = await core.changeAppointment(mark, added.id, { time: '15:30' });
+    expect(changed.time).toBe('15:30');
+    expect(store.appointments()).toMatchObject([{ id: added.id, time: '15:30' }]);
+    expect(store.activity()).toHaveLength(2);
+    expect(messenger.appNotifications()).toEqual([]);
+    // What broke, and nothing about the Appointment.
+    expect(logged).toHaveBeenCalled();
+    expect(logged.mock.calls.flat().join(' ')).not.toContain('Cardiology');
+    logged.mockRestore();
   });
 });
 
@@ -1685,6 +1910,56 @@ describe('a Series', () => {
         time: '09:00',
       }),
     ]);
+  });
+
+  describe('Activity updates', () => {
+    it('adding one tells the other Admins once, not once per Appointment', async () => {
+      const { core, messenger } = calendar();
+      const { appointments } = await core.addSeries(linda, dialysis);
+      expect(appointments.length).toBeGreaterThan(1);
+      expect(messenger.appNotifications()).toEqual([
+        {
+          to: ['person-mark', 'person-ann'],
+          notification: expect.objectContaining({
+            body: 'Linda added a Series: Dialysis, every week on Monday and Thursday at 9:00 am, from Mon, Nov 23, 2026.',
+            opens: `/appointments/${appointments[0].id}`,
+          }),
+        },
+      ]);
+    });
+
+    it('changing or cancelling this and all later ones tells them once each', async () => {
+      const { core, messenger } = calendar();
+      const { appointments } = await core.addSeries(linda, dialysis);
+      await core.changeSeries(mark, appointments[2].id, { time: '10:00', ends: '2026-12-31' });
+      await core.endSeries(lindasAgent, appointments[4].id);
+      const [, changed, cancelled] = messenger.appNotifications();
+      expect(messenger.appNotifications()).toHaveLength(3);
+      expect(changed.to).toEqual(['person-linda', 'person-ann']);
+      expect(changed.notification.body).toBe(
+        'Mark changed Dialysis from Mon, Nov 30, 2026 on: now every week on Monday and Thursday at 10:00 am, until Thu, Dec 31, 2026.',
+      );
+      expect(cancelled.to).toEqual(['person-mark', 'person-ann']);
+      expect(cancelled.notification.body).toBe(
+        "Linda's agent cancelled Dialysis from Mon, Dec 7, 2026 on: this and all later ones.",
+      );
+    });
+
+    it('changing only this one tells them as for any Appointment', async () => {
+      const { core, messenger } = calendar();
+      const { appointments } = await core.addSeries(linda, dialysis);
+      await core.changeAppointment(mark, appointments[1].id, { time: '10:30' });
+      expect(messenger.appNotifications()).toHaveLength(2);
+      expect(messenger.appNotifications()[1].notification.body).toMatch(/^Mark changed Dialysis/);
+    });
+
+    it('topping up tells nobody', async () => {
+      const { core, messenger, clock } = calendar();
+      await core.addSeries(linda, dialysis);
+      clock.set('2027-02-01T20:00:00.000Z');
+      await core.topUpSeries();
+      expect(messenger.appNotifications()).toHaveLength(1);
+    });
   });
 
   it('a command on one Appointment leaves a record with no Series', async () => {

@@ -13,8 +13,10 @@ import { PickedFrom, Sidebar, TabBar } from './components/Navigation';
 import { InPanel, Placeholder } from './components/Page';
 import { CalendarProvider, useCalendar } from './data/CalendarContext';
 import type { CalendarClient } from './data/calendarClient';
+import { forgetAtSignOut, type DeviceRegistry } from './lib/appNotifications';
 import { upcomingAppointments } from './lib/calendar';
 import { useDesktopWidth } from './lib/useDesktopWidth';
+import { useKeepDeviceSaved } from './lib/useKeepDeviceSaved';
 import { useToday } from './lib/useToday';
 import { AppointmentDetail } from './routes/AppointmentDetail';
 import { EditAppointment, NewAppointment } from './routes/AppointmentForm';
@@ -33,13 +35,16 @@ export interface AppProps {
   calendar: CalendarClient;
   /** No backend: the app shows sample data and nobody is signed in. */
   sampleData?: boolean;
+  /** Where this device is kept for app notifications. None on sample data. */
+  devices?: DeviceRegistry | null;
   /** Missing when there is nobody to sign out (sample data). */
   onSignOut?: () => Promise<unknown>;
 }
 
 function Layout(props: Omit<AppProps, 'calendar'>) {
-  const { displayName, sampleData, onSignOut } = props;
+  const { displayName, sampleData, devices = null, onSignOut } = props;
   const desktop = useDesktopWidth();
+  useKeepDeviceSaved(devices);
   // An Appointment's own addresses: on a phone a full screen, on a desktop the detail panel.
   const onAppointment = useMatch('/appointments/*') !== null;
   const panel = useRef<HTMLElement>(null);
@@ -122,7 +127,18 @@ function PickedToBeginWith() {
   return <Placeholder>Pick an Appointment to see it here.</Placeholder>;
 }
 
-export function App({ calendar, ...props }: AppProps) {
+export function App({ calendar, onSignOut, ...rest }: AppProps) {
+  // Signing out turns app notifications off for this device first, while there is still someone
+  // signed in to forget it for.
+  const props = {
+    ...rest,
+    onSignOut:
+      onSignOut &&
+      (async () => {
+        await forgetAtSignOut(rest.devices ?? null);
+        return onSignOut();
+      }),
+  };
   return (
     <CalendarProvider client={calendar} timeZone={props.timeZone}>
       <BrowserRouter>

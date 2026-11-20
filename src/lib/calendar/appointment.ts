@@ -67,6 +67,20 @@ export const DETAILS = [
 
 export type Detail = (typeof DETAILS)[number];
 
+/** How each detail is named to a person. */
+export const DETAIL_NAMES: Record<Detail, string> = {
+  what: 'what it is',
+  date: 'the date',
+  time: 'the start time',
+  withWhom: 'who it is with',
+  placeName: "the place's name",
+  placeAddress: 'the address',
+  driverName: "the Driver's name",
+  pickupTime: 'the pickup time',
+  noteForSusan: 'the Note for Susan',
+  privateNotes: 'the Private notes',
+};
+
 export const REMINDER_SHAPES = ['before', 'daysBefore', 'at'] as const;
 export type ReminderShape = (typeof REMINDER_SHAPES)[number];
 

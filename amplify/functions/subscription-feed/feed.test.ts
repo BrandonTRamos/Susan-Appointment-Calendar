@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createCalendarCore,
   createFixedClock,
+  createMemoryMessenger,
   createMemoryStore,
   type Actor,
 } from '../../../src/lib/calendar';
@@ -16,6 +17,7 @@ async function feed() {
   const core = createCalendarCore({
     store,
     clock: createFixedClock('2026-11-19T20:00:00.000Z'),
+    messenger: createMemoryMessenger(),
     timeZone: 'America/New_York',
   });
   await core.addAppointment(linda, {

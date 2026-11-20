@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createCalendarCore,
   createFixedClock,
+  createMemoryMessenger,
   createMemoryStore,
   type Actor,
 } from '../../../src/lib/calendar';
@@ -15,7 +16,8 @@ describe('the daily Series top-up', () => {
   it('makes the Appointments each Series still needs', async () => {
     const store = createMemoryStore();
     const clock = createFixedClock('2026-11-19T20:00:00.000Z');
-    const core = createCalendarCore({ store, clock, timeZone: 'America/New_York' });
+    const messenger = createMemoryMessenger(['person-linda', 'person-mark']);
+    const core = createCalendarCore({ store, clock, messenger, timeZone: 'America/New_York' });
     await core.addSeries(linda, {
       what: 'Dialysis',
       date: '2026-11-23',
@@ -26,6 +28,8 @@ describe('the daily Series top-up', () => {
     clock.set('2027-01-19T20:00:00.000Z');
     await seriesTopUpHandler(async () => core)();
     expect(store.appointments().length).toBeGreaterThan(made);
+    // One Activity update, for the add; none for the Appointments the top-up made.
+    expect(messenger.appNotifications()).toHaveLength(1);
   });
 
   it('logs what broke without anything about an Appointment, and fails the run', async () => {
