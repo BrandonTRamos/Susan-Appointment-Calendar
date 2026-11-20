@@ -16,3 +16,4 @@ export { createFixedClock, createMemoryStore } from './memory';
 export type { FixedClock, MemoryStore } from './memory';
 export { systemClock } from './ports';
 export type { Clock, Store } from './ports';
+export * from './series';

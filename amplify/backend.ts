@@ -7,9 +7,10 @@ import { auth } from './auth/resource';
 import { configureProjectTags } from './cost-tags';
 import { data } from './data/resource';
 import { calendarCommands } from './functions/calendar-commands/resource';
+import { seriesTopUp } from './functions/series-top-up/resource';
 import { subscriptionFeed } from './functions/subscription-feed/resource';
 
-const backend = defineBackend({ auth, data, calendarCommands, subscriptionFeed });
+const backend = defineBackend({ auth, data, calendarCommands, seriesTopUp, subscriptionFeed });
 
 // COST_TAG keeps separate deployments apart in billing; main also tags its own Hosting app.
 configureProjectTags(backend.stack, process.env.COST_TAG || 'susans-calendar', {
@@ -42,6 +43,10 @@ for (const table of Object.values(backend.data.resources.cfnResources.amplifyDyn
 const { userPool } = backend.auth.resources;
 userPool.grant(backend.calendarCommands.resources.lambda, 'cognito-idp:AdminGetUser');
 backend.calendarCommands.addEnvironment('USER_POOL_ID', userPool.userPoolId);
+
+// The daily Series top-up runs one at a time, so that two runs never try to make the same
+// Appointments at once.
+backend.seriesTopUp.resources.cfnResources.cfnFunction.reservedConcurrentExecutions = 1;
 
 // The calendar subscription's feed, at a public address. Each person's secret link is checked in
 // the function (amplify/functions/subscription-feed/feed.ts). The address is public, so concurrent

@@ -3,6 +3,7 @@
 
 import { inDateOrder, type ActivityRecord, type Appointment } from './appointment';
 import type { Clock, Store } from './ports';
+import type { Series } from './series';
 import type { SubscriptionLink } from './subscription';
 
 export interface MemoryStore extends Store {
@@ -10,6 +11,8 @@ export interface MemoryStore extends Store {
   appointments(): Appointment[];
   /** Every activity record, oldest first. */
   activity(): ActivityRecord[];
+  /** Every Series, in the order they were added. */
+  everySeriesKept(): Series[];
   /** Every subscription link kept, as it is kept. */
   subscriptionLinks(): SubscriptionLink[];
   /**
@@ -25,6 +28,7 @@ export function createMemoryStore(): MemoryStore {
   const appointments = new Map<string, Appointment>();
   const activity: ActivityRecord[] = [];
   const texted = new Set<string>();
+  const series = new Map<string, Series>();
   const links = new Map<string, SubscriptionLink>();
   const listeners = new Set<() => void>();
   const changed = () => {
@@ -59,6 +63,19 @@ export function createMemoryStore(): MemoryStore {
     async everyAppointment() {
       return structuredClone([...appointments.values()]);
     },
+    async series(id) {
+      const found = series.get(id);
+      return found ? structuredClone(found) : null;
+    },
+    async addSeries(added) {
+      series.set(added.id, structuredClone(added));
+    },
+    async replaceSeries(replaced) {
+      series.set(replaced.id, structuredClone(replaced));
+    },
+    async everySeries() {
+      return structuredClone([...series.values()]);
+    },
     async subscriptionLinkOf(personId) {
       const found = links.get(personId);
       return found ? structuredClone(found) : null;
@@ -76,6 +93,7 @@ export function createMemoryStore(): MemoryStore {
 
     appointments: () => inDateOrder(structuredClone([...appointments.values()])),
     activity: () => structuredClone(activity),
+    everySeriesKept: () => structuredClone([...series.values()]),
     subscriptionLinks: () => structuredClone([...links.values()]),
     noteTextSentAbout(appointmentId) {
       texted.add(appointmentId);

@@ -78,6 +78,7 @@ function appointment(what: string, date: string, changes: Partial<Appointment> =
     privateNotes: null,
     state: 'active',
     reminders: [],
+    series: null,
     added: { ...linda, at: '2026-11-19T20:00:00.000Z' },
     lastChanged: null,
     ...changes,

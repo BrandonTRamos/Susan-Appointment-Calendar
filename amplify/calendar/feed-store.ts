@@ -40,6 +40,11 @@ function readOnly(): never {
   throw new Error('The subscription feed only reads the calendar.');
 }
 
+/** The feed shows Appointments; it has no need of their Series. */
+function noSeries(): never {
+  throw new Error('The subscription feed does not read Series.');
+}
+
 export function feedStore(reader: TableReader, tables: FeedTables): Store {
   /** The person's link as the table holds it now. */
   async function linkOf(personId: string): Promise<SubscriptionLink | null> {
@@ -98,6 +103,10 @@ export function feedStore(reader: TableReader, tables: FeedTables): Store {
     replaceAppointment: async () => readOnly(),
     removeAppointment: async () => readOnly(),
     recordActivity: async () => readOnly(),
+    series: async () => noSeries(),
+    everySeries: async () => noSeries(),
+    addSeries: async () => readOnly(),
+    replaceSeries: async () => readOnly(),
     keepSubscriptionLink: async () => readOnly(),
     removeSubscriptionLink: async () => readOnly(),
   };

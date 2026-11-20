@@ -5,9 +5,18 @@
 // It reaches the outside world only through its ports (ports.ts) and holds no provider-specific
 // code: it runs the same in a backend function, in the browser on sample data, and in a test.
 
-import { formatDate, formatTime, isDate, isTime, momentOf } from '../localTime';
+import {
+  addDays,
+  formatDate,
+  formatTime,
+  isDate,
+  isTime,
+  localDateTime,
+  momentOf,
+} from '../localTime';
 import {
   DETAILS,
+  inDateOrder,
   REMINDER_UNITS,
   type ActivityAction,
   type ActivityRecord,
@@ -26,6 +35,20 @@ import { calendarFeed } from './feed';
 import type { Clock, Store } from './ports';
 import { reminderDue, STARTING_REMINDER } from './reminders';
 import {
+  MOST_MONTHS,
+  MOST_WEEKS,
+  repeatDates,
+  repeatGives,
+  SERIES_HORIZON_DAYS,
+  weekdayOf,
+  WEEKDAY_NAMES,
+  type NewSeries,
+  type Repeat,
+  type Series,
+  type SeriesChanges,
+  type SeriesReminder,
+} from './series';
+import {
   isSubscriptionSecret,
   newSubscriptionSecret,
   subscriptionHash,
@@ -43,8 +66,8 @@ export type RefusalReason =
   /** Susan has been texted about the Appointment. */
   | 'texted';
 
-/** What a refusal can point at: one detail, or the Reminders. */
-export type RefusalField = Detail | 'reminders';
+/** What a refusal can point at: one detail, the Reminders, or how a Series repeats or ends. */
+export type RefusalField = Detail | 'reminders' | 'repeat' | 'ends';
 
 /**
  * A command the core would not carry out. Nothing was changed. The message is written for the
@@ -55,7 +78,7 @@ export class CalendarRefusal extends Error {
   constructor(
     readonly reason: RefusalReason,
     message: string,
-    /** The detail that was wrong, when it was one, or 'reminders' when it was a Reminder. */
+    /** The detail that was wrong, when it was one, 'reminders' for a Reminder, or a Series' part. */
     readonly detail?: RefusalField,
   ) {
     super(message);
@@ -88,6 +111,41 @@ export interface CalendarCore {
    * cancel it instead, so that she is told.
    */
   deleteAppointment(by: Actor, id: string): Promise<void>;
+
+  /**
+   * Adds a Series: Appointments that repeat on a pattern, entered once. The date is its first
+   * Appointment's, which has to be a day the pattern gives. Each Appointment in it is a real one,
+   * made ahead up to a rolling horizon (SERIES_HORIZON_DAYS, series.ts) and topped up after that by
+   * topUpSeries. Its Reminders are gap-based only and apply to every Appointment; with none given,
+   * each starts with the day before at 6:00 pm. It leaves one activity record, about its first
+   * Appointment. Given its ID, a UUID, the same add arriving twice is carried out once.
+   */
+  addSeries(
+    by: Actor,
+    details: NewSeries,
+    id?: string | null,
+  ): Promise<{ series: Series; appointments: Appointment[] }>;
+  /**
+   * Changes an Appointment in a Series and all later ones: the Series ends the day before this
+   * one, and continues from here as a new Series, which is the old one with these changes. Later
+   * Appointments are replaced, including ones changed on their own. One on a date the new Series
+   * also has is changed in place; any other is removed, or cancelled when Susan has been texted
+   * about it, so that she can be told. Answers with this Appointment as it now is, the first of the
+   * new Series. Changes that change nothing do nothing. Changing only this one is changeAppointment.
+   */
+  changeSeries(by: Actor, id: string, changes: SeriesChanges): Promise<Appointment>;
+  /**
+   * Cancels an Appointment in a Series and all later ones, keeping them in the calendar marked
+   * cancelled, and ends the Series the day before it. Cancelling only this one is cancelAppointment.
+   */
+  endSeries(by: Actor, id: string): Promise<Appointment>;
+  /**
+   * Makes the Appointments each Series still needs as the horizon moves on: a Series with no end,
+   * or with its end beyond the horizon, so that it never runs dry. It is run every day. Nobody
+   * acts, so it leaves no activity record; each Appointment it makes was added by whoever added the
+   * Series.
+   */
+  topUpSeries(): Promise<void>;
 
   /**
    * Makes the person a new calendar subscription link, which switches off any they had. The secret
@@ -260,6 +318,90 @@ function timingOf(sent: unknown, wrong: (message: string) => never): ReminderTim
   }
 }
 
+/** The details a Series gives each of its Appointments, besides the date. */
+type SeriesDetails = Omit<AppointmentDetails, 'date'>;
+
+const seriesDetailsOf = (details: AppointmentDetails | Series): SeriesDetails =>
+  Object.fromEntries(
+    DETAILS.filter((detail) => detail !== 'date').map((detail) => [
+      detail,
+      (details as unknown as Record<Detail, string | null>)[detail],
+    ]),
+  ) as SeriesDetails;
+
+const sameDetails = (a: SeriesDetails, b: SeriesDetails) =>
+  DETAILS.every((detail) => detail === 'date' || a[detail] === b[detail]);
+
+const sameRepeat = (a: Repeat, b: Repeat) => JSON.stringify(a) === JSON.stringify(b);
+
+const sameTimings = (a: readonly ReminderTiming[], b: readonly ReminderTiming[]) =>
+  a.map(timingKey).join('; ') === b.map(timingKey).join('; ');
+
+const dayOfMonth = (date: string) => Number(date.slice(8, 10));
+
+/** A pattern as it was sent, for a Series whose first Appointment is on `starts`, or a refusal. */
+function repeatOf(sent: unknown, starts: string): Repeat {
+  const wrong = (message: string): never => invalid(message, 'repeat');
+  if (typeof sent !== 'object' || sent === null || Array.isArray(sent))
+    wrong('Say how it repeats: every week or every month.');
+  const { every, interval, weekdays } = sent as Record<string, unknown>;
+  const gap = interval ?? 1;
+  if (every === 'week') {
+    if (!whole(gap, 1, MOST_WEEKS)) wrong(`Say how many weeks apart, from 1 to ${MOST_WEEKS}.`);
+    if (!Array.isArray(weekdays) || weekdays.length === 0)
+      wrong('Pick at least one day of the week it repeats on.');
+    if (!(weekdays as unknown[]).every((weekday) => whole(weekday, 0, 6)))
+      wrong('Pick the days of the week it repeats on.');
+    const days = [...new Set(weekdays as number[])].sort((a, b) => a - b);
+    return onItsFirstDay({ every, interval: gap as number, weekdays: days }, starts);
+  }
+  if (every === 'month') {
+    if (!whole(gap, 1, MOST_MONTHS)) wrong(`Say how many months apart, from 1 to ${MOST_MONTHS}.`);
+    return { every, interval: gap as number, day: dayOfMonth(starts) };
+  }
+  return wrong('Say how it repeats: every week or every month.');
+}
+
+/** The pattern, or a refusal when it does not give the date its first Appointment is on. */
+function onItsFirstDay(repeat: Repeat, starts: string): Repeat {
+  if (!repeatGives(repeat, starts))
+    invalid(
+      `The first Appointment is on a ${WEEKDAY_NAMES[weekdayOf(starts)]}, which is not a day it repeats on. Pick that day too, or another date.`,
+      'repeat',
+    );
+  return repeat;
+}
+
+/** When a Series that starts on `starts` ends, as it was sent: a date, or null for no end. */
+function endsOf(sent: unknown, starts: string): string | null {
+  if (sent === null || sent === undefined || sent === '') return null;
+  if (typeof sent !== 'string' || !isDate(sent))
+    invalid('That end date is not a real date.', 'ends');
+  if (sent < starts)
+    invalid(`It would end before its first Appointment, on ${formatDate(starts)}.`, 'ends');
+  if (sent > '2099-12-31') invalid("Check the end date's year.", 'ends');
+  return sent;
+}
+
+/** A Series' Reminders as they were sent, or a refusal naming the one that is wrong. */
+function seriesRemindersOf(sent: unknown): SeriesReminder[] {
+  if (!Array.isArray(sent)) invalid("The Series' Reminders could not be read.", 'reminders');
+  return sent.map((each: unknown, n) => {
+    const wrong = (message: string): never => invalid(`Reminder ${n + 1}: ${message}`, 'reminders');
+    const timing = timingOf(each, wrong);
+    if (timing.shape === 'at')
+      return wrong(
+        'A Reminder on a Series goes out a set time before each Appointment, not at an exact time. Set an exact time on one Appointment instead.',
+      );
+    return timing;
+  });
+}
+
+/** Writes in batches, so that a Series of many Appointments is written in a few seconds. */
+async function inBatches<T>(items: readonly T[], write: (item: T) => Promise<void>) {
+  for (let n = 0; n < items.length; n += 10) await Promise.all(items.slice(n, n + 10).map(write));
+}
+
 export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptions): CalendarCore {
   /** The moment an Appointment starts, in Susan's time zone. */
   function startOf({ date, time }: AppointmentDetails): string {
@@ -318,13 +460,23 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
     at,
   });
 
-  /** The one activity record a command leaves when it changes the calendar. */
-  function record(action: ActivityAction, appointment: Appointment, by: Actor, at: string) {
+  /**
+   * The one activity record a command leaves when it changes the calendar. One on a whole Series
+   * names it.
+   */
+  function record(
+    action: ActivityAction,
+    appointment: Appointment,
+    by: Actor,
+    at: string,
+    seriesId: string | null = null,
+  ) {
     const activity: ActivityRecord = {
       id: crypto.randomUUID(),
       ...stamp(by, at),
       action,
       appointmentId: appointment.id,
+      seriesId,
       what: appointment.what,
       date: appointment.date,
       time: appointment.time,
@@ -341,6 +493,106 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
       );
     return found;
   }
+
+  /** An Appointment's Series, from the Appointment, or a refusal when it cannot be changed so. */
+  async function seriesFrom(appointment: Appointment) {
+    const place = appointment.series;
+    if (!place)
+      invalid('This Appointment is not in a Series, so there are no later ones to change.');
+    if (appointment.state === 'cancelled')
+      throw new CalendarRefusal(
+        'cancelled',
+        'This Appointment is cancelled, so it cannot be changed. Pick a later one in the Series.',
+      );
+    const series = await store.series(place.id);
+    if (!series)
+      throw new CalendarRefusal(
+        'missing',
+        'That Series is not in the calendar. Change this Appointment on its own instead.',
+      );
+    return { place, series };
+  }
+
+  /** Susan's date today. */
+  const today = () => localDateTime(clock.now(), timeZone).date;
+
+  /**
+   * How far ahead a Series' Appointments are made: the horizon after today, or after it starts
+   * when that is later, and never past its end.
+   */
+  function horizonOf({ starts, ends }: Pick<Series, 'starts' | 'ends'>): string {
+    const day = today();
+    const through = addDays(starts > day ? starts : day, SERIES_HORIZON_DAYS);
+    return ends && ends < through ? ends : through;
+  }
+
+  /**
+   * The Appointment a Series has on a date: a new one, or `was` given the Series' details. Null for
+   * a date whose start time the clocks skip, which the Series leaves out. A new one is added by
+   * whoever added the Series; one changed in place is stamped as changed by `by`.
+   */
+  function occurrence(
+    series: Series,
+    date: string,
+    was?: Appointment,
+    by?: Actor,
+    at?: string,
+  ): Appointment | null {
+    const details: AppointmentDetails = { ...seriesDetailsOf(series), date };
+    const moment = momentOf(date, details.time, timeZone);
+    if (!moment) return null;
+    const startsAt = moment.toISOString();
+    const before = was?.reminders ?? [];
+    // A Reminder with the same timing as one the Appointment has keeps its ID.
+    const taken = new Set<string>();
+    const settings = series.reminders.map((timing) => {
+      const same = before.find((r) => !taken.has(r.id) && timingKey(r) === timingKey(timing));
+      if (same) taken.add(same.id);
+      return same ? { ...timing, id: same.id } : timing;
+    });
+    const moved = was !== undefined && (was.date !== date || was.time !== details.time);
+    const reminders = settled(settings, details, startsAt, before, moved);
+    const place = { id: series.id, date, repeat: series.repeat, individuallyChanged: false };
+    if (!was)
+      return {
+        id: `${series.id}-${date}`,
+        ...details,
+        startsAt,
+        state: 'active',
+        reminders,
+        series: place,
+        added: series.added,
+        lastChanged: null,
+      };
+    const changed = !hasDetails(was, details) || !sameReminders(was.reminders, reminders);
+    return {
+      ...was,
+      ...details,
+      startsAt,
+      reminders,
+      series: place,
+      lastChanged: changed && by && at ? stamp(by, at) : was.lastChanged,
+    };
+  }
+
+  /** The Appointments a Series has on these dates, leaving out any the clocks skip. */
+  const occurrences = (series: Series, dates: string[]) =>
+    dates.flatMap((date) => occurrence(series, date) ?? []);
+
+  /**
+   * Adds the Appointments the calendar does not have yet. Each has an ID made from its Series and
+   * date, so one that an earlier, interrupted command or run already added is not added twice.
+   */
+  const addMissing = (appointments: Appointment[]) =>
+    inBatches(appointments, async (appointment) => {
+      if (!(await store.appointment(appointment.id))) await store.addAppointment(appointment);
+    });
+
+  /** A Series' Appointments as the calendar has them, in date order. */
+  const appointmentsIn = async (seriesId: string) =>
+    inDateOrder(
+      (await store.everyAppointment()).filter((appointment) => appointment.series?.id === seriesId),
+    );
 
   return {
     async addAppointment(by, sent, id) {
@@ -371,6 +623,7 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
         startsAt,
         state: 'active',
         reminders,
+        series: null,
         added: stamp(by, at),
         lastChanged: null,
       };
@@ -405,6 +658,8 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
         ...details,
         startsAt,
         reminders,
+        // Changed only this one: the rest of its Series is as it was.
+        series: current.series && { ...current.series, individuallyChanged: true },
         lastChanged: stamp(by, at),
       };
       await store.replaceAppointment(appointment);
@@ -420,6 +675,7 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
       const appointment: Appointment = {
         ...current,
         state: 'cancelled',
+        series: current.series && { ...current.series, individuallyChanged: true },
         lastChanged: stamp(by, at),
       };
       await store.replaceAppointment(appointment);
@@ -436,6 +692,194 @@ export function createCalendarCore({ store, clock, timeZone }: CalendarCoreOptio
         );
       await store.removeAppointment(current.id);
       await record('deleted', current, by, clock.now().toISOString());
+    },
+
+    async addSeries(by, sent, id) {
+      const details = checked({ ...NO_DETAILS, ...given(sent) });
+      startOf(details);
+      const { repeat, ends, reminders } = sent as Partial<Record<string, unknown>>;
+      const starts = details.date;
+      const series: Series = {
+        id: '',
+        ...seriesDetailsOf(details),
+        repeat: repeatOf(repeat, starts),
+        starts,
+        ends: endsOf(ends, starts),
+        reminders: seriesRemindersOf(reminders ?? [STARTING_REMINDER]),
+        madeThrough: '',
+        added: stamp(by, clock.now().toISOString()),
+        lastChanged: null,
+      };
+      if (id !== undefined && id !== null) {
+        if (typeof id !== 'string' || !ID.test(id)) invalid("The Series' ID could not be read.");
+        const already = await store.series(id);
+        // The same add, arriving again: it has been carried out, so there is nothing left to do.
+        if (
+          already &&
+          already.added.personId === by.person.id &&
+          already.starts === series.starts &&
+          sameDetails(already, series) &&
+          sameRepeat(already.repeat, series.repeat) &&
+          already.ends === series.ends &&
+          sameTimings(already.reminders, series.reminders)
+        )
+          return { series: already, appointments: await appointmentsIn(id) };
+        if (already)
+          invalid('That Series has already been saved. Open one of its Appointments to change it.');
+      }
+      series.id = id ?? crypto.randomUUID();
+      series.madeThrough = horizonOf(series);
+      const appointments = occurrences(
+        series,
+        repeatDates(series.repeat, starts, series.ends, series.madeThrough),
+      );
+      // Written last, so that an add cut off part of the way is carried out in full when sent again.
+      await addMissing(appointments);
+      await store.addSeries(series);
+      await record('added', appointments[0], by, series.added.at, series.id);
+      return { series, appointments };
+    },
+
+    async changeSeries(by, id, sent) {
+      const picked = await existing(id);
+      const { place, series: old } = await seriesFrom(picked);
+      // What is not changed stays as the Series has it, which puts back what was changed on its own.
+      const details = checked({ ...seriesDetailsOf(old), date: place.date, ...given(sent) });
+      startOf(details);
+      const starts = details.date;
+      const asked = sent as Partial<Record<string, unknown>>;
+      let repeat: Repeat;
+      if (asked.repeat !== undefined) repeat = repeatOf(asked.repeat, starts);
+      else if (old.repeat.every === 'month' && starts !== place.date)
+        repeat = { ...old.repeat, day: dayOfMonth(starts) };
+      else repeat = onItsFirstDay(old.repeat, starts);
+      const ends = 'ends' in asked ? endsOf(asked.ends, starts) : old.ends;
+      if (ends && ends < starts)
+        invalid(`It would end before its first Appointment, on ${formatDate(starts)}.`, 'ends');
+      const reminders =
+        asked.reminders !== undefined ? seriesRemindersOf(asked.reminders) : old.reminders;
+      if (
+        starts === place.date &&
+        sameDetails(seriesDetailsOf(details), old) &&
+        sameRepeat(repeat, old.repeat) &&
+        ends === old.ends &&
+        sameTimings(reminders, old.reminders)
+      )
+        return picked;
+
+      const at = clock.now().toISOString();
+      const next: Series = {
+        id: crypto.randomUUID(),
+        ...seriesDetailsOf(details),
+        repeat,
+        starts,
+        ends,
+        reminders,
+        madeThrough: '',
+        added: stamp(by, at),
+        lastChanged: null,
+      };
+      next.madeThrough = horizonOf(next);
+      const dates = repeatDates(repeat, starts, ends, next.madeThrough);
+      const later = (await appointmentsIn(old.id)).filter(
+        (appointment) => appointment.id !== picked.id && appointment.series!.date >= place.date,
+      );
+
+      // This one begins the new Series. A later one on a date it also has is changed in place, so
+      // that whatever Susan has been told about it carries on; a cancelled one cannot be.
+      const onDate = new Map<string, Appointment>([[starts, picked]]);
+      for (const appointment of later) {
+        const { date } = appointment.series!;
+        if (appointment.state === 'active' && dates.includes(date) && !onDate.has(date))
+          onDate.set(date, appointment);
+      }
+      const reused: Appointment[] = [];
+      const made: Appointment[] = [];
+      for (const date of dates) {
+        const was = onDate.get(date);
+        const appointment = occurrence(next, date, was, by, at);
+        if (appointment) (was ? reused : made).push(appointment);
+      }
+      const kept = new Set(reused.map((appointment) => appointment.id));
+      const replaced = later.filter((appointment) => !kept.has(appointment.id));
+      const changed = reused.find((appointment) => appointment.id === picked.id)!;
+
+      await inBatches(replaced, async (appointment) => {
+        if (!(await store.textSentAbout(appointment.id))) {
+          await store.removeAppointment(appointment.id);
+        } else if (appointment.state === 'active') {
+          // Kept and cancelled, so that she can be told it is off.
+          await store.replaceAppointment({
+            ...appointment,
+            state: 'cancelled',
+            lastChanged: stamp(by, at),
+          });
+        }
+      });
+      await inBatches(reused, (appointment) => store.replaceAppointment(appointment));
+      await addMissing(made);
+      await store.addSeries(next);
+      await store.replaceSeries({
+        ...old,
+        ends: addDays(place.date, -1),
+        lastChanged: stamp(by, at),
+      });
+      await record('changed', changed, by, at, next.id);
+      return changed;
+    },
+
+    async endSeries(by, id) {
+      const picked = await existing(id);
+      const { place, series } = await seriesFrom(picked);
+      const at = clock.now().toISOString();
+      const cancel = (appointment: Appointment): Appointment => ({
+        ...appointment,
+        state: 'cancelled',
+        lastChanged: stamp(by, at),
+      });
+      const later = (await appointmentsIn(series.id)).filter(
+        (appointment) =>
+          appointment.id !== picked.id &&
+          appointment.series!.date >= place.date &&
+          appointment.state === 'active',
+      );
+      const cancelled = cancel(picked);
+      await inBatches([cancelled, ...later.map(cancel)], (appointment) =>
+        store.replaceAppointment(appointment),
+      );
+      await store.replaceSeries({
+        ...series,
+        ends: addDays(place.date, -1),
+        lastChanged: stamp(by, at),
+      });
+      await record('cancelled', cancelled, by, at, series.id);
+      return cancelled;
+    },
+
+    async topUpSeries() {
+      for (const series of await store.everySeries()) {
+        const through = horizonOf(series);
+        if (through <= series.madeThrough) continue;
+        const dates = repeatDates(
+          series.repeat,
+          series.starts,
+          series.ends,
+          through,
+          series.madeThrough,
+        );
+        // A Reminder the clocks push past the start on one day leaves that day out, as a start
+        // time they skip does: nobody is there to be told.
+        const appointments = dates.flatMap((date) => {
+          try {
+            return occurrence(series, date) ?? [];
+          } catch (error) {
+            if (error instanceof CalendarRefusal) return [];
+            throw error;
+          }
+        });
+        await addMissing(appointments);
+        await store.replaceSeries({ ...series, madeThrough: through });
+      }
     },
 
     // A subscription link changes no Appointment, so it leaves no activity record.

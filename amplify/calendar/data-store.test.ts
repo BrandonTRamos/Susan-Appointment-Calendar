@@ -14,7 +14,11 @@ type Row = Record<string, unknown> & { id: string };
  * answers every call with `{ data, errors }`.
  */
 function dataApi() {
-  const tables = { Appointment: new Map<string, Row>(), ActivityRecord: new Map<string, Row>() };
+  const tables = {
+    Appointment: new Map<string, Row>(),
+    Series: new Map<string, Row>(),
+    ActivityRecord: new Map<string, Row>(),
+  };
   let failure: string | null = null;
   const answer = <T>(data: T) =>
     failure ? { data: null, errors: [{ message: failure }] } : { data };
@@ -82,6 +86,7 @@ function dataApi() {
   const client = {
     models: {
       Appointment: model(tables.Appointment),
+      Series: model(tables.Series),
       ActivityRecord: model(tables.ActivityRecord),
       SubscriptionLink,
     },
@@ -89,6 +94,7 @@ function dataApi() {
   return {
     client,
     appointments: () => [...tables.Appointment.values()],
+    series: () => [...tables.Series.values()],
     activity: () => [...tables.ActivityRecord.values()],
     links: () => [...links.values()],
     /** The index stops hearing of changes until it is told to catch up. */
@@ -174,6 +180,53 @@ describe('the calendar kept in the data API', () => {
       { action: 'added', appointmentId: id, personName: 'Linda', viaAgent: false },
       { action: 'deleted', appointmentId: id, what: 'Cardiology check-up' },
     ]);
+  });
+
+  it('holds a Series and its Appointments, and hands them back as they were', async () => {
+    const { api, store, core } = calendar();
+    const { series, appointments } = await core.addSeries(linda, {
+      what: 'Dialysis',
+      date: '2026-11-23',
+      time: '09:00',
+      repeat: { every: 'week', weekdays: [0, 3] },
+      ends: '2026-12-31',
+      reminders: [{ shape: 'before', amount: 2, unit: 'hours' }],
+    });
+    expect(api.series()).toHaveLength(1);
+    expect(await store.series(series.id)).toEqual(series);
+    expect(await store.everySeries()).toEqual([series]);
+    expect(await store.appointment(appointments[3].id)).toEqual(appointments[3]);
+    expect(api.activity()).toMatchObject([{ action: 'added', seriesId: series.id }]);
+  });
+
+  it('carries a change to this and all later ones, and ending a Series', async () => {
+    const { api, store, core } = calendar();
+    const { series, appointments } = await core.addSeries(linda, {
+      what: 'Dialysis',
+      date: '2026-11-23',
+      time: '09:00',
+      repeat: { every: 'week', weekdays: [0, 3] },
+      ends: '2026-12-31',
+    });
+    const changed = await core.changeSeries(linda, appointments[2].id, { time: '10:00' });
+    expect(api.series()).toHaveLength(2);
+    expect(await store.series(series.id)).toMatchObject({ ends: '2026-11-29' });
+    const rows = api
+      .appointments()
+      .filter((row) => (row.series as { id: string }).id === changed.series!.id);
+    expect(rows.every((row) => row.time === '10:00')).toBe(true);
+    await core.endSeries(linda, appointments[4].id);
+    expect(await store.series(changed.series!.id)).toMatchObject({ ends: '2026-12-06' });
+    expect(api.appointments().find((row) => row.id === appointments[4].id)).toMatchObject({
+      state: 'cancelled',
+    });
+  });
+
+  it('reads an Appointment kept before Series existed as in none', async () => {
+    const { api, store, core } = calendar();
+    const added = await core.addAppointment(linda, checkUp);
+    delete api.appointments()[0].series;
+    expect(await store.appointment(added.id)).toEqual(added);
   });
 
   it('reads an Appointment kept before a detail existed', async () => {
