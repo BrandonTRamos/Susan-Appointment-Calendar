@@ -127,6 +127,7 @@ describe('the next Appointment, on a phone', () => {
       date: daysFromToday(1),
       time: '15:30',
       noteForSusan: 'Check in at example.de',
+      reminders: [{ shape: 'before', amount: 2, unit: 'hours' }],
     });
     renderApp('/', { calendar });
     // The Eye exam is next, and its only Reminder would hold the address.
