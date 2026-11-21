@@ -1151,6 +1151,8 @@ p {
 .field select,
 .field textarea {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: var(--control);
   padding: 12px 14px;
   border: 1px solid var(--border);
@@ -1189,6 +1191,9 @@ p {
   grid-template-columns: repeat(auto-fit, minmax(8.25rem, 1fr));
   align-items: start;
   gap: 18px 14px;
+}
+.app.phone .field-pair {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 /* ---------- Reminders ---------- */
