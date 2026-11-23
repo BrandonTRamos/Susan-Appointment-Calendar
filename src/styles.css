@@ -1150,7 +1150,8 @@ p {
 .field input,
 .field select,
 .field textarea {
-  width: 100%;
+  /* Stretch within the field rather than sizing native iOS controls to 100%. */
+  width: auto;
   min-width: 0;
   max-width: 100%;
   min-height: var(--control);
@@ -1176,6 +1177,15 @@ p {
 .field textarea {
   display: block;
   resize: vertical;
+}
+/* iOS date and time controls otherwise use their native, centred layout. */
+.field input[type='date'],
+.field input[type='time'] {
+  -webkit-appearance: none;
+  appearance: none;
+}
+.field input::-webkit-date-and-time-value {
+  text-align: left;
 }
 .field [aria-invalid='true'] {
   border-color: var(--danger);
