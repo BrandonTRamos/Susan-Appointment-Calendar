@@ -4359,8 +4359,13 @@ describe('Alerts', () => {
     const { core, sender, messenger } = await ready();
     sender.refuseNext();
     await core.runDue();
-    const said = JSON.stringify(alerts(messenger));
+    // The random IDs it opens and is tagged with are left out: one may hold "555" or "0123" by chance.
+    const said = JSON.stringify(alerts(messenger)).replace(
+      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g,
+      '<id>',
+    );
     expect(said).toMatch(/Cardiology check-up, Fri, Nov 20, 2026 at 2:00 pm/);
+    expect(said).toMatch(/"opens":"\/appointments\/<id>"/);
     // Not her number, nor the text's words, the Private notes, the Note for Susan, the place, the
     // Driver or who it is with: whoever reads it opens the Appointment for those.
     expect(said).not.toMatch(
